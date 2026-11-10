@@ -4,6 +4,18 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Connection, MySqlConnection, MySqlPool, Row};
 use std::{sync::Arc, time::Duration};
 
+/// **Which snapshot is the newest.** The one order the load that hands a build
+/// another build's snapshot and the publication that keeps one both use; the slot
+/// settles two snapshots at one position, so they never pick different ones.
+/// **The slot only breaks a tie**: at one position the larger slot text wins, and
+/// that says nothing about which build is newer. A macro and not a constant,
+/// because the store takes only SQL that is a literal.
+macro_rules! newest_snapshot_first {
+    () => {
+        "last_position DESC, slot DESC"
+    };
+}
+
 #[derive(Clone)]
 pub struct DoltLog(Arc<Inner>);
 struct Inner {
@@ -374,10 +386,11 @@ impl DoltLog {
                 .map_err(failed)?;
         let bytes = match own {
             Some(bytes) => Some(bytes),
-            None => sqlx::query_scalar(
-                "SELECT payload FROM event_log WHERE slot LIKE ? \
-                 ORDER BY last_position DESC LIMIT 1",
-            )
+            None => sqlx::query_scalar(concat!(
+                "SELECT payload FROM event_log WHERE slot LIKE ? ORDER BY ",
+                newest_snapshot_first!(),
+                " LIMIT 1"
+            ))
             .bind(format!("{SNAPSHOT_SLOT_PREFIX}%"))
             .fetch_optional(reader.connection())
             .await
@@ -415,11 +428,13 @@ impl DoltLog {
         // **Bounded to the publisher's slot and the newest other**: a release that
         // changes the shape would otherwise leave one more snapshot of the whole
         // State in the log for good.
-        sqlx::query(
+        sqlx::query(concat!(
             "DELETE FROM event_log WHERE slot LIKE ? AND slot <> ? AND slot NOT IN \
              (SELECT slot FROM (SELECT slot FROM event_log WHERE slot LIKE ? AND slot <> ? \
-              ORDER BY last_position DESC, slot DESC LIMIT 1) AS newest)",
-        )
+              ORDER BY ",
+            newest_snapshot_first!(),
+            " LIMIT 1) AS newest)"
+        ))
         .bind(format!("{SNAPSHOT_SLOT_PREFIX}%"))
         .bind(snapshot_slot(snapshot.projection_version))
         .bind(format!("{SNAPSHOT_SLOT_PREFIX}%"))

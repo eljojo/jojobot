@@ -577,3 +577,51 @@ async fn publishing_keeps_the_publishers_slot_and_the_newest_other_only() {
     assert_eq!(slots, expected, "the publisher's slot and the newest other");
     server.stop().await;
 }
+
+/// **The snapshot a build is handed is the one a publication keeps.** With no
+/// snapshot of its own, a build is handed the newest other, to name its
+/// fingerprint as the reason; a publication keeps the newest other and deletes the
+/// rest. Two other builds' snapshots at one position are told apart by the same
+/// order in both, or the boot names a shape the log no longer holds.
+#[tokio::test]
+async fn the_snapshot_a_build_is_handed_is_the_one_a_publication_keeps() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let own = crate::log_snapshot::PROJECTION_FINGERPRINT;
+    let first = batch("alpha", 0, &[b"a"]);
+    appended(&log, &pool, Position(0), &first).await;
+    let validity = log.validity().await.unwrap();
+    for offset in [1, 2] {
+        let theirs = snapshot_for(
+            own.wrapping_add(offset),
+            &validity,
+            first.range().last,
+            first.header().checksum,
+        );
+        put(&pool, &theirs).await;
+    }
+    let handed = log
+        .load_snapshot()
+        .await
+        .unwrap()
+        .unwrap()
+        .projection_version;
+
+    put(
+        &pool,
+        &snapshot_for(own, &validity, first.range().last, first.header().checksum),
+    )
+    .await;
+    let kept: Vec<String> = sqlx::query_scalar(
+        "SELECT slot FROM event_log WHERE slot LIKE 'snapshot:%' AND slot <> ? ORDER BY slot",
+    )
+    .bind(format!("snapshot:{own}"))
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        vec![format!("snapshot:{handed}")],
+        "the build was handed one snapshot and the publication kept another"
+    );
+    server.stop().await;
+}
