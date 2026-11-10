@@ -202,7 +202,10 @@ fn delete_without_a_token_deletes_nothing_and_fails() {
         &["--run", "7", "--delete"],
         None,
     );
-    assert_ne!(swept.code, 0, "{}", swept.said);
+    // The refusal is the usage code and names the variable that was missing, so
+    // a crash of the script does not pass for it.
+    assert_eq!(swept.code, 2, "{}", swept.said);
+    assert!(swept.said.contains("TOKEN"), "{}", swept.said);
     assert!(swept.asked.is_empty(), "{}", swept.said);
 }
 
@@ -263,6 +266,10 @@ fn a_run_the_forge_does_not_know_is_held_not_deleted() {
         &["--finished", "--delete"],
         Some("t0ken"),
     );
+    // The sweep reaches the run, is told it is not known and holds it: it ends
+    // clean and says which run it held, so a crash does not pass for the hold.
+    assert_eq!(swept.code, 0, "{}", swept.said);
+    assert!(swept.said.contains("hold run 99"), "{}", swept.said);
     assert!(swept.asked.is_empty(), "{}", swept.said);
 }
 
