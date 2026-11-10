@@ -32,7 +32,7 @@
 
 **A linked entry shows the linked thing's own state beside it**: a piece of work's status, owner and what it waits on. The list never skips a blocked entry or promotes a ready one, and ticking an entry says the list item is done, not that the work is. **The work's own status stays the one record of whether the work is finished**; otherwise a queue, a plan and the work item would be three places disagreeing about the same fact.
 
-**A list whose entries link work also says how far along that work is (`progress`):** the pieces of linked work that are done out of all of them, read from the work's own status and stating that it does. Work archived before it finished counts in neither number. It is a different question from `ticked`, which counts the list's own ticks.
+**A list whose entries link work also says how far along that work is (`progress`):** the pieces of linked work that are done out of all of them, read from the work's own status and stating that it does. Work archived before it finished counts in neither number. It is a different question from `ticked`, which counts the list's own ticks. **The read of a piece of work says it too**, one row for each list directly under the work whose entries link work, so how far along a bundle is comes with one read of the work rather than a visit to each list; a list under a child work is that child's, and a project or anything else that is not work gets no rows. A list answers `progress` as one block, a work as an array of them.
 
 **A view lists every list**, with its setting, `ticked` and `last_ticked`, narrowed to the lists hung on one thing when asked, so how far along each is and when it was last touched is one read rather than a visit to each.
 
