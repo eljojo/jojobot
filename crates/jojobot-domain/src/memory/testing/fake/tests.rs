@@ -1299,6 +1299,10 @@ async fn deleting_a_renamed_thing_under_the_store_clears_the_prose_written_befor
         .written()
         .expect("nothing collides with the final handle");
     assert!(store.prose.lock().unwrap().contains_key(&renamed));
+    store
+        .set_prose(&final_handle, "the last page", None)
+        .await
+        .expect("prose lands at the final handle");
 
     store.delete_entity_past_the_guard(&final_handle);
 
