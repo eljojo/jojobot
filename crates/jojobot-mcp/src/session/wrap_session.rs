@@ -2001,7 +2001,8 @@ mod tests {
             assert!(
                 how.contains(name.as_str())
                     && how.contains("end the turn")
-                    && how.contains("@document:build-runtime")
+                    && how.contains("start a new agent for it")
+                    && !how.contains("@document:")
                     && !how.contains("wrap_code"),
                 "{verb} has to say why: {how}"
             );
@@ -2098,7 +2099,8 @@ mod tests {
             assert!(
                 how.contains(name.as_str())
                     && how.contains("end the turn")
-                    && how.contains("@document:build-runtime")
+                    && how.contains("start a new agent for it")
+                    && !how.contains("@document:")
                     && !how.contains("wrap_code"),
                 "{verb} has to say why: {how}"
             );

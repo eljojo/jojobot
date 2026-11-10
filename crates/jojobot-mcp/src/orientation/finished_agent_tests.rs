@@ -216,7 +216,9 @@ async fn p1_every_host_is_refused_after_a_picked_up_run_wraps() {
         assert_eq!(refused["status"], "blocked", "{agent}: {refused}");
         let text = refused.to_string();
         assert!(
-            text.contains("end the turn and do nothing") && text.contains("document:build-runtime"),
+            text.contains("end the turn and do nothing")
+                && text.contains("start a new agent for it")
+                && !text.contains("@document:"),
             "{text}"
         );
     }
@@ -248,7 +250,9 @@ async fn finished_agent_journey(jojobot: &Jojobot) {
     assert_eq!(refused["status"], "blocked", "{refused}");
     let text = refused.to_string();
     assert!(
-        text.contains("end the turn and do nothing") && text.contains("document:build-runtime"),
+        text.contains("end the turn and do nothing")
+            && text.contains("start a new agent for it")
+            && !text.contains("@document:"),
         "{refused}"
     );
     assert!(
@@ -516,7 +520,9 @@ async fn p1_wrapped_sid_tells_the_caller_to_end_its_turn() {
     let refused = jojobot.caller(Some(&sid)).expect_err("wrapped key");
     let text = json_of(&refused).to_string();
     assert!(
-        text.contains("end the turn and do nothing") && text.contains("document:build-runtime"),
+        text.contains("end the turn and do nothing")
+            && text.contains("start a new agent for it")
+            && !text.contains("@document:"),
         "{text}"
     );
 }
@@ -569,7 +575,8 @@ async fn p1_previous_host_sid_gets_finished_words_after_wrap() {
     let text = json_of(&refused).to_string();
     assert!(
         text.contains("end the turn and do nothing")
-            && text.contains("document:build-runtime")
+            && text.contains("start a new agent for it")
+            && !text.contains("@document:")
             && text.contains(&run),
         "{text}"
     );

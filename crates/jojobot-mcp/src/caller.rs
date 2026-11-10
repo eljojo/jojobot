@@ -149,7 +149,7 @@ pub(crate) fn finished_session_declined(run: &str, at: jiff::Timestamp) -> CallT
         format!(
             "{NOTHING_RAN}. Run {run} wrapped at {at}. This session is finished; \
          end the turn and do nothing. Whoever needs the role must start a new \
-         agent from @document:build-runtime."
+         agent for it."
         ),
     )
 }

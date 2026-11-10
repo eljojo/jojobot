@@ -97,7 +97,6 @@ pub const ORDINARY: &[&str] = &[
     "document:answer-4",
     "document:answer-6",
     "document:answer-7",
-    "document:build-runtime", // the finished-session refusal's runtime instructions, not personal data
     // The cost fixtures of the write-cost cases: a topic, ledgers and a series of
     // background pieces that carry claims. They name nobody.
     "topic:write-cost-anchor",
