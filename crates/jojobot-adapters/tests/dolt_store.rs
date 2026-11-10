@@ -10244,6 +10244,78 @@ async fn a_claim_captured_on_a_supplied_record_is_read_back_over_the_real_store(
     store.stop().await;
 }
 
+/// **A claim that points at a record the build supplies is read back with its
+/// pointers by handle, over the real store.** The claim's edge object, its ref and
+/// the claim it was derived from, which is homed on a supplied record, are each
+/// filed under the handle the rows know the record by.
+#[tokio::test]
+async fn a_claim_that_points_at_a_supplied_record_is_read_back_by_handle_over_the_real_store() {
+    let scratch = Scratch::new("overlay-pointers");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "overlay_pointers")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let served = served_over_a_bound_store(&pool).await;
+    let from = EntityId("view:loops".into());
+    let target = EntityId("view:ready".into());
+
+    let source = jojobot_domain::log::claims::job::within(
+        an_operator_job(),
+        served.capture(NewFact::about(
+            target.clone(),
+            "the claim it comes from",
+            date(2026, 11, 9),
+        )),
+    )
+    .await
+    .expect("the first capture answers")
+    .written()
+    .expect("nothing blocks the first capture");
+    let pointing = jojobot_domain::log::claims::job::within(
+        an_operator_job(),
+        served.capture(NewFact {
+            edge: Some(Edge {
+                shape: EdgeShape::About,
+                object: target.clone(),
+            }),
+            refs: vec![target.clone()],
+            derived_from: Some(FactAddress::new(target.clone(), source.id.clone())),
+            ..NewFact::about(from.clone(), "points at the other view", date(2026, 11, 9))
+        }),
+    )
+    .await
+    .expect("the second capture answers")
+    .written()
+    .expect("nothing blocks the second capture");
+
+    let read = served
+        .recall(&from)
+        .await
+        .expect("recall answers")
+        .into_iter()
+        .find(|fact| fact.id == pointing.id)
+        .expect("the claim is in the read of its record");
+    assert_eq!(
+        read.edge,
+        Some(Edge {
+            shape: EdgeShape::About,
+            object: target.clone()
+        }),
+        "the edge object is not the handle"
+    );
+    assert_eq!(read.refs, vec![target.clone()], "the ref is not the handle");
+    assert_eq!(
+        read.derived_from,
+        Some(FactAddress::new(target, source.id)),
+        "the claim it was derived from is not homed on the handle"
+    );
+    store.stop().await;
+}
+
 /// **A review stamp is not a later change than the write that carries it, in the
 /// real store.** The store stamps each key of a write with a moment of its own;
 /// the stamp has to be the newest of them, or defrag's own write puts the thing
