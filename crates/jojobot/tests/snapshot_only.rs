@@ -86,17 +86,28 @@ async fn a_boot_after_a_failed_pre_build_replays_the_log_and_says_so() {
     .await
     .unwrap_or_else(|failure| panic!("the boot after a failed pre-build {failure}"));
 
-    let named = serving
+    // **The boot says so once, as a warning, naming the reason.**
+    let said: Vec<_> = serving
         .seen
         .iter()
-        .find(|line| line.contains("no snapshot held"))
-        .unwrap_or_else(|| {
-            panic!(
-                "the boot did not say it held no snapshot:\n{:#?}",
-                serving.seen
-            )
-        });
-    assert!(named.contains("none_held"), "it named no reason: {named}");
+        .filter(|line| line.contains("SNAPSHOT NOT USED"))
+        .collect();
+    assert_eq!(
+        said.len(),
+        1,
+        "the boot did not warn exactly once that no snapshot was used:\n{:#?}",
+        serving.seen
+    );
+    assert!(
+        said[0].contains("WARN"),
+        "it was not a warning: {}",
+        said[0]
+    );
+    assert!(
+        said[0].contains("none_held"),
+        "it named no reason: {}",
+        said[0]
+    );
     let booted = serving
         .seen
         .iter()
@@ -113,8 +124,7 @@ async fn a_boot_after_a_failed_pre_build_replays_the_log_and_says_so() {
         .text()
         .await
         .expect("a body");
-    // A boot reads more than one log, and each one that holds no snapshot counts, so
-    // the count is read as "at least one", and no other reason moved.
+    // One boot with no snapshot counts once, and no other reason moved.
     let skips: std::collections::BTreeMap<&str, u64> = scraped
         .lines()
         .filter_map(|line| line.strip_prefix("jojobot_snapshot_skips{reason=\""))
@@ -124,8 +134,8 @@ async fn a_boot_after_a_failed_pre_build_replays_the_log_and_says_so() {
         })
         .collect();
     assert!(
-        skips.get("none_held").is_some_and(|count| *count >= 1),
-        "the scrape does not count the skipped snapshot:\n{scraped}"
+        skips.get("none_held") == Some(&1),
+        "the scrape does not count the skipped snapshot once:\n{scraped}"
     );
     let others: Vec<_> = skips
         .iter()

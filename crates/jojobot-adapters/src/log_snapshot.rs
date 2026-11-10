@@ -117,17 +117,12 @@ pub fn skip_counts() -> Vec<(&'static str, u64)> {
 
 fn skipped(skip: Skip) {
     SKIPS[skip.index()].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if skip == Skip::NoneHeld {
-        tracing::info!(
-            reason = skip.name(),
-            "no snapshot held; the boot replays the log"
-        );
-    } else {
-        tracing::warn!(
-            reason = skip.name(),
-            "SNAPSHOT NOT USED — the boot replays the whole log, not a fast boot"
-        );
-    }
+    // **Every reason is a warning, the absence of a snapshot included**: a deploy
+    // whose pre-build failed lands here, and it must not land quietly.
+    tracing::warn!(
+        reason = skip.name(),
+        "SNAPSHOT NOT USED — the boot replays the whole log, not a fast boot"
+    );
 }
 
 /// **Whether `snapshot` is of the shape this build reads.** The one place the
@@ -214,13 +209,24 @@ fn apply(state: &mut State, batch: &SealedBatch) -> Result<(), LogError> {
 }
 
 /// Restore a compatible whole State, or replay from zero when it is disposable.
+/// **A boot that cannot use the snapshot the log holds says so and is counted.**
 pub async fn boot(log: &dyn LogStore) -> Result<Boot, LogError> {
+    replay(log, true).await
+}
+
+/// The replay a boot makes, and the one a snapshot is taken from. **Only a boot
+/// reports a skipped snapshot**: taking a snapshot reads the State the same way and
+/// is not a boot, so it must not warn that the boot replayed the log, and the boots
+/// the scrape counts are the boots the process made.
+async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError> {
     let began = std::time::Instant::now();
     let validity = log.validity().await?;
     let (mut boot, from_snapshot) = match restored(log, &validity).await? {
         Ok(boot) => (boot, true),
         Err(skip) => {
-            skipped(skip);
+            if report_skip {
+                skipped(skip);
+            }
             (
                 Boot {
                     state: State::default(),
@@ -261,7 +267,7 @@ pub async fn boot(log: &dyn LogStore) -> Result<Boot, LogError> {
 /// position the snapshot covers.
 pub async fn take_snapshot(log: &dyn LogStore, at: jiff::Timestamp) -> Result<Position, LogError> {
     let validity = log.validity().await?;
-    let boot = boot(log).await?;
+    let boot = replay(log, false).await?;
     let blob = serde_json::to_vec(&boot.state).map_err(unreadable)?;
     let snapshot = ValidatedSnapshot {
         snapshot_format_version: FORMAT,
