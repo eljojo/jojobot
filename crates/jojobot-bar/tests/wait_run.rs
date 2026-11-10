@@ -765,6 +765,9 @@ struct Forge {
     job_name: Option<&'static str>,
     /// The primary job's log has been removed by the forge.
     gone_log: bool,
+    /// The status of each run's primary job when it is not the run's own: a run
+    /// that reads `running` while a job of it has ended.
+    primary_status: Option<&'static str>,
     /// Jobs beyond the first of a run: the run's id, the job's name and
     /// status, and its log.
     more_jobs: Vec<(u64, &'static str, &'static str, String)>,
@@ -880,13 +883,21 @@ fn answer(forge: &Forge, path: &str, lists: usize) -> (u16, String) {
         .and_then(|r| r.strip_suffix("/jobs"))
     {
         let run_id = id.parse::<u64>().unwrap_or(0);
-        let status = forge
-            .runs
-            .iter()
-            .find(|(run, _)| run["id"] == run_id)
-            .map_or("success", |(run, _)| {
-                run["status"].as_str().unwrap_or("success")
-            });
+        // **A job reads `running` for as long as its run does**: the forge does not
+        // hold a run going beside a job that has ended and a status of its own.
+        let status = if lists <= forge.running_for {
+            "running"
+        } else {
+            forge.primary_status.unwrap_or_else(|| {
+                forge
+                    .runs
+                    .iter()
+                    .find(|(run, _)| run["id"] == run_id)
+                    .map_or("success", |(run, _)| {
+                        run["status"].as_str().unwrap_or("success")
+                    })
+            })
+        };
         let mut jobs = vec![json!({"id": 1000 + run_id, "run_id": run_id,
                     "name": forge.job_name.unwrap_or("report"), "status": status})];
         for (index, (of_run, name, job_status, _)) in forge.more_jobs.iter().enumerate() {
@@ -931,6 +942,21 @@ fn wait(standing: &Standing, args: &[&str]) -> (i32, String, String) {
     let ran = Command::new(tool())
         .args(args)
         .args(["--interval", "0.05", "--timeout", "5"])
+        .env("WAIT_RUN_API", format!("{}{REPO}", standing.addr))
+        .output()
+        .expect("the tool runs");
+    (
+        ran.status.code().expect("it exits"),
+        String::from_utf8_lossy(&ran.stdout).to_string(),
+        String::from_utf8_lossy(&ran.stderr).to_string(),
+    )
+}
+
+/// The tool as `wait` runs it, with a timeout of its own.
+fn wait_up_to(standing: &Standing, args: &[&str], seconds: &str) -> (i32, String, String) {
+    let ran = Command::new(tool())
+        .args(args)
+        .args(["--interval", "0.05", "--timeout", seconds])
         .env("WAIT_RUN_API", format!("{}{REPO}", standing.addr))
         .output()
         .expect("the tool runs");
@@ -1118,6 +1144,67 @@ fn a_run_that_is_still_going_is_waited_for() {
         "it asked until the run ended: {:?}",
         forge.asked.lock().expect("the log")
     );
+}
+
+/// A run of the shape a pull request makes while its last job runs: the report job
+/// ended as `report`, and the cleanup job of the run is in `cleanup`. The run's own
+/// status stays `running` for as long as the cleanup does.
+fn cleanup_beside(report: &'static str, log: &str, cleanup: &'static str) -> Forge {
+    Forge {
+        runs: vec![(
+            run(260, "dev9-3000-work", GREEN_SHA, "running"),
+            fixture(log),
+        )],
+        branches: vec![("dev9-3000-work", GREEN_SHA.into())],
+        primary_status: Some(report),
+        more_jobs: vec![(260, "artifact-cleanup", cleanup, String::new())],
+        ..Default::default()
+    }
+}
+
+/// **A line waiting on a run gets its verdict when the verdict jobs end, not when
+/// the cleanup job of the run does.** The cleanup deletes the run's large artifacts
+/// after every job above it and holds no check, but the forge keeps the run `running`
+/// until it ends, so a wait on the run status waited for it too: 8 to 24 seconds
+/// more on every run. The run here reads `running` for good, its report job has
+/// succeeded and its cleanup job is still going.
+#[test]
+fn a_run_ends_on_its_verdict_while_only_its_cleanup_job_is_still_going() {
+    let forge = stand(cleanup_beside(
+        "success",
+        "wait-run-green-job.txt",
+        "running",
+    ));
+    let (code, out, err) = wait(&forge, &["dev9-3000-work"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("verdict: GREEN"), "{out}");
+    assert!(
+        out.contains("job artifact-cleanup  running"),
+        "the cleanup job is named with the status it has: {out}"
+    );
+}
+
+/// **A red job ends the wait the same way**, with its verdict and exit one, while
+/// the cleanup job waits to run after it.
+#[test]
+fn a_red_run_ends_on_its_verdict_while_its_cleanup_job_has_not_started() {
+    let forge = stand(cleanup_beside("failure", "wait-run-red-job.txt", "waiting"));
+    let (code, out, err) = wait(&forge, &["dev9-3000-work"]);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(out.contains("verdict: RED"), "{out}");
+}
+
+/// **The wait goes on while any verdict job is going**, whatever the cleanup job
+/// reads: only that job is let go of. A rooms job still running keeps the run open.
+#[test]
+fn a_run_with_a_verdict_job_still_going_is_not_ended_by_the_cleanup_job_standing_by() {
+    let mut forge = cleanup_beside("success", "wait-run-green-job.txt", "waiting");
+    forge
+        .more_jobs
+        .push((260, "rooms", "running", fixture("wait-run-green-job.txt")));
+    let forge = stand(forge);
+    let (code, out, err) = wait_up_to(&forge, &["dev9-3000-work"], "0.5");
+    assert_eq!(code, 3, "{out}\n{err}");
 }
 
 /// **Every place the tool names a run gives its run number first and the forge's

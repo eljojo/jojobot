@@ -25,6 +25,14 @@ phase and the names that FAILED, and nothing else of the log.
   block nor such a line says it holds no block. A block wins over a runner line:
   a job that reached its verdict did not die.
 
+  THE WAIT ENDS ON THE VERDICT, NOT ON THE CLEANUP JOB. Every run ends with a job that
+  deletes its large artifacts (CLEANUP below). It holds no check, but the forge keeps the
+  run going until it ends, so waiting on the run's status waited 8 to 24 seconds more. The
+  tool reads the run's jobs while the run is going: when every job but a cleanup job has
+  ended, the run's verdict is the verdict of those jobs (a failure, else a cancel, else
+  a success), the cleanup job is named with the status it has, and the tool exits. A job
+  of the run that is still going keeps the wait open, whatever the cleanup job reads.
+
   A BRANCH is resolved to the head the forge holds for it, and the run is the one
   on that ref. A COMMIT is a full hash or the first seven or more characters of
   one; the run is the newest run of that commit, and any other run of the same
@@ -85,6 +93,9 @@ def api_root():
 API = api_root()
 # A run that has reached one of these is over; every other status is still going.
 FINAL = {"success": 0, "failure": 1, "cancelled": 2, "skipped": 2}
+# The job every workflow ends with: it deletes the run's large artifacts and holds no
+# check. Its status is never part of a run's verdict.
+CLEANUP = {"artifact-cleanup"}
 PAGE = 50
 PAGES = 40
 
@@ -185,6 +196,24 @@ def resolve(target):
     except Gone:
         stop(4, f"the forge holds no branch {target}: push it first")
     return head["commit"]["id"], target
+
+
+def verdict_without_cleanup(run):
+    """**The status a run that is still going has once only its cleanup job is left**, or
+    None while any other job is going, or when the run has no other job. A failed job
+    makes it `failure`, else a cancelled one `cancelled`, else a succeeded one `success`,
+    else `skipped`: the same order the forge uses for a run."""
+    try:
+        jobs = json.loads(fetch(f"/actions/runs/{run['id']}/jobs"))
+    except Gone:
+        return None
+    others = [job["status"] for job in jobs if job["name"] not in CLEANUP]
+    if not others or any(status not in FINAL for status in others):
+        return None
+    for status in ("failure", "cancelled", "success"):
+        if status in others:
+            return status
+    return "skipped"
 
 
 def workflow_file(name):
@@ -291,6 +320,11 @@ def report(run):
     red = died = False
     for job in jobs:
         print(f"job {job['name']}  {job['status']}")
+        # **A cleanup job that is still going has no verdict to read**: the run ended
+        # without it.
+        if run.get("cleanup_going") and job["name"] in CLEANUP and job["status"] not in FINAL:
+            print()
+            continue
         # **A skipped job never ran, so the forge keeps no log for it** and answers 404.
         if job["status"] == "skipped":
             print()
@@ -346,6 +380,10 @@ def main():
             if sha is None:
                 sha, ref = resolve(args.target)
             found = find(sha, ref, args.workflow)
+            if found and found[0]["status"] not in FINAL:
+                ended = verdict_without_cleanup(found[0])
+                if ended:
+                    found = ({**found[0], "status": ended, "cleanup_going": True}, found[1])
         except Gone as err:
             stop(4, f"the forge has nothing at {err}: is WAIT_RUN_API the repository's API root?")
         except (urllib.error.URLError, TimeoutError, OSError) as err:
@@ -355,7 +393,8 @@ def main():
             run, others = found
             if seen != (run["id"], run["status"]):
                 seen = (run["id"], run["status"])
-                print(f"{named(run)} is {run['status']}", file=sys.stderr)
+                tail = " (only its cleanup job is still going)" if run.get("cleanup_going") else ""
+                print(f"{named(run)} is {run['status']}{tail}", file=sys.stderr)
             if run["status"] in FINAL:
                 break
         if time.monotonic() >= deadline:
