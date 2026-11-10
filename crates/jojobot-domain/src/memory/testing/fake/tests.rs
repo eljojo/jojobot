@@ -380,6 +380,56 @@ fn first_claim_about(subject: &EntityId, what: &str) -> NewFact {
     NewFact::about(subject.clone(), what, date(2026, 6, 2))
 }
 
+#[tokio::test]
+async fn a_composite_claim_bypasses_the_public_capture_checks() {
+    use crate::log::claims::job::{test_job, within};
+
+    for with_job in [true, false] {
+        let store = InMemoryMemory::booted();
+        let subject = thing(&store, "person:milhouse", "Milhouse").await;
+        let claim = NewFact {
+            fields: crate::memory::review::settings_fields(
+                [("colour".into(), "red".into())].into(),
+            ),
+            sets: ["colour".into()].into(),
+            ..first_claim_about(&subject, "Set colour on the thing.")
+        };
+        let write = store.update_entity_with_claim(
+            &subject,
+            EntityPatch {
+                name: Some("Milhouse".into()),
+                ..Default::default()
+            },
+            claim.clone(),
+        );
+        let written = if with_job {
+            within(test_job(&crate::actor::Actor::Operator), write).await
+        } else {
+            write.await
+        }
+        .expect("the composite writes its engine-labelled claim")
+        .written()
+        .expect("the edit is not blocked")
+        .1;
+        assert_eq!(written.fields["settings_record"], "true");
+        assert_eq!(store.recall(&subject).await.unwrap(), vec![written]);
+        assert_eq!(store.fields(&subject).await.unwrap()["colour"], "red");
+        assert_eq!(store.captures_without_a_job(), 0);
+
+        let public = within(
+            test_job(&crate::actor::Actor::Operator),
+            store.capture(claim),
+        )
+        .await;
+        assert!(
+            matches!(public, Err(MemoryError::InvalidFact(ref words)) if words.contains("settings_record")),
+            "a public capture must still face the check: {public:?}"
+        );
+        say(&store, &subject, "A public claim after the composite.").await;
+        assert_eq!(store.captures_without_a_job(), 1);
+    }
+}
+
 /// **A creation refused at its first claim leaves nothing.** The first claim is
 /// refused for a line break in its text, after the entity was made; the refusal
 /// is the claim's own, and the store shows what it showed before the call, the
