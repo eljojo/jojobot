@@ -785,7 +785,8 @@ pub async fn boot_store_observed(
     fill_memory(&folded, &indexed).await;
     // **The repair passes below write before the claims import**, when the log
     // holds no State, so a refresh after such a write reads the store until the
-    // import is done. TEMPORARY(9.3.8): with the passes.
+    // import is done. TEMPORARY(9.3.10): it goes with the five paired row
+    // repairs that stay before the importer (rule 706).
     folded.before_the_import(true);
 
     // **The ports mail and sessions are served from.** Rows in the SQL store,

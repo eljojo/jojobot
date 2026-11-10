@@ -12,8 +12,9 @@
 //! read serves it and the weight of a boot, are passed in.
 //!
 //! A capture that reaches the store with no job is decided by the store's old
-//! route, which has a door of its own. TEMPORARY(9.3.8): that route goes when
+//! route, which has a door of its own. TEMPORARY(9.3.4): that route goes when
 //! every caller of a capture carries a job, and then a capture with no job fails.
+//! That step scopes the jobless callers and deletes the route with the last one.
 
 use std::future::Future;
 use std::sync::Arc;
