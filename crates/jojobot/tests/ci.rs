@@ -441,8 +441,9 @@ fn every_job_runs_the_runner_pre_job_first() {
                         .take_while(|line| !line.starts_with("      - ")),
                 )
                 .map(|line| line.trim())
-                // The artifact cleanup job runs the hook with continue-on-error.
-                .filter(|line| *line != "continue-on-error: true")
+                // The artifact cleanup job, and no other, runs the hook with
+                // continue-on-error.
+                .filter(|line| job != "artifact-cleanup:" || *line != "continue-on-error: true")
                 .collect();
             assert!(first[0].starts_with("- name:"), "{job}: {first:?}");
             assert_eq!(
