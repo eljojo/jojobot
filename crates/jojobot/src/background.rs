@@ -64,6 +64,45 @@ pub async fn finish_writer_then_stop(
 mod tests {
     use super::*;
 
+    /// A buffer the case's subscriber writes to, read back when the case asserts.
+    #[derive(Clone, Default)]
+    struct Kept(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Kept {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log buffer").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Kept {
+        type Writer = Kept;
+        fn make_writer(&'a self) -> Kept {
+            self.clone()
+        }
+    }
+
+    impl Kept {
+        fn text(&self) -> String {
+            String::from_utf8(self.0.lock().expect("log buffer").clone()).expect("utf8")
+        }
+    }
+
+    /// The subscriber for one case, held until the case ends. It is the thread's
+    /// own, so it sees a case that runs on the test's single-threaded runtime.
+    fn capture() -> (Kept, tracing::subscriber::DefaultGuard) {
+        let kept = Kept::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(kept.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        (kept, tracing::subscriber::set_default(subscriber))
+    }
+
     /// **A task that ends inside the grace is waited for and reports finished**,
     /// with its work done.
     #[tokio::test]
@@ -106,6 +145,7 @@ mod tests {
     /// store is left to the manager's kill.
     #[tokio::test]
     async fn a_final_job_past_its_bound_is_cut_and_the_store_still_stops() {
+        let (log, _subscriber) = capture();
         let writer = jojobot_adapters::writer::Writer::default();
         let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stopping = stopped.clone();
@@ -125,12 +165,21 @@ mod tests {
             stopped.load(std::sync::atomic::Ordering::SeqCst),
             "the store was not stopped after the cut"
         );
+        // **The cut says so, as a warning that names the bound**, and the case
+        // below ends with none: a cut nobody is told of reads as a stop that ran
+        // its course.
+        let text = log.text();
+        assert!(
+            text.contains("WARN") && text.contains("bound_seconds"),
+            "the cut logged no warning naming its bound: {text:?}"
+        );
     }
 
     /// **The pair of the case above**: a final job that ends inside its bound runs
     /// to its end, and the store is stopped after it.
     #[tokio::test]
     async fn a_final_job_inside_its_bound_runs_and_the_store_stops_after_it() {
+        let (log, _subscriber) = capture();
         let writer = jojobot_adapters::writer::Writer::default();
         let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let running = ran.clone();
@@ -152,5 +201,10 @@ mod tests {
         assert_eq!(ended, Ended::Finished);
         assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
         assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            !log.text().contains("WARN"),
+            "a final job that ended inside its bound logged a warning: {:?}",
+            log.text()
+        );
     }
 }
