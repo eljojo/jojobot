@@ -464,13 +464,22 @@ async fn only_the_one_subject_read_of_a_piece_of_work_carries_the_rows() {
         "a list's own read is one block, not rows"
     );
 
-    // An archived list is no part of the bundle.
+    // An archived list is no part of the bundle. A second list that links work
+    // keeps the bundle's own gate open, so the archived list's row is one the read
+    // could wrongly carry and not one a closed gate never reaches.
+    entry_about(&s, "list:errands", "the lumber", PARTS[1]).await;
     s.call(
         "archive_entity",
         json!({"handle": "list:checklist", "reason": "cancelled"}),
     )
     .await;
     let after = the_bundle(&s, None).await;
-    assert!(after.get("progress").is_none(), "{after}");
+    let lists: Vec<&str> = after["progress"]
+        .as_array()
+        .expect("the live list that links work has its row")
+        .iter()
+        .map(|row| row["list"].as_str().expect("a row names its list"))
+        .collect();
+    assert_eq!(lists, ["list:errands"], "{after}");
     story.finish().await;
 }
