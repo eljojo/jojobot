@@ -12,10 +12,23 @@ fn script() -> std::path::PathBuf {
 }
 
 fn render(payload: &serde_json::Value) -> String {
+    render_on(payload, None)
+}
+
+/// **Render as a job of the forge at `api` would**: the runner hands every job the
+/// forge's API root in `GITHUB_API_URL`, and a case that does not name one runs
+/// without it, whatever the environment of the test run holds.
+fn render_on(payload: &serde_json::Value, api: Option<&str>) -> String {
+    let mut command = Command::new("python3");
+    command
+        .arg(script())
+        .arg("render")
+        .env_remove("GITHUB_API_URL");
+    if let Some(api) = api {
+        command.env("GITHUB_API_URL", api);
+    }
     let mut child = support::fenced_spawn(
-        Command::new("python3")
-            .arg(script())
-            .arg("render")
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped()),
@@ -117,8 +130,8 @@ fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
                 (
                     "runner_host",
                     &[
-                        "bart", "lisa", "nelly", "willie", "moe", "wiggum", "frink", "maggie",
-                        "cloudy", "local", "other",
+                        "bart", "lisa", "willie", "moe", "wiggum", "frink", "maggie", "cloudy",
+                        "local", "other",
                     ][..],
                 ),
             ] {
@@ -188,7 +201,7 @@ fn build_metrics_exposition_is_parseable_and_every_label_is_from_a_closed_set() 
 #[test]
 fn build_metrics_names_each_host_that_runs_a_ci_slot() {
     for host in [
-        "bart", "lisa", "moe", "wiggum", "frink", "maggie", "cloudy", "nelly", "willie",
+        "bart", "lisa", "moe", "wiggum", "frink", "maggie", "cloudy", "willie",
     ] {
         let text = render(&serde_json::json!({
             "workflow": "branch", "job": "report", "ref": "refs/heads/dev-work",
@@ -199,6 +212,29 @@ fn build_metrics_names_each_host_that_runs_a_ci_slot() {
         }));
         assert_eq!(samples(&text)[0].1["runner_host"], host, "{text}");
     }
+}
+
+/// **The host the forge runs on is named from the forge's own API root**, so its
+/// name is in the environment a job already has and in no file of the repository.
+/// A host the root does not name, and a job with no root, read `other`.
+#[test]
+fn build_metrics_names_the_host_the_forge_answers_on_from_the_api_root() {
+    let payload = |host: &str| {
+        serde_json::json!({
+            "workflow": "branch", "job": "report", "ref": "refs/heads/dev-work",
+            "runner": format!("{host}.example.invalid"),
+            "samples": [
+                {"metric": "duration", "step": "job", "outcome": "success", "seconds": 1}
+            ]
+        })
+    };
+    // The label is read off the text: the independent reader above holds a closed
+    // list of hosts and would refuse the one the root names.
+    let labelled = |text: &str, host: &str| text.contains(&format!("runner_host=\"{host}\""));
+    let api = "http://apu.example.invalid:3030/api/v1";
+    assert!(labelled(&render_on(&payload("apu"), Some(api)), "apu"));
+    assert!(labelled(&render_on(&payload("krusty"), Some(api)), "other"));
+    assert!(labelled(&render_on(&payload("apu"), None), "other"));
 }
 
 /// **The own-crates job has a label of its own**, so the time to a branch's

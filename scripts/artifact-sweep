@@ -4,8 +4,8 @@
     scripts/artifact-sweep --run ID [--delete]   # one run's artifacts, at the end of that run
     scripts/artifact-sweep --finished [--delete] # every ended run's artifacts, the sweeper
 
-Nelly's disk is shared with the forge, the database and production, so a run
-leaves nothing large behind. A bundle of test binaries is 1.2 GB. **Only the
+The build host's disk is shared with the forge, the database and production, so
+a run leaves nothing large behind. A bundle of test binaries is 1.2 GB. **Only the
 artifacts named in LARGE are deleted**: the workflows upload them to carry
 binaries and stores between the jobs of one run, and a job of a run that ended is
 never re-run on its own, so nothing reads one again. Every other artifact stays,

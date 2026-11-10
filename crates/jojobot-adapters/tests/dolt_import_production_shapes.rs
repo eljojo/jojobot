@@ -47,7 +47,7 @@ fn at() -> Timestamp {
 }
 
 /// **The claims each of production's ten merges moved**, in merge-number order.
-/// Read from nelly's store on 2026-11-09, numbers only: `merge_event` held 26 rows,
+/// Read from production's store on 2026-11-09, numbers only: `merge_event` held 26 rows,
 /// merge numbers 1 to 10 with none missing, and the rows of each merge, its own
 /// row first, numbered 2, 2, 2, 6, 2, 1, 3, 2, 3, 3. A merge that moved no claim
 /// is one row, and one that moved five is six.

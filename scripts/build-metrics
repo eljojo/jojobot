@@ -37,6 +37,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 
@@ -47,7 +48,7 @@ LABELS = {
              "doc", "dev", "narrow", "unmeasured"} | {f"test-rank-{rank:02}" for rank in range(1, 21)},
     "outcome": {"success", "failure", "cancelled", "skipped", "unknown"},
     "branch_class": {"main", "release", "dev"},
-    "runner_host": {"bart", "lisa", "nelly", "willie", "moe", "wiggum", "frink", "maggie", "cloudy", "local"},
+    "runner_host": {"bart", "lisa", "willie", "moe", "wiggum", "frink", "maggie", "cloudy", "local"},
 }
 METRICS = {"duration", "first_failure", "test_binary", "test"}
 BINARY_FILE = Path(__file__).resolve().parent.parent / "crates/jojobot-bar/build-metrics-binaries.txt"
@@ -64,8 +65,16 @@ def branch_class(ref):
     return "other"
 
 
+def forge_host():
+    """The first label of the host the forge answers on, read from the API root the
+    runner hands every job. It is in the environment and in no file of the
+    repository; a run without a root has none."""
+    return (urllib.parse.urlparse(os.environ.get("GITHUB_API_URL", "")).hostname or "").split(".")[0]
+
+
 def bounded(key, value):
-    return value if value in LABELS[key] else ("unknown" if key == "outcome" else "other")
+    allowed = LABELS[key] | ({forge_host()} - {""} if key == "runner_host" else set())
+    return value if value in allowed else ("unknown" if key == "outcome" else "other")
 
 
 def render(payload):
