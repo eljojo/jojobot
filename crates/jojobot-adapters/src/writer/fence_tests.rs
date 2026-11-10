@@ -89,3 +89,49 @@ fn the_fence_lock_name_of_no_database_is_the_digest_of_the_lock_and_a_colon() {
         super::fence::lock_name(&MySqlConnectOptions::new().database("fence_alpha")),
     );
 }
+
+/// **A pool timeout is named as the lock held elsewhere only while the session's
+/// last wait for the lock missed it.** A timeout from a pool that was only busy keeps
+/// its own text, and no other error is touched. The pool here never connects, so
+/// no server is needed: the cases are about what the error is called inside a
+/// writer, not about the lock.
+#[tokio::test]
+async fn a_pool_timeout_names_the_lock_only_after_a_missed_lock() {
+    let pool: super::sql::Pool = sqlx::MySqlPool::connect_lazy("mysql://root@127.0.0.1:1/unused")
+        .expect("a pool that connects when asked")
+        .into();
+    let writer = super::Writer::default();
+    let said = writer
+        .run(async move {
+            // Opens the writer's session; it has not waited for the lock yet.
+            let _ = pool.writer();
+            let timed_out = sqlx::Error::PoolTimedOut;
+            let busy = super::sql::why(&timed_out);
+            super::Writer::current()
+                .expect("inside the writer")
+                .0
+                .sql
+                .get()
+                .expect("the session is open")
+                .note_a_missed_lock();
+            let held = super::sql::why(&timed_out);
+            let other = super::sql::why(&sqlx::Error::PoolClosed);
+            (busy, held, other)
+        })
+        .await;
+    assert_eq!(
+        said.0,
+        sqlx::Error::PoolTimedOut.to_string(),
+        "a busy pool keeps its own text"
+    );
+    assert_eq!(
+        said.1,
+        super::LOCK_HELD,
+        "a timeout after a missed lock is the lock held elsewhere"
+    );
+    assert_eq!(
+        said.2,
+        sqlx::Error::PoolClosed.to_string(),
+        "only a pool timeout is read as the lock"
+    );
+}

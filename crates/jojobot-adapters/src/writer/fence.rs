@@ -87,6 +87,13 @@ impl Session {
         self.missed.load(Ordering::SeqCst)
     }
 
+    /// A case sets what a wait that ended without the lock sets, with no second
+    /// writer to hold it.
+    #[cfg(test)]
+    pub(super) fn note_a_missed_lock(&self) {
+        self.missed.store(true, Ordering::SeqCst);
+    }
+
     pub(super) fn same_store(&self, source: &MySqlPool) -> bool {
         let other = source.connect_options();
         self.options.get_host() == other.get_host()
