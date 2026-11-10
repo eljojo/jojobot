@@ -469,7 +469,7 @@ fn a_pull_request_rooms_job_stands_for_the_rooms_lane() {
 fn an_option_value_that_is_not_a_number_is_a_usage_refusal() {
     for args in [
         &["--baseline-run", "x", "--", "make", "check"][..],
-        &["--baseline-run"][..],
+        &["--baseline-run", "--", "make", "check"][..],
         &["--from", "x", "--", "make", "check"][..],
     ] {
         let one = a_sample_dir("usage");
