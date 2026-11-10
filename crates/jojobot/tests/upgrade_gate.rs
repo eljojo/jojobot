@@ -3528,10 +3528,13 @@ async fn a_reference_field_naming_a_supplied_record_boots_quiet_and_reads_back()
 }
 
 /// **The first boot over a store the deployed build filled says nothing is wrong,
-/// and the second boot logs the same.** The store's pass markers are set, so the
-/// passes that already ran take their settled branch, and the passes this build
-/// adds run once. `boot_current` holds every boot to no warning and no error
+/// and the later boots log nothing at all.** The store's pass markers are set, so
+/// the passes that already ran take their settled branch, and the passes this
+/// build adds run once. `boot_current` holds every boot to no warning and no error
 /// line; this case names the property and boots until it has seen it three times.
+/// **The one warning the first boot may log is that it used no snapshot**: the
+/// store holds history and no snapshot, so that boot replays the whole log and says
+/// so. It publishes a snapshot, so the second and third boots may not log even that.
 #[tokio::test]
 async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_error() {
     let Restored {
@@ -3560,7 +3563,12 @@ async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_
         let booted = boot_current(&state_dir, store_port, &git_ref).await;
         let log = booted.log.clone();
         booted.stop().await;
-        let noisy = degradations(&log, false, &[]);
+        let allowed: &[&str] = if boot == 1 {
+            &[NO_SNAPSHOT_WARNING]
+        } else {
+            &[]
+        };
+        let noisy = degradations(&log, false, allowed);
         assert!(
             noisy.is_empty(),
             "boot {boot} over the store recorded at {git_ref} logged: {noisy:?}"
