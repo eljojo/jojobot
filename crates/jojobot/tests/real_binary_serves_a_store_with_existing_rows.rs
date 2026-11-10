@@ -17,13 +17,34 @@
 
 use std::process::Stdio;
 
+use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::free_port;
-use jojobot_domain::memory::{EntityId, Memory, NewEntity, kinds};
+use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, kinds};
 
 use jojobot_adapters::testing::Scratch;
+
+/// The real binary over the store in `state_dir`, as the service runs it.
+fn spawn_binary(state_dir: &std::path::Path, store_port: u16) -> tokio::process::Child {
+    let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
+    tokio::process::Command::new(&binary)
+        .env("STATE_DIRECTORY", state_dir)
+        .env("JOJOBOT_STORE_PORT", store_port.to_string())
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
+        .env("JOJOBOT_ALLOW_NO_AUTH", "1")
+        .env_remove("JOJOBOT_ISSUER")
+        // The serving line is an info event. An inherited RUST_LOG can filter it
+        // out: the package build exports RUST_LOG="", which parses as a filter
+        // with no directives and hides every info line.
+        .env("RUST_LOG", "info")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the binary runs")
+}
 
 #[tokio::test]
 async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_to() {
@@ -61,22 +82,7 @@ async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_
     // already loaded.
     kinds::load_shipped();
 
-    let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
-    let mut child = tokio::process::Command::new(&binary)
-        .env("STATE_DIRECTORY", &state_dir)
-        .env("JOJOBOT_STORE_PORT", store_port.to_string())
-        .env("JOJOBOT_BIND", "127.0.0.1:0")
-        .env("JOJOBOT_ALLOW_NO_AUTH", "1")
-        .env_remove("JOJOBOT_ISSUER")
-        // The serving line is an info event. An inherited RUST_LOG can filter it
-        // out: the package build exports RUST_LOG="", which parses as a filter
-        // with no directives and hides every info line.
-        .env("RUST_LOG", "info")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .expect("the binary runs");
+    let mut child = spawn_binary(&state_dir, store_port);
 
     // `init_tracing`'s `fmt::layer()` writes to stdout by default.
     let serving = match jojobot_adapters::testing::wait_for_serving_line(
@@ -113,6 +119,95 @@ async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_
     assert!(
         read.contains("\"id\":\"topic:instance\"") && read.contains("\"source\":\"jojobot\""),
         "a store that held no instance record has one after the binary boots: {read}"
+    );
+
+    drop(scratch);
+}
+
+/// **The boot that imports the claims covers the import with a snapshot before it
+/// serves, and a boot whose import was done takes none.** The snapshot the
+/// teaching ledger takes at its own import is of a log that holds no claims yet,
+/// so a process stopped with no orderly stop would leave the next boot to replay
+/// the whole import.
+///
+/// The first boot is killed, not stopped: an orderly stop takes its own snapshot,
+/// which would cover the log for the second boot whatever the first boot did. The
+/// first snapshot stops at the import, and the records the build supplies are bound
+/// right after it, so the log is past that snapshot and a second boot that took a
+/// snapshot for an import it did not run would take one here.
+#[tokio::test]
+async fn the_real_server_binary_covers_the_claims_import_with_a_snapshot_at_boot() {
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-real-binary-import");
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let scratch = Scratch(state_dir.clone());
+    let store_port = free_port();
+
+    // A store an earlier build left: a row and a claim, nothing in the log.
+    let mut seeding_server = Dolt::start(&state_dir.join("db"), store_port)
+        .await
+        .expect("the store comes up");
+    migrate::run(seeding_server.pool())
+        .await
+        .expect("the schema applies");
+    let seeding = DoltMemory::open(seeding_server.pool().clone());
+    kinds::seed(&seeding).await.expect("the kinds are declared");
+    let homer = EntityId("person:homer".into());
+    seeding
+        .add_entity(NewEntity::new(homer.clone(), "Homer", "test"))
+        .await
+        .expect("a row lands")
+        .written()
+        .expect("not blocked");
+    seeding
+        .capture(NewFact::about(homer, "likes donuts", date(2026, 9, 2)))
+        .await
+        .expect("a claim lands")
+        .written()
+        .expect("not blocked");
+    seeding_server.stop().await;
+    kinds::load_shipped();
+
+    let boot = |label: &'static str| {
+        let state_dir = state_dir.clone();
+        async move {
+            let mut child = spawn_binary(&state_dir, store_port);
+            let serving = jojobot_adapters::testing::wait_for_serving_line(
+                &mut child,
+                jojobot_exercise::room::READY_TIMEOUT,
+                "serving http://",
+            )
+            .await
+            .unwrap_or_else(|failure| panic!("the {label} boot {failure}"));
+            let seen = serving.seen.clone();
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            seen
+        }
+    };
+    let said = |seen: &[String], what: &str| seen.iter().any(|line| line.contains(what));
+
+    let first = boot("first").await;
+    assert!(
+        said(&first, "imported today's claims into the event log"),
+        "the first boot ran the import:\n{}",
+        first.join("\n")
+    );
+    assert!(
+        said(&first, "snapshot taken after import"),
+        "the first boot covered the import with a snapshot:\n{}",
+        first.join("\n")
+    );
+
+    let second = boot("second").await;
+    assert!(
+        said(&second, "claims import: already done"),
+        "the second boot found the import done:\n{}",
+        second.join("\n")
+    );
+    assert!(
+        !said(&second, "snapshot taken after import"),
+        "a boot whose import was done took a snapshot for it:\n{}",
+        second.join("\n")
     );
 
     drop(scratch);
