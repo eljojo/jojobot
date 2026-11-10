@@ -394,6 +394,73 @@ async fn a_capture_through_the_job_leaves_the_rows_the_old_route_leaves() {
     new.server.stop().await;
 }
 
+/// A world whose import bound a record the build supplies in the claims State, as
+/// the boot's reconcile does, and whose memory knows it. The import's writer is
+/// dropped once it has drained; one that lives on holds the log's lock.
+async fn world_with_a_supplied_record(name: &str) -> World {
+    jojobot_domain::memory::kinds::load_shipped();
+    let scratch = Scratch::new(name);
+    let server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = crate::testing::migrated_database(&server, "alpha")
+        .await
+        .unwrap();
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(store.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let provisions = crate::provisioned::overlay_contract::supplied();
+    {
+        let importing = Writer::default();
+        crate::claims_import::import_claims_once(
+            &importing,
+            &store,
+            &provisions,
+            jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
+        )
+        .await
+        .expect("the claims import runs");
+        importing.drain().await;
+    }
+    World {
+        _scratch: scratch,
+        server,
+        memory: DoltMemory::open(store.clone())
+            .on_clock(Clock::stating(date(2026, 4, 22)))
+            .journaled()
+            .knowing(provisions),
+        store,
+        writer: Writer::default(),
+    }
+}
+
+/// **A claim on a record the build supplies leaves the rows the old route leaves.**
+/// The State names such a record by its supply identity and the rows file it by its
+/// handle, so the job route has to map one to the other where it writes a row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_capture_on_a_supplied_record_leaves_the_rows_the_old_route_leaves() {
+    let mut old = world_with_a_supplied_record("row-writer-supplied-old").await;
+    let mut new = world_with_a_supplied_record("row-writer-supplied-new").await;
+    for (world, through_the_job) in [(&old, false), (&new, true)] {
+        let mut answer = NewFact::about(id("view:loops"), "an answer", date(2026, 4, 22));
+        answer.fields = [("answer_9".to_string(), "kept on top".to_string())].into();
+        answer.sets = ["answer_9".to_string()].into();
+        world.capture(answer, through_the_job).await;
+    }
+    let (old_rows, new_rows) = (old.rows().await, new.rows().await);
+    assert!(
+        old_rows
+            .iter()
+            .any(|row| row.starts_with("field_write: view:loops | answer_9")),
+        "the old route files the key under the handle, so the comparison has a row to compare: \
+         {old_rows:?}"
+    );
+    assert_eq!(
+        new_rows, old_rows,
+        "the rows of the job route are the rows of the old route"
+    );
+    old.server.stop().await;
+    new.server.stop().await;
+}
+
 /// What each capture that names a thing by its former handle comes to: written,
 /// or blocked, and the rows of the claim tables after them.
 async fn answers_to_a_former_handle(world: &World, through_the_job: bool) -> Vec<String> {

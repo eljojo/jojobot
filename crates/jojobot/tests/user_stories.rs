@@ -233,6 +233,8 @@ mod role_takeover;
 mod session_edges;
 #[path = "user_stories/session_key.rs"]
 mod session_key;
+#[path = "user_stories/supplied_name.rs"]
+mod supplied_name;
 /// A key set on a record the software ships is found by that key.
 #[path = "user_stories/supplied_search.rs"]
 mod supplied_search;

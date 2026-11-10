@@ -10087,6 +10087,163 @@ async fn a_sets_only_edit_of_a_still_supplied_record_lands_over_the_real_store()
     store.stop().await;
 }
 
+/// **The stack the server serves through over a real store whose import bound the
+/// build's records in the claims State**, as the boot's reconcile does. The
+/// import's writer is dropped once it has drained: one that lives on holds the
+/// log's one-writer lock, and the journaled store opened next waits for it and
+/// gives up.
+async fn served_over_a_bound_store(pool: &sqlx::MySqlPool) -> Folded {
+    use jojobot_adapters::provisioned::overlay_contract::supplied;
+    let provisions = supplied();
+    {
+        let importing = Writer::default();
+        jojobot_adapters::claims_import::import_claims_once(
+            &importing,
+            pool,
+            &provisions,
+            jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
+        )
+        .await
+        .expect("the claims import runs");
+        importing.drain().await;
+    }
+    let provisioned: Arc<dyn Memory> = Arc::new(Provisioned::new(
+        DoltMemory::open(pool.clone())
+            .journaled()
+            .knowing(provisions.clone()),
+        provisions,
+    ));
+    let served = Folded::new(provisioned);
+    served.rebuild().await.expect("the image fills");
+    served
+}
+
+fn an_operator_job() -> jojobot_domain::log::claims::job::CaptureJob {
+    jojobot_domain::log::claims::job::test_job(&jojobot_domain::actor::Actor::Operator)
+}
+
+/// **The operator's name and aliases on a record the build supplies are served
+/// back, over the real store.** The edit is logged on the State's own object for
+/// the record, and its rows have to be filed where the row readers look for the
+/// record, which is its handle.
+#[tokio::test]
+async fn a_name_and_aliases_set_on_a_supplied_record_are_served_back_over_the_real_store() {
+    let scratch = Scratch::new("overlay-name");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "overlay_name")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let served = served_over_a_bound_store(&pool).await;
+    let handle = EntityId("view:loops".into());
+
+    jojobot_domain::log::claims::job::within(
+        an_operator_job(),
+        served.update_entity(
+            &handle,
+            EntityPatch {
+                name: Some("Weekly rounds".into()),
+                aliases: Some(vec!["rounds".into()]),
+                ..Default::default()
+            },
+        ),
+    )
+    .await
+    .expect("the edit answers")
+    .written()
+    .expect("nothing blocks the edit");
+
+    let wears = |listed: Vec<jojobot_domain::memory::Entity>| {
+        listed
+            .into_iter()
+            .find(|entity| entity.id == handle)
+            .map(|entity| (entity.name, entity.aliases))
+    };
+    let wanted = Some(("Weekly rounds".to_string(), vec!["rounds".to_string()]));
+    assert_eq!(
+        wears(served.list_entities(None).await.expect("lists")),
+        wanted,
+        "the listing does not wear the operator's name"
+    );
+    served.rebuild().await.expect("the image fills again");
+    assert_eq!(
+        wears(served.list_entities(None).await.expect("lists")),
+        wanted,
+        "the listing does not wear the operator's name after a rebuild"
+    );
+
+    // A stack opened afresh on the same database, as a restart opens one.
+    drop(served);
+    let provisions = jojobot_adapters::provisioned::overlay_contract::supplied();
+    let again = Folded::new(Arc::new(Provisioned::new(
+        DoltMemory::open(pool.clone())
+            .journaled()
+            .knowing(provisions.clone()),
+        provisions,
+    )) as Arc<dyn Memory>);
+    again.rebuild().await.expect("the image fills");
+    assert_eq!(
+        wears(again.list_entities(None).await.expect("lists")),
+        wanted,
+        "the listing does not wear the operator's name after a restart"
+    );
+    store.stop().await;
+}
+
+/// **A claim the capture verb writes on a record the build supplies is read back
+/// by every row reader, over the real store.** Not only the overlay: the key it
+/// sets and the claim itself are the record's, whichever way it was named.
+#[tokio::test]
+async fn a_claim_captured_on_a_supplied_record_is_read_back_over_the_real_store() {
+    let scratch = Scratch::new("overlay-capture");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "overlay_capture")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let served = served_over_a_bound_store(&pool).await;
+    let handle = EntityId("view:loops".into());
+
+    let landed = jojobot_domain::log::claims::job::within(
+        an_operator_job(),
+        served.capture(NewFact {
+            sets: ["answer_9".to_string()].into(),
+            fields: [("answer_9".to_string(), "kept on top".to_string())].into(),
+            ..NewFact::about(handle.clone(), "an answer", date(2026, 11, 9))
+        }),
+    )
+    .await
+    .expect("the capture answers")
+    .written()
+    .expect("nothing blocks the capture");
+
+    assert_eq!(
+        served
+            .fields(&handle)
+            .await
+            .expect("the keys read")
+            .get("answer_9"),
+        Some(&"kept on top".to_string()),
+        "the key the capture set is not on the record"
+    );
+    assert!(
+        served
+            .recall(&handle)
+            .await
+            .expect("recall answers")
+            .iter()
+            .any(|fact| fact.id == landed.id),
+        "the claim is not in the read of the record"
+    );
+    store.stop().await;
+}
+
 /// **A review stamp is not a later change than the write that carries it, in the
 /// real store.** The store stamps each key of a write with a moment of its own;
 /// the stamp has to be the newest of them, or defrag's own write puts the thing

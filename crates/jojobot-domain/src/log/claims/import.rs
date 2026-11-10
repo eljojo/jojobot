@@ -200,8 +200,13 @@ pub struct SuppliedRow {
 /// take it. A handle is an address and may be renamed by a later build; this key
 /// does not move with it.
 pub fn supply_identity(handle: &str) -> ObjectId {
-    ObjectId(format!("supplied/{handle}"))
+    ObjectId(format!("{SUPPLY_PREFIX}{handle}"))
 }
+
+/// **What every supply identity begins with.** The rows file a supplied record by
+/// its handle, so a reader of a row that holds a State object turns this prefix
+/// back into the handle.
+pub const SUPPLY_PREFIX: &str = "supplied/";
 
 /// **A handle the build stopped supplying, with writes filed under its text and
 /// no row**, as the import is handed it. Nothing else of the record survived: its

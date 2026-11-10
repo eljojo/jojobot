@@ -12,8 +12,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use jojobot_domain::actor::Actor;
-use jojobot_domain::log::claims::{ClaimBody, ClaimEvent, FieldValue};
-use jojobot_domain::log::{Event, RecordId};
+use jojobot_domain::log::claims::import::SUPPLY_PREFIX;
+use jojobot_domain::log::claims::{ClaimBody, ClaimEvent, FieldValue, State};
+use jojobot_domain::log::{Event, ObjectId, RecordId};
 use jojobot_domain::memory::{Edge, EdgeShape};
 
 use super::*;
@@ -86,7 +87,7 @@ impl DoltMemory {
                         FieldValue::Set(value) => Some(value.clone()),
                         FieldValue::Clear | FieldValue::Removed => None,
                     };
-                    let thing = EntityId(subject.0.clone());
+                    let thing = storage_key(seam, subject);
                     Self::insert_field_write(
                         tx,
                         &thing,
@@ -126,6 +127,23 @@ fn place_of(places: &BTreeMap<RecordId, i64>, record: &RecordId) -> Result<i64, 
     })
 }
 
+/// **The key the rows file a State object under.** A stored thing is filed under
+/// its own id. A record the build supplies has no row, so the rows file it by the
+/// handle it answers to, as the import and the companion claim do; the State names
+/// it by its permanent supply identity, which no row reader looks for.
+fn storage_key_in(state: &State, object: &ObjectId) -> EntityId {
+    match object.0.strip_prefix(SUPPLY_PREFIX) {
+        Some(first_handle) => state
+            .handle(object)
+            .unwrap_or_else(|| EntityId(first_handle.to_string())),
+        None => EntityId(object.0.clone()),
+    }
+}
+
+fn storage_key(seam: &Arc<Seam>, object: &ObjectId) -> EntityId {
+    seam.read_claims(|state| storage_key_in(state, object))
+}
+
 /// **A claim as the rows store it**: its thing and its pointers by the key each
 /// is filed under, which is what the State names them by.
 fn fact_of(seam: &Arc<Seam>, claim: &ClaimBody) -> Fact {
@@ -133,13 +151,13 @@ fn fact_of(seam: &Arc<Seam>, claim: &ClaimBody) -> Fact {
         seam.read_claims(|state| {
             state.record(record).map(|held| {
                 FactAddress::new(
-                    EntityId(held.claim.home.0.clone()),
+                    storage_key_in(state, &held.claim.home),
                     FactId(held.claim.label.clone()),
                 )
             })
         })
     };
-    let home = EntityId(claim.home.0.clone());
+    let home = storage_key(seam, &claim.home);
     Fact {
         app_stamp: claim.app.clone(),
         written_by_another: false,
@@ -160,14 +178,14 @@ fn fact_of(seam: &Arc<Seam>, claim: &ClaimBody) -> Fact {
         edge: claim.edge.as_ref().and_then(|(shape, object)| {
             Some(Edge {
                 shape: EdgeShape::from_token(shape)?,
-                object: EntityId(object.0.clone()),
+                object: storage_key(seam, object),
             })
         }),
         fields: Default::default(),
         refs: claim
             .refs
             .iter()
-            .map(|object| EntityId(object.0.clone()))
+            .map(|object| storage_key(seam, object))
             .collect(),
         derived_from: claim.derived_from.as_ref().and_then(address_of),
         stands_for: claim.stands_for.iter().filter_map(address_of).collect(),
