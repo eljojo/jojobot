@@ -4,6 +4,8 @@
 //! in one transaction. What it appended is what the pure mapping says the rows mean, and
 //! nothing is appended when a row is not understood.
 
+use std::sync::Arc;
+
 use jiff::{Timestamp, civil::date};
 use jojobot_adapters::claims_import::{ClaimsImportError, Imported, import_claims_once};
 use jojobot_adapters::claims_log::codec;
@@ -2291,6 +2293,127 @@ async fn claims_import_places_a_write_of_a_claim_a_merge_moved_on_the_row_it_was
             .map(String::as_str),
         Some("saxophone"),
         "the write reached the survivor through the claim row the merge moved it to"
+    );
+    server.stop().await;
+}
+
+/// **A relist after an unrelated write keeps the operator's name on a record the
+/// build supplies, over the real store.** The import binds the record in the log,
+/// so the claims State lists it under the build's name; the relist the next write
+/// makes has to put the operator's name and aliases back over that row.
+///
+/// **The import's Writer is dropped after it drains.** A Writer that lives on holds
+/// the log's single-writer lock, and the journaled store the case then writes
+/// through waits for it and gives up.
+///
+/// **The search assertions are controls and carry none of the proof**: the
+/// operator's own update refreshes the record in the index, and the unrelated add
+/// re-indexes only the entity it names, so they hold with the fix removed. The
+/// listing assertion after the unrelated write is the one the fix moves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_relist_after_an_unrelated_write_keeps_the_operators_name_on_a_supplied_record_in_the_real_store()
+ {
+    use jojobot_adapters::fold::Folded;
+    use jojobot_adapters::provisioned::Provisioned;
+    use jojobot_adapters::search::{IndexedMemory, Retrieval};
+    use jojobot_domain::actor::Actor;
+    use jojobot_domain::log::claims::job;
+    use jojobot_domain::memory::EntityPatch;
+    use jojobot_domain::memory::mention::Mentioning;
+    use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
+
+    let (_scratch, mut server, pool) = store("claims-import-relist-supplied-name").await;
+    let supplied = supplied_view("view:loops");
+    let view = EntityId("view:loops".to_string());
+    {
+        let writer = Writer::default();
+        let imported = import_claims_once(&writer, &pool, &supplied, at())
+            .await
+            .expect("the import runs");
+        assert!(matches!(imported, Imported::Done { .. }), "{imported:?}");
+        writer.drain().await;
+    }
+
+    // The stack the server serves through: the journaled store that knows what the
+    // build supplies, the layer that lays the operator's name over it, the fold, and
+    // the index over the fold, so a search by the name is read too.
+    let folded = Arc::new(Folded::new(Arc::new(Provisioned::new(
+        DoltMemory::open(pool.clone())
+            .journaled()
+            .knowing(supplied.clone()),
+        supplied,
+    ))));
+    let indexed = Arc::new(
+        IndexedMemory::with_writer(Arc::new(Mentioning::new(folded.clone())), folded.writer())
+            .expect("the search index opens"),
+    );
+    folded.rebuild().await.expect("the fold loads");
+    indexed.rebuild().await.expect("the boot scan reads");
+    let retrieval = Retrieval::new(indexed.index(), vec![indexed.clone()]);
+
+    // **The operator names the record through the stack, as the server does**: the
+    // write is logged as a claim on the record and filed in the rows under its
+    // handle, and the listing reads the name back.
+    job::within(
+        job::test_job(&Actor::Operator),
+        indexed.update_entity(
+            &view,
+            EntityPatch {
+                name: Some("Weekly rounds".into()),
+                aliases: Some(vec!["rounds".into()]),
+                ..Default::default()
+            },
+        ),
+    )
+    .await
+    .expect("the operator names the view")
+    .written()
+    .expect("it lands");
+    let named = |listed: &[Entity]| {
+        listed
+            .iter()
+            .find(|entity| entity.id == view)
+            .map(|entity| (entity.name.clone(), entity.aliases.clone()))
+    };
+    let found_by_name = || async {
+        retrieval
+            .search(&SearchQuery::text("Weekly"))
+            .await
+            .expect("search ok")
+            .iter()
+            .any(|hit| matches!(hit, Hit::Entity { entity, .. } if entity.id == view))
+    };
+    let wanted = Some(("Weekly rounds".to_string(), vec!["rounds".to_string()]));
+    assert_eq!(
+        named(&folded.list_entities(None).await.expect("lists")),
+        wanted,
+        "the control: the listing wears the operator's name before the unrelated write"
+    );
+    assert!(
+        found_by_name().await,
+        "the control: a search finds the record by the operator's name before the write"
+    );
+
+    job::within(
+        job::test_job(&Actor::Operator),
+        indexed.add_entity(NewEntity::new(
+            EntityId("person:homer".to_string()),
+            "Homer",
+            "fixture",
+        )),
+    )
+    .await
+    .expect("the unrelated entity is added")
+    .written()
+    .expect("not blocked");
+    assert!(
+        found_by_name().await,
+        "a search by the operator's name no longer finds the record after the unrelated write"
+    );
+    assert_eq!(
+        named(&folded.list_entities(None).await.expect("lists")),
+        wanted,
+        "the relist after the unrelated write kept the operator's name and aliases"
     );
     server.stop().await;
 }
