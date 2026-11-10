@@ -7008,7 +7008,8 @@ pub trait Memory: Send + Sync {
     /// **A store that cannot do this refuses loudly rather than retracting and
     /// then capturing**, for the reason
     /// [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim) does.
-    // TEMPORARY(9.3.3): prepare in the one writer batches the act and its number.
+    // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+    // prepare in the one writer batches the act and its number.
     async fn retract_with_claim(
         &self,
         address: &FactAddress,
@@ -7039,7 +7040,8 @@ pub trait Memory: Send + Sync {
     /// **A store that cannot do this refuses loudly rather than editing and then
     /// capturing**, for the reason
     /// [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim) does.
-    // TEMPORARY(9.3.3): prepare in the one writer batches the act and its number.
+    // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+    // prepare in the one writer batches the act and its number.
     async fn update_fact_with_claim(
         &self,
         address: &FactAddress,
@@ -7068,7 +7070,8 @@ pub trait Memory: Send + Sync {
     /// **A store that cannot do this refuses loudly rather than merging and then
     /// capturing**, for the reason
     /// [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim) does.
-    // TEMPORARY(9.3.3): prepare in the one writer batches the act and its number.
+    // TEMPORARY(9.3.5) `q-935-merge-admission-in-the-one-writer`:
+    // prepare in the one writer batches the act and its number.
     async fn merge_with_claim(
         &self,
         folded: &EntityId,

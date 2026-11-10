@@ -360,7 +360,7 @@ impl Folded {
         //   the document of a folded handle come from the store;
         // - a role: its lease renewals are heartbeats kept off the log, so the State
         //   does not hold what a read of it serves: TEMPORARY(9.3.4), owner card
-        //   `q-933-d-s4-lease-home`;
+        //   `q-934-role-lease-read-from-heartbeat-home`;
         // - a record the State does not know, which is a record the build supplies
         //   and the overlay serves: TEMPORARY(9.3.5), until supplied records are
         //   supplied events.

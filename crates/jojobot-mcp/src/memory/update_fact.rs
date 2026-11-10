@@ -608,7 +608,8 @@ impl Jojobot {
         // **Let go once the store edit has landed**, before any step that edits
         // the same request again: the review mark of an archive by defrag does,
         // and would wait on this lock for ever.
-        // TEMPORARY(9.3.3): prepare in the one writer replaces it.
+        // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+        // prepare in the one writer replaces it.
         let mut spec_lock = match (&placing, &list_lock) {
             (None, None) => match self.hold_for_a_request_spec(&address.home).await {
                 Ok(guard) => guard,
@@ -778,7 +779,8 @@ impl Jojobot {
                 // **An archive takes the claim's keys off the thing, so the number
                 // rides on a live claim written in the same act**, never on the
                 // archived revision: its keys would leave the thing with it.
-                // TEMPORARY(9.3.3): prepare in the one writer writes both.
+                // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+                // prepare in the one writer writes both.
                 match self.generation_a_withdrawal_makes(&address).await {
                     Ok(Some(number)) => {
                         generation_claim = Some(Self::generation_claim(

@@ -326,7 +326,8 @@ impl Jojobot {
                 // spec; the key is jojobot's, and the licence check above refused
                 // a caller's own copy.
                 // **Held to the end of the creation**, as every write of a request's
-                // spec is. TEMPORARY(9.3.3): prepare in the one writer replaces it.
+                // spec is. TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+                // prepare in the one writer replaces it.
                 let _spec_lock = match self.hold_for_a_request_spec(&creating).await {
                     Ok(guard) => guard,
                     Err(e) => return memory_declined("add_entity", e).map(Err),

@@ -1284,8 +1284,9 @@ impl Jojobot {
         //
         // **A bot request's spec is written under it too**, so the highest generation
         // read below is still the highest when the claim carrying the next one lands.
-        // TEMPORARY(9.3.3): prepare in the one writer replaces this (see
-        // `hold_for_a_request_spec`).
+        // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+        // prepare in the one writer replaces only this request-spec clause (see
+        // `hold_for_a_request_spec`); the list placement lock stays.
         let _placing = if !mode.placing_held
             && (subject_kind == Some(EntityKind::LIST)
                 || Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove)
@@ -1404,7 +1405,8 @@ impl Jojobot {
         // from what the request holds. The key is jojobot's: the licence check
         // above refused a caller's own copy. A call that carries a capture job is
         // numbered by the writer, in the batch of the act.
-        // TEMPORARY(9.3.3): the old route goes with the live switch.
+        // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+        // the jobless route's numbering goes when admission moves into prepare.
         if jojobot_domain::memory::bot_request::is_request(&subject)
             && jojobot_domain::log::claims::job::current().is_none()
         {

@@ -559,7 +559,7 @@ impl DoltMemory {
     /// resolved as it stands.** That needs [`Self::knowing`]; a store not told
     /// reads such a pointer as naming nothing.
     ///
-    /// TEMPORARY(9.3.3) S5, the fold from the State. W16: it goes, with W15, in
+    /// TEMPORARY(9.3.4) `q-933-delete-w13-w16`: W16 goes, with W15, in
     /// the change that moves the reads from the rows to the State; until then it
     /// finishes the adoption W15 begins.
     ///
@@ -3333,8 +3333,8 @@ impl DoltMemory {
             (true, None, Some(run)) => self.run_is_another_bots(tx, run, &home).await?,
             _ => false,
         };
-        // TEMPORARY(9.3.3) this store's witness that it calls the domain's rule on
-        // a capture; the write path moves into the domain's pipeline there.
+        // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`: this
+        // store's capture witness goes when jobless admission moves into prepare.
         if jojobot_domain::memory::authorship::is_thought_of(edge.as_ref(), written_by_another) {
             let held = self.held_by(tx, &home).await?;
             // **The body cap, checked before the room has anything to say.**
@@ -4487,8 +4487,9 @@ impl DoltMemory {
     /// holds no moment yet, whose first renewal is an append): the caller
     /// then writes as it always did.
     ///
-    /// TEMPORARY(9.3.3): this overwrite stays beside the heartbeat home until the
-    /// last reader of the `claimed_at` write has left; then it goes.
+    /// TEMPORARY(9.3.4) `q-934-role-lease-read-from-heartbeat-home`: this
+    /// overwrite stays until role reads come from the heartbeat home instead of
+    /// the `claimed_at` write; then it goes.
     async fn overwrite_lease_moment(
         tx: &mut Transaction<'_, MySql>,
         role: &EntityId,

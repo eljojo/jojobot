@@ -17,7 +17,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use jojobot_domain::memory::{EntityId, Fact};
 
-/// TEMPORARY(9.3.3) the referring_to shadow, JOJOBOT_SHADOW. The projection families that can be shadowed.
+/// TEMPORARY(9.3.4) `q-referring-to-slow`: the referring_to shadow, JOJOBOT_SHADOW.
+/// The projection families that can be shadowed.
 /// The projection families selected by the boot registry's `feature_shadow` setting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {

@@ -140,7 +140,8 @@ impl Jojobot {
         // generation it makes is read and written under the request's lock, and the
         // lock is not re-entrant: the request's lock is taken here, once, with the
         // duplicate's, and nowhere else in this verb.
-        // TEMPORARY(9.3.3): prepare in the one writer replaces the lock.
+        // TEMPORARY(9.3.5) `q-935-merge-admission-in-the-one-writer`:
+        // prepare in the one writer replaces the lock.
         let _placing = if jojobot_domain::memory::entries::places_its_records(duplicate.kind())
             || jojobot_domain::memory::entries::places_its_records(survivor.kind())
             || jojobot_domain::memory::bot_request::is_request(&survivor)

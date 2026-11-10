@@ -6224,7 +6224,7 @@ async fn session_write_summary_answers_the_real_store() {
     store.stop().await;
 }
 
-/// TEMPORARY(9.3.3) kept witness: Commit-conflict race.
+/// TEMPORARY(9.3.4) `q-933-capture-witnesses-retire`: kept Commit-conflict race.
 /// 🚨 **A conflict is not a store failure, and the caller must be told
 /// which one happened.** Two concurrent captures on one bot's own home
 /// entity, nothing shared between them but that home — no drop, no edge,
@@ -6292,7 +6292,7 @@ async fn a_write_that_conflicts_with_another_is_told_apart_from_a_failed_store()
     store.stop().await;
 }
 
-/// TEMPORARY(9.3.3) kept witness: Last-slot race.
+/// TEMPORARY(9.3.4) `q-933-capture-witnesses-retire`: kept Last-slot race.
 /// 🚨 **Two captures racing for the last slot of a thread cannot both land.**
 /// The thread holds one record of the two its own number allows, and two
 /// captures read that count in two transactions that are open together. Real
@@ -9785,7 +9785,7 @@ async fn statements_run(pool: &sqlx::MySqlPool) -> usize {
         .expect("the counter is a number")
 }
 
-/// TEMPORARY(9.3.3) kept witness: W: statement budget per member.
+/// TEMPORARY(9.3.4) `q-933-capture-witnesses-retire`: kept W: statement budget per member.
 /// **A capture on a member of a large numbered collection reads the collection in
 /// a bounded number of statements per member.** A collection of 64 members
 /// numbered by a key, a plain thing beside it, and the same note captured on each.
@@ -10413,7 +10413,7 @@ async fn a_bookkeeping_write_is_no_change_of_the_thing_in_the_real_store() {
     store.stop().await;
 }
 
-/// TEMPORARY(9.3.3) kept witness: W: claims read on a capped home.
+/// TEMPORARY(9.3.4) `q-933-capture-witnesses-retire`: kept W: claims read on a capped home.
 /// **A write pays for a ceiling only where a ceiling applies.** A capture onto a
 /// person reads the claims of the person no more than the capture of a first
 /// claim does, however many the person holds, because a person has no ceiling and

@@ -184,7 +184,8 @@ impl Jojobot {
         // makes the next generation in the store**, on a claim of its own written
         // in the same act. The verb sends no number.
         // The request's lock stays until the writer's job replaces it.
-        // TEMPORARY(9.3.3): prepare in the one writer replaces the lock.
+        // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+        // prepare in the one writer replaces the lock.
         let spec_lock = match self.hold_for_a_request_spec(&address.home).await {
             Ok(guard) => guard,
             Err(e) => return memory_declined("retract", e),

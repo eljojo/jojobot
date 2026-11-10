@@ -72,6 +72,8 @@ impl State {
         // the write of the generation, and a second number would name the same spec
         // twice. The writers that still work the number out themselves are met here
         // until they leave the work to this function.
+        // TEMPORARY(9.3.5) `q-935-merge-admission-in-the-one-writer`:
+        // the skip goes when the last verb leaves its numbering to this function.
         let numbered: Vec<&ObjectId> = pending
             .iter()
             .filter_map(|event| match event {

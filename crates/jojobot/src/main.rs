@@ -29,7 +29,8 @@ const TASK_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// settle and the store's own stop still fit inside it.
 const FINAL_JOB_BOUND: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// TEMPORARY(9.3.3): remove when the oversized futures are boxed and
+/// TEMPORARY(9.3.4) `q-934-box-oversized-futures`:
+/// remove when the oversized futures are boxed and
 /// `clippy::large_futures` holds them.
 ///
 /// **The stack of each worker thread.** Tokio's 2 MiB default is too little for a

@@ -168,7 +168,7 @@ impl DoltRequests {
     }
 
     /// The identity a handle answers to, read from the entity tables.
-    /// TEMPORARY(9.3.3): d's read side moves this lookup into the State.
+    /// TEMPORARY(9.3.4) `q-934-request-ledger-identity-from-state`: d's read side moves this lookup into the State.
     async fn actor(&self, bot: &EntityId) -> Result<Option<ObjectId>, RequestError> {
         let mut conn = self.pool.acquire().await.map_err(store)?;
         Ok(bot_key(&mut conn, bot).await.map_err(store)?.map(ObjectId))

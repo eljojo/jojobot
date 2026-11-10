@@ -82,7 +82,7 @@ impl DoltMemory {
         Ok(())
     }
 
-    /// TEMPORARY(9.3.3) S5, the fold from the State. W15: it goes, with W16, in
+    /// TEMPORARY(9.3.4) `q-933-delete-w13-w16`: W15 goes, with W16, in
     /// the change that moves the reads from the rows to the State, because until
     /// then this row is what a retired supplied handle reads back from.
     ///

@@ -24,8 +24,8 @@ use super::*;
 /// The writer and session of the first write of each claim, by its key and id.
 type Writers = HashMap<(String, String), (Option<String>, Option<String>)>;
 
-/// TEMPORARY(9.3.3) the boot fill from SQL. It goes when boot builds the State
-/// from the log (q-933-state-indexes).
+/// TEMPORARY(9.3.4) `q-934-fold-image-from-state`: the boot fill from SQL goes
+/// when the fold's image is filled from the State.
 ///
 /// The boot reader of a [`DoltMemory`].
 pub struct DoltBootReader {

@@ -257,7 +257,8 @@ impl Jojobot {
     /// two writes of one request's spec do not read one number. `None` for a
     /// subject that is no request. The caller must not hold the placement lock of
     /// the same subject already: it is not re-entrant.
-    // TEMPORARY(9.3.3): the spec write's admission moves into prepare in the one
+    // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+    // the spec write's admission moves into prepare in the one
     // writer, which is serialized and reads the highest generation from the
     // State's GENERATION stream; this lock and the history read go with it.
     pub(crate) async fn hold_for_a_request_spec(
@@ -285,7 +286,8 @@ impl Jojobot {
 
     /// **The live claim that carries a generation beside an act that took a claim
     /// off a bot request.** The number is jojobot's own, so it is a derived key.
-    // TEMPORARY(9.3.3): prepare in the one writer writes the number with the act.
+    // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+    // prepare in the one writer writes the number with the act.
     pub(crate) fn generation_claim(
         subject: &EntityId,
         number: String,
@@ -314,7 +316,8 @@ impl Jojobot {
     /// answers for that). Read from the history of the spec keys, with the claim
     /// taken out, and numbered from the highest ever written. Called under the
     /// request's lock.
-    // TEMPORARY(9.3.3): prepare in the one writer compares the State's spec
+    // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+    // prepare in the one writer compares the State's spec
     // before and after the batch.
     pub(crate) async fn generation_a_withdrawal_makes(
         &self,
@@ -354,7 +357,8 @@ impl Jojobot {
     /// ([`spec_merging`](jojobot_domain::memory::bot_request::spec_merging)),
     /// numbered from the highest ever written on the request. Called under the
     /// request's lock.
-    // TEMPORARY(9.3.3): prepare in the one writer compares the State's spec
+    // TEMPORARY(9.3.5) `q-935-merge-admission-in-the-one-writer`:
+    // prepare in the one writer compares the State's spec
     // before and after the batch.
     pub(crate) async fn generation_a_merge_makes(
         &self,

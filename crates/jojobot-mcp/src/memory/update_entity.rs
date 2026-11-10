@@ -403,7 +403,8 @@ impl Jojobot {
                 }
                 // **A write of a bot request's spec raises its generation**, from the
                 // highest ever written, read and stored under the request's lock.
-                // TEMPORARY(9.3.3): prepare in the one writer replaces the lock.
+                // TEMPORARY(9.3.4) `q-934-jobless-writes-decided-by-old-route`:
+                // prepare in the one writer replaces the lock.
                 let _spec_lock = match self.hold_for_a_request_spec(&handle).await {
                     Ok(guard) => guard,
                     Err(e) => return memory_declined("update_entity", e),

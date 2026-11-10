@@ -75,7 +75,7 @@ pub fn retired_handles() -> Vec<jojobot_domain::memory::EntityId> {
     Vec::new()
 }
 
-/// TEMPORARY(9.3.3) S5, the fold from the State. It goes with W15, the boot's
+/// TEMPORARY(9.3.4) `q-933-delete-w13-w16`: it goes with W15, the boot's
 /// adoption pass: while W15 lives a build must retire no supplied handle, because
 /// W15 would give the handle a row of its own key beside the identity the log
 /// already holds for it. Delete W15 before this build retires a supplied handle.

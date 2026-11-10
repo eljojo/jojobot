@@ -2137,8 +2137,9 @@ impl InMemoryMemory {
     /// holds no moment yet, whose first renewal is an append): the caller
     /// then writes as it always did.
     ///
-    /// TEMPORARY(9.3.3): this overwrite stays beside the heartbeat home until the
-    /// last reader of the `claimed_at` write has left; then it goes.
+    /// TEMPORARY(9.3.4) `q-934-role-lease-read-from-heartbeat-home`: this
+    /// overwrite stays until role reads come from the heartbeat home instead of
+    /// the `claimed_at` write; then it goes.
     fn overwrite_lease_moment(&self, home: &EntityId, moment: &str) -> bool {
         let now = self.clock().now();
         self.edits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -3464,8 +3465,8 @@ impl Memory for InMemoryMemory {
                 .and_then(|(bots, run)| bots.bot_of_run(run))
         });
         let written_by_another = self.another_bot(writer.as_ref(), &subject_entity.id);
-        // TEMPORARY(9.3.3) this store's witness that it calls the domain's rule on
-        // a capture; the write path moves into the domain's pipeline there.
+        // TEMPORARY(9.3.4) `q-933-fake-capture-through-prepare`: this store's
+        // capture witness goes when its admission moves into prepare.
         if crate::memory::authorship::is_thought_of(edge.as_ref(), written_by_another) {
             let folded =
                 super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
