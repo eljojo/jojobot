@@ -42,8 +42,8 @@ const BACKGROUND: usize = 128;
 /// How many more statements a capture on the thing of 48 claims may send than a
 /// capture on the thing of none. A capture inside a job refreshes the thing's
 /// document from the claims State, which sends no statement for its claims, so
-/// the thing of 48 sends as few as the thing of none (11 against 24, the first
-/// capture of the run being the cold one). A refresh that reads the thing's
+/// the thing of 48 sends as few as the thing of none (11 each, once a capture
+/// the count does not read has taken the cold one). A refresh that reads the thing's
 /// claims back from the store sends about a hundred more.
 const MORE_STATEMENTS_PER_THING_OF_48: i64 = 10;
 /// The most statements one capture through the fold may send, whoever else names
@@ -238,6 +238,18 @@ async fn a_capture_through_the_fold_costs_no_more_for_a_thing_of_48_claims() {
             .expect("the search index opens"),
     );
     indexed.rebuild().await.expect("the boot scan reads");
+
+    // **The first capture of a run is the cold one** (24 statements against 11), so
+    // each layer takes one the count does not read. Without it the thing of none
+    // is the cold capture and the thing of 48 the warm one, and the relative bound
+    // below has thirteen statements of slack it was never meant to give.
+    for layer in [folded.clone() as Arc<dyn Memory>, indexed.memory()] {
+        jojobot_domain::log::claims::job::within(
+            jojobot_domain::log::claims::job::test_job(&jojobot_domain::actor::Actor::Operator),
+            put(layer.as_ref(), claim(&anchor, &owner, 2000, None)),
+        )
+        .await;
+    }
 
     let mut counted = Vec::new();
     for (label, thing) in [("0 claims", &empty), ("48 claims", &wide)] {
