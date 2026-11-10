@@ -210,7 +210,7 @@ async fn import_in_job(
         .writer()
         .begin()
         .await
-        .map_err(|e| ClaimsImportError::Store(e.to_string()))?;
+        .map_err(|e| ClaimsImportError::Store(sql::why(&e)))?;
     let staged = seam
         .stage_import(&mut tx, events, at)
         .await
@@ -290,7 +290,7 @@ async fn reconcile_in_job(
         .writer()
         .begin()
         .await
-        .map_err(|e| ClaimsImportError::Store(e.to_string()))?;
+        .map_err(|e| ClaimsImportError::Store(sql::why(&e)))?;
     let settled = log.settle_on(&mut tx).await;
     let _ = tx.rollback().await;
     settled.map_err(log_failed)?;
@@ -342,7 +342,7 @@ async fn reconcile_in_job(
         .writer()
         .begin()
         .await
-        .map_err(|e| ClaimsImportError::Store(e.to_string()))?;
+        .map_err(|e| ClaimsImportError::Store(sql::why(&e)))?;
     let head = log.head_in(&mut tx).await.map_err(log_failed)?;
     let batch = SealedBatch::seal(
         BatchId(format!("claims-reconcile:{head}")),

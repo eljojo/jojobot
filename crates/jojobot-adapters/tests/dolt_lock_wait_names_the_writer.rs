@@ -11,7 +11,9 @@
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use jojobot_adapters::claims_import::{ClaimsImportError, import_claims_once};
+use jojobot_adapters::claims_import::{
+    ClaimsImportError, import_claims_once, reconcile_supply_list_once,
+};
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::{Dolt, migrate};
 use jojobot_adapters::fold::Folded;
@@ -126,6 +128,38 @@ async fn a_claims_import_beside_a_held_log_says_another_writer_holds_it() {
             );
         }
         other => panic!("an import beside a held log is refused as a store error: {other:?}"),
+    }
+
+    drop(first);
+    server.stop().await;
+}
+
+/// **So does the supply-list reconcile.** Its first transaction is opened in a job of
+/// its own, so it waits for the lock alone. A held log stops a second server at the
+/// import, so the case pins this site by calling the entry directly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_supply_reconcile_beside_a_held_log_says_another_writer_holds_it() {
+    let (_scratch, mut server, pool, first) = a_held_log("lock-wait-names-the-reconcile").await;
+
+    let second = Writer::default();
+    let refused = reconcile_supply_list_once(
+        &second,
+        &pool,
+        &Provisions::default(),
+        &[],
+        &[],
+        Timestamp::from_second(1_800_000_001).expect("a moment"),
+        jiff::civil::date(2027, 1, 15),
+    )
+    .await;
+    match &refused {
+        Err(ClaimsImportError::Store(said)) => {
+            assert!(
+                said.contains("another writer holds the log"),
+                "the sentence names the other writer: {said}"
+            );
+        }
+        other => panic!("a reconcile beside a held log is refused as a store error: {other:?}"),
     }
 
     drop(first);
