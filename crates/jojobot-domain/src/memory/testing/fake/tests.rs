@@ -261,6 +261,74 @@ async fn a_claimed_edit_refused_at_the_spend_leaves_the_heartbeat_home_as_it_was
     );
 }
 
+/// **A claim edit that renews a role's lease, refused at its companion claim,
+/// leaves the heartbeat home as it was.** The renewal is the first step of the act
+/// and moves the home; the companion is refused for a line break after it. The
+/// five-act case below compares the home too, but none of its acts writes a role's
+/// `claimed_at`, so the home is empty on both sides there and only this case holds
+/// it. **Paired**: the same act with a clean companion lands and moves the home.
+#[tokio::test]
+async fn a_refused_claim_edit_that_renewed_a_lease_leaves_the_heartbeat_home_as_it_was() {
+    use crate::memory::testing::contract::LeaseHeartbeat;
+    use crate::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
+    let store = InMemoryMemory::booted();
+    let (bot, role, _, renewed_at) = a_renewed_role(&store).await;
+    let held = store
+        .recall(&role)
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the role holds its claim")
+        .address();
+    let later = renewed_at + jiff::SignedDuration::from_mins(5);
+    let renewal = || {
+        let fields: std::collections::BTreeMap<String, String> = [
+            (ROLE_HOLDER.to_string(), "delta".to_string()),
+            (ROLE_CLAIMED_AT.to_string(), later.to_string()),
+        ]
+        .into();
+        FactPatch {
+            derived: fields.keys().cloned().collect(),
+            fields,
+            role_move: Some(RoleMove {
+                kind: RoleMoveKind::Renew,
+                role: "contract-lease-composite".to_string(),
+                claimant: "delta".to_string(),
+            }),
+            ..FactPatch::default()
+        }
+    };
+    store
+        .update_fact_with_claim(
+            &held,
+            renewal(),
+            &bot,
+            first_claim_about(&role, "noted\nover two lines"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        store.heartbeat_of(&role).await,
+        Some(renewed_at.to_string()),
+        "a refused act leaves the home as it was"
+    );
+    store
+        .update_fact_with_claim(
+            &held,
+            renewal(),
+            &bot,
+            first_claim_about(&role, "noted in one line"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.heartbeat_of(&role).await,
+        Some(later.to_string()),
+        "the control: a clean companion lands the act and moves the home"
+    );
+}
+
 /// Spend the request id on a plain note about `role`, so the next act under
 /// [`under_a_spent_id`] is refused at its spend.
 async fn spend_the_id_on_a_note(store: &InMemoryMemory, role: &EntityId) {
