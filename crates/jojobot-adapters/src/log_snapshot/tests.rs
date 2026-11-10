@@ -494,3 +494,36 @@ async fn a_boot_that_skips_a_snapshot_counts_it_by_reason() {
         "a fingerprint skip is counted"
     );
 }
+
+/// **The ten reasons are served under these names.** The boot line and the
+/// `reason` label of `jojobot_snapshot_skips` carry them, and a scraper, a
+/// dashboard or an alert reads them from outside this process, so the spellings
+/// are written out here and not taken from the list they are checked against.
+#[test]
+fn the_skip_reasons_are_served_under_these_ten_names() {
+    let served: Vec<&str> = Skip::ALL.iter().map(|skip| skip.name()).collect();
+    assert_eq!(
+        served,
+        [
+            "none_held",
+            "format",
+            "fingerprint",
+            "identity",
+            "epoch",
+            "erasure",
+            "length",
+            "checksum",
+            "boundary",
+            "unreadable",
+        ]
+    );
+}
+
+/// **Each reason counts at its own place in the list**, so the count a scrape
+/// serves under a name is the count of that reason and of no other.
+#[test]
+fn every_reason_counts_at_its_own_place_in_the_list() {
+    for (at, skip) in Skip::ALL.iter().enumerate() {
+        assert_eq!(skip.index(), at, "{}", skip.name());
+    }
+}

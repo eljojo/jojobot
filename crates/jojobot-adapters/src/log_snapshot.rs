@@ -77,6 +77,25 @@ impl Skip {
             Skip::Unreadable => "unreadable",
         }
     }
+
+    /// **Where this reason sits in [`Skip::ALL`] and in the counters.** An
+    /// exhaustive match, so a variant added to the enum has to be placed here
+    /// before the crate builds, and a place past the end of `ALL` fails the count
+    /// instead of passing unseen.
+    const fn index(self) -> usize {
+        match self {
+            Skip::NoneHeld => 0,
+            Skip::Format => 1,
+            Skip::Fingerprint => 2,
+            Skip::Identity => 3,
+            Skip::Epoch => 4,
+            Skip::Erasure => 5,
+            Skip::Length => 6,
+            Skip::Checksum => 7,
+            Skip::Boundary => 8,
+            Skip::Unreadable => 9,
+        }
+    }
 }
 
 static SKIPS: [std::sync::atomic::AtomicU64; Skip::ALL.len()] =
@@ -97,9 +116,7 @@ pub fn skip_counts() -> Vec<(&'static str, u64)> {
 }
 
 fn skipped(skip: Skip) {
-    if let Some(at) = Skip::ALL.iter().position(|each| *each == skip) {
-        SKIPS[at].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
+    SKIPS[skip.index()].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if skip == Skip::NoneHeld {
         tracing::info!(
             reason = skip.name(),
