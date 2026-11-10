@@ -179,7 +179,28 @@ impl Jojobot {
                 }
             }
             match lost_note {
-                None => return composed.served,
+                None => {
+                    // **A bulk capture's item hands up what it served**, by key, so
+                    // the batch that merges the receipts can take out one lost part.
+                    let _ = crate::teaching::BATCH_SERVED.try_with(|sink| {
+                        let mut sink = sink.lock().expect("a batch's served parts are poisoned");
+                        if composed.served.get("possible_subject_note").is_some()
+                            && let Some(note) = &possible
+                        {
+                            sink.possible.push(note.clone());
+                        }
+                        if composed.served.get("unlocks").is_some() {
+                            sink.owed.extend(owed.iter().cloned());
+                        }
+                        sink.teaching.extend(
+                            notes
+                                .iter()
+                                .filter(|note| !left.contains(note.name))
+                                .map(|note| (note.domain.to_string(), note.text.clone())),
+                        );
+                    });
+                    return composed.served;
+                }
                 Some(at) => {
                     notes.remove(at);
                 }
@@ -323,6 +344,124 @@ pub(crate) fn own_batch_receipt(mut body: Value, spends: Vec<String>) -> (Value,
         .filter(|domain| suggestion_of(domain).is_none_or(|key| !dropped.contains(&key)))
         .collect();
     (served, kept)
+}
+
+/// **What the items of a batch served, by the ledger key each spent.** An item
+/// composes its own receipt, so the batch's merged text no longer says which key
+/// bought which sentence. The parts stay here, per key, so a key another receipt
+/// spent first takes out only the part it bought.
+#[derive(Clone, Default)]
+pub(crate) struct ServedParts {
+    /// The possible-subject notes the items served, each with its things' rows.
+    pub(crate) possible: Vec<PossibleSubject>,
+    /// The type steps the items served, by ledger key and sentence.
+    pub(crate) owed: Vec<(String, String)>,
+    /// The teaching notes the items served, by ledger domain and text.
+    pub(crate) teaching: Vec<(String, String)>,
+}
+
+impl Jojobot {
+    /// **The batch's merged receipt, composed by the owner, and the rows it
+    /// spends.** The rows are spent after the last compose, as
+    /// [`Self::own_capture_receipt`] spends: a key another receipt spent first
+    /// takes out the part it bought, by the parts the items served, and the
+    /// receipt is composed again, since a smaller set can let a part ship that
+    /// the first compose dropped. A key this receipt spent stays spent. A key
+    /// whose suggestion the owner dropped is not spent.
+    pub(crate) async fn deliver_batch_receipt(
+        &self,
+        mut body: Value,
+        mut spends: Vec<String>,
+        parts: &ServedParts,
+        caller: &Caller,
+    ) -> Value {
+        let mut parts = parts.clone();
+        let mut spent: BTreeSet<String> = BTreeSet::new();
+        loop {
+            let (served, kept) = own_batch_receipt(body.clone(), spends.clone());
+            let lost = self.spend(kept, caller, &mut spent).await;
+            if lost.is_empty() {
+                return served;
+            }
+            parts.take_out(&lost, &mut body);
+            spends.retain(|domain| !lost.contains(domain));
+        }
+    }
+}
+
+impl ServedParts {
+    /// **Take out of the merged body the parts the lost keys bought**, and
+    /// forget them. A step two keys share stays while a key behind it is not
+    /// lost, since the batch merged the items' equal steps into one.
+    fn take_out(&mut self, lost: &BTreeSet<String>, body: &mut Value) {
+        let Some(object) = body.as_object_mut() else {
+            return;
+        };
+        if !self.possible.is_empty() {
+            let mut notes: Vec<String> = Vec::new();
+            self.possible = std::mem::take(&mut self.possible)
+                .into_iter()
+                .filter_map(|note| note.without(lost))
+                .collect();
+            for note in self.possible.iter().map(PossibleSubject::note) {
+                if !notes.contains(&note) {
+                    notes.push(note);
+                }
+            }
+            if notes.is_empty() {
+                object.remove("possible_subject_note");
+            } else {
+                object.insert("possible_subject_note".into(), notes.join("\n\n").into());
+            }
+        }
+        let gone_sentences: Vec<String> = self
+            .owed
+            .iter()
+            .filter(|(key, _)| lost.contains(key))
+            .map(|(_, sentence)| sentence.clone())
+            .collect();
+        self.owed.retain(|(key, _)| !lost.contains(key));
+        if !gone_sentences.is_empty() {
+            let kept: Vec<&String> = self.owed.iter().map(|(_, sentence)| sentence).collect();
+            if let Some(steps) = object
+                .get_mut("unlocks")
+                .and_then(|block| block.get_mut("steps"))
+                .and_then(Value::as_array_mut)
+            {
+                steps.retain(|step| {
+                    let sentence = step["unlocks"].as_str().unwrap_or_default();
+                    !gone_sentences.iter().any(|gone| gone == sentence)
+                        || kept.iter().any(|held| held.as_str() == sentence)
+                });
+                if steps.is_empty() {
+                    object.remove("unlocks");
+                }
+            }
+        }
+        let gone_lines: Vec<String> = self
+            .teaching
+            .iter()
+            .filter(|(domain, _)| lost.contains(domain))
+            .map(|(_, text)| text.clone())
+            .collect();
+        self.teaching.retain(|(domain, _)| !lost.contains(domain));
+        if !gone_lines.is_empty() {
+            let kept: Vec<&String> = self.teaching.iter().map(|(_, text)| text).collect();
+            if let Some(lines) = object.get_mut("teaching").and_then(Value::as_array_mut) {
+                lines.retain(|line| {
+                    let text = line.as_str().unwrap_or_default();
+                    !gone_lines.iter().any(|gone| gone == text)
+                        || kept.iter().any(|held| held.as_str() == text)
+                });
+                if lines.is_empty() {
+                    object.remove("teaching");
+                }
+            }
+        }
+        if lost.contains(super::list_carry::PLAN_CARRY_DOMAIN) {
+            object.remove("hint");
+        }
+    }
 }
 
 /// The call that returns a left-out suggestion's ground: the thing it is about.
@@ -1069,5 +1208,153 @@ mod tests {
             assert!(served.get(key).is_none(), "{key} shipped: {served}");
         }
         assert_eq!(served["address"], "work:atlas-root#f1", "{served}");
+    }
+
+    /// A batch's merged receipt of two items, each naming one thing, and the parts
+    /// they served. The first item's row is `taken`, the second's `free`.
+    fn two_items_naming_one_thing_each() -> (Value, super::ServedParts, Vec<String>) {
+        let furnace = super::PossibleSubject::of(
+            "list:homer-chores",
+            "list:homer-chores#f1",
+            &[("thing:the-furnace", "possible-subject:taken")],
+        );
+        let filter = super::PossibleSubject::of(
+            "list:homer-chores",
+            "list:homer-chores#f2",
+            &[("thing:the-air-filter", "possible-subject:free")],
+        );
+        let body = json!({
+            "list": "list:homer-chores",
+            "possible_subject_note": format!("{}\n\n{}", furnace.note(), filter.note()),
+        });
+        let parts = super::ServedParts {
+            possible: vec![furnace, filter],
+            ..Default::default()
+        };
+        let spends = vec![
+            "possible-subject:taken".to_string(),
+            "possible-subject:free".to_string(),
+        ];
+        (body, parts, spends)
+    }
+
+    /// **A batch whose item lost a row to another call ships the parts no one
+    /// spent.** Two items each name a thing; another call of the session spent the
+    /// first thing's row between the batch's peek and its write. The note names the
+    /// second thing alone, the free row is spent, and the lost thing is not told.
+    #[tokio::test]
+    async fn a_batch_that_loses_a_row_ships_the_parts_no_one_spent() {
+        let jojobot = handler();
+        let caller = the_caller();
+        let (body, parts, spends) = two_items_naming_one_thing_each();
+        assert!(
+            jojobot
+                .first_contact("possible-subject:taken", Some(&caller))
+                .await,
+            "the other call spends the first row"
+        );
+        let served = jojobot
+            .deliver_batch_receipt(body, spends, &parts, &caller)
+            .await;
+        let note = served["possible_subject_note"].as_str().expect("the note");
+        assert!(note.contains("thing:the-air-filter"), "{note}");
+        assert!(!note.contains("thing:the-furnace"), "{note}");
+        assert!(
+            !jojobot.untaught("possible-subject:free", &caller).await,
+            "the row that shipped is spent"
+        );
+    }
+
+    /// **A batch whose every row was lost serves no note, and the suggestion the
+    /// note outranked ships in its place and is spent.**
+    #[tokio::test]
+    async fn a_batch_left_naming_nothing_gives_way_to_the_hint() {
+        let jojobot = handler();
+        let caller = the_caller();
+        let (mut body, parts, mut spends) = two_items_naming_one_thing_each();
+        for key in ["possible-subject:taken", "possible-subject:free"] {
+            assert!(jojobot.first_contact(key, Some(&caller)).await);
+        }
+        body["hint"] = json!("a hint");
+        spends.push(super::super::list_carry::PLAN_CARRY_DOMAIN.to_string());
+        let served = jojobot
+            .deliver_batch_receipt(body, spends, &parts, &caller)
+            .await;
+        assert!(served.get("possible_subject_note").is_none(), "{served}");
+        assert_eq!(served["hint"], "a hint", "{served}");
+        assert!(
+            !jojobot
+                .untaught(super::super::list_carry::PLAN_CARRY_DOMAIN, &caller)
+                .await,
+            "the hint that shipped is spent"
+        );
+    }
+
+    /// **A step comes out for its lost key and a step another key still owns
+    /// stays.** Two items owed the same sentence under two keys, which the batch
+    /// merged into one step: one key lost, the step still ships for the other.
+    /// A different step whose key was lost comes out.
+    #[tokio::test]
+    async fn a_batch_loses_a_step_only_when_every_key_behind_it_is_lost() {
+        let jojobot = handler();
+        let caller = the_caller();
+        let body = a_receipt_with_steps(&["shared step", "own step"]);
+        let parts = super::ServedParts {
+            owed: vec![
+                ("type-unlocks:a".into(), "shared step".into()),
+                ("type-unlocks:b".into(), "shared step".into()),
+                ("type-unlocks:c".into(), "own step".into()),
+            ],
+            ..Default::default()
+        };
+        let spends: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|key| format!("type-unlocks:{key}"))
+            .collect();
+        for key in ["type-unlocks:a", "type-unlocks:c"] {
+            assert!(jojobot.first_contact(key, Some(&caller)).await);
+        }
+        let served = jojobot
+            .deliver_batch_receipt(body, spends, &parts, &caller)
+            .await;
+        let steps: Vec<&str> = served["unlocks"]["steps"]
+            .as_array()
+            .expect("the steps")
+            .iter()
+            .filter_map(|step| step["unlocks"].as_str())
+            .collect();
+        assert_eq!(steps, ["shared step"], "{served}");
+        assert!(!jojobot.untaught("type-unlocks:b", &caller).await);
+    }
+
+    /// **A teaching line comes out for its lost domain and the line of a free
+    /// domain stays and is spent.**
+    #[tokio::test]
+    async fn a_batch_loses_a_teaching_line_for_its_lost_domain() {
+        let jojobot = handler();
+        let caller = the_caller();
+        let body = json!({"list": "list:homer-chores", "teaching": ["taken line", "free line"]});
+        let parts = super::ServedParts {
+            teaching: vec![
+                ("batch-test:taken".into(), "taken line".into()),
+                ("batch-test:free".into(), "free line".into()),
+            ],
+            ..Default::default()
+        };
+        assert!(
+            jojobot
+                .first_contact("batch-test:taken", Some(&caller))
+                .await
+        );
+        let served = jojobot
+            .deliver_batch_receipt(
+                body,
+                vec!["batch-test:taken".into(), "batch-test:free".into()],
+                &parts,
+                &caller,
+            )
+            .await;
+        assert_eq!(served["teaching"], json!(["free line"]), "{served}");
+        assert!(!jojobot.untaught("batch-test:free", &caller).await);
     }
 }

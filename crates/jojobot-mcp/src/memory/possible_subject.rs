@@ -155,6 +155,14 @@ impl Jojobot {
             && let Some(object) = body.as_object_mut()
         {
             object.insert("possible_subject_note".into(), possible.note().into());
+            // A bulk capture's resumed item hands up the note it served, by its
+            // rows, so a row another call spent first takes out only its thing.
+            let _ = crate::teaching::BATCH_SERVED.try_with(|sink| {
+                sink.lock()
+                    .expect("a batch's served parts are poisoned")
+                    .possible
+                    .push(possible.clone());
+            });
         }
     }
 

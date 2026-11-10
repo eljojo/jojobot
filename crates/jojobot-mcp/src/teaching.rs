@@ -288,6 +288,13 @@ tokio::task_local! {
     /// A ranked carry hint uses the same scope while it is only a candidate;
     /// its receipt owner spends the domain after selection if the hint survived.
     pub(crate) static BATCH_SPENDS: std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+    /// **What the items of a bulk capture served, by the ledger key each spent.**
+    /// The batch merges its items' notes into one receipt and spends their keys
+    /// when it delivers; a key another call spent first takes out of the receipt
+    /// the part it bought, and only that part, which the merged text cannot say.
+    /// See [`BATCH_SPENDS`].
+    pub(crate) static BATCH_SERVED: std::sync::Arc<std::sync::Mutex<crate::memory::receipt_owner::ServedParts>>;
 }
 
 /// **A ledger key made of a fixed prefix and a part a caller's words decide**, kept

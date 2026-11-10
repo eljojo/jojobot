@@ -656,6 +656,11 @@ impl Jojobot {
         // **The notes the items earn are held back and delivered together**: each
         // item's ledger spends wait in `spends`, and the receipt carries the notes.
         let spends = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        // **What the items served, by key**, so a key another call spends first
+        // takes out only the part it bought.
+        let served = std::sync::Arc::new(std::sync::Mutex::new(
+            super::receipt_owner::ServedParts::default(),
+        ));
         let mut notes = Notes::default();
         for (at, (mut one, label)) in items.into_iter().enumerate() {
             // **An item an earlier call wrote is not written, or judged, again**:
@@ -678,10 +683,13 @@ impl Jojobot {
                     && let Some(fact) = held.iter().find(|f| f.address().to_string() == address)
                 {
                     let mut said = serde_json::json!({});
-                    crate::teaching::BATCH_SPENDS
+                    crate::teaching::BATCH_SERVED
                         .scope(
-                            spends.clone(),
-                            self.note_possible_subject(fact, &caller, &mut said),
+                            served.clone(),
+                            crate::teaching::BATCH_SPENDS.scope(
+                                spends.clone(),
+                                self.note_possible_subject(fact, &caller, &mut said),
+                            ),
                         )
                         .await;
                     notes.collect(&said);
@@ -692,19 +700,22 @@ impl Jojobot {
             if !ticking && at > 0 {
                 one.after = written.last().map(|(_, address)| address.clone());
             }
-            let answered = crate::teaching::BATCH_SPENDS
+            let answered = crate::teaching::BATCH_SERVED
                 .scope(
-                    spends.clone(),
-                    self.capture_one(
-                        one,
-                        Mode {
-                            check_only: false,
-                            placing_held: true,
-                            part: Some(part_of(at)),
-                            tick_state: None,
-                            ends_later: Some(ends_later.clone()),
-                        },
-                        Some(caller.clone()),
+                    served.clone(),
+                    crate::teaching::BATCH_SPENDS.scope(
+                        spends.clone(),
+                        self.capture_one(
+                            one,
+                            Mode {
+                                check_only: false,
+                                placing_held: true,
+                                part: Some(part_of(at)),
+                                tick_state: None,
+                                ends_later: Some(ends_later.clone()),
+                            },
+                            Some(caller.clone()),
+                        ),
                     ),
                 )
                 .await;
@@ -810,13 +821,16 @@ impl Jojobot {
         // **The merged receipt goes through the owner once**, since each item was
         // composed alone and the merge can hold more than one suggestion. A
         // suggestion it drops spends nothing.
-        let (owned, held_back) = super::receipt_owner::own_batch_receipt(body, held_back);
-        body = owned;
         // **The notes are delivered, so their ledger rows are written now**, and
-        // never before: a batch cut partway never reaches this line.
-        for domain in held_back {
-            self.first_contact(&domain, Some(&caller)).await;
-        }
+        // never before: a batch cut partway never reaches this line. A row another
+        // call spent first takes out the part it bought, and only that part.
+        let parts = served
+            .lock()
+            .expect("a batch's served parts are poisoned")
+            .clone();
+        body = self
+            .deliver_batch_receipt(body, held_back, &parts, &caller)
+            .await;
         jojobot_domain::request::finished();
         let changed = self.changed_on(&before, &subject).await;
         crate::changed::note_changed(&mut body, changed);
@@ -1176,6 +1190,51 @@ mod tests {
             later.get("possible_subject_note").is_none(),
             "the resend delivered it, so it is spent: {later}"
         );
+    }
+
+    /// **A resent batch that loses the row of the item it writes now keeps the note
+    /// the earlier item earned.** The first item names Marge and lands, the second
+    /// is cut; another call of the session spends Lisa's row before the resend
+    /// writes it. The resend tells Marge's note from the item it does not write
+    /// again, and Lisa's from the item it writes now: the note names Marge alone.
+    #[tokio::test]
+    async fn a_resent_batch_that_loses_a_new_row_keeps_the_note_of_the_item_it_resumed() {
+        let ledger = InMemoryRequests::new();
+        let memory = Arc::new(InMemoryMemory::seeded().with_requests(ledger.clone()));
+        let jojobot = Jojobot::new(
+            memory,
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(notes_cases::AnotherCallWinsTheFirstNote::winning(1)),
+            seeded_registry(),
+        )
+        .with_requests(ledger.clone());
+        ensure(&jojobot, "list:homer-chores").await;
+        ensure(&jojobot, "person:marge").await;
+        ensure(&jojobot, "person:lisa").await;
+        jojobot
+            .capture(Parameters(capture_args("person:marge", "plays go")))
+            .await
+            .expect("the first capture answers");
+        let batch = || entries_of(&["call marge", "email lisa"], Some("errands-2"));
+
+        ledger.fail_the_next_commit_of("item-1");
+        let _cut = sent_under_its_id(&jojobot, batch()).await;
+        let finished = json_of(
+            &sent_under_its_id(&jojobot, batch())
+                .await
+                .expect("the resend answers"),
+        );
+        assert_eq!(
+            finished["finished_a_cut_batch"]["already_written"], 1,
+            "{finished}"
+        );
+        let note = finished["possible_subject_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the resumed item's note ships: {finished}"));
+        assert!(note.contains("person:marge"), "{note}");
+        assert!(!note.contains("person:lisa"), "{note}");
     }
 
     /// **Each tick of a batch is judged against the list the ticks before it
