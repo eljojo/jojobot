@@ -809,6 +809,44 @@ mod tests {
         assert!(verdict.red[0].crashed);
     }
 
+    /// **Test lines before any `Running` line are no crashed binary.** The text
+    /// is the killed capture with its `Running` line taken off, so its tests stand
+    /// in a suite that has no name and no result; naming that suite crashed would
+    /// put a binary nobody ran on the red list.
+    #[test]
+    fn a_suite_with_no_header_and_no_result_is_not_named_as_a_crashed_binary() {
+        let (_, headless) = KILLED.split_once('\n').expect("the capture has a header");
+        assert!(!headless.contains("Running "), "{headless}");
+        let counted = crate::summarize_test_output(headless);
+        assert!(counted.crashed.is_empty(), "{:?}", counted.crashed);
+        // With the header the same lines are the crashed binary the capture names.
+        let named = crate::summarize_test_output(KILLED);
+        assert_eq!(named.crashed, ["user_stories"], "{:?}", named.crashed);
+    }
+
+    /// **A binary the deadline killed is named twice, on purpose**: once as timed
+    /// out, by the line the deadline wrote, and once as crashed, because it printed
+    /// no result. Each list says what it saw; neither takes the other's entry.
+    #[test]
+    fn a_binary_killed_at_its_deadline_is_both_timed_out_and_crashed() {
+        let text = format!(
+            "{KILLED}\nbar: TIMED OUT: user_stories was still running after 1s and was killed\n"
+        );
+        let counted = crate::summarize_test_output(&text);
+        assert_eq!(counted.crashed, ["user_stories"], "{:?}", counted.crashed);
+        assert_eq!(counted.timed_out.len(), 1, "{:?}", counted.timed_out);
+        assert!(
+            counted.timed_out[0].contains("user_stories"),
+            "{:?}",
+            counted.timed_out
+        );
+        assert!(
+            counted.failed_names.is_empty(),
+            "{:?}",
+            counted.failed_names
+        );
+    }
+
     /// **A failed phase the text cannot place on the machine makes the job red,
     /// whatever the tests were.**
     #[test]
