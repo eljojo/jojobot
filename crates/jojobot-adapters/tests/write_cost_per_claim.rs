@@ -40,14 +40,18 @@ const CLAIMS: usize = 48;
 /// them one write at a time stays under a minute.
 const BACKGROUND: usize = 128;
 /// How many more statements a capture on the thing of 48 claims may send than a
-/// capture on the thing of none. The thing's own document is read once, which
-/// takes a few more statements for more claims.
-const MORE_STATEMENTS_PER_THING_OF_48: i64 = 30;
+/// capture on the thing of none. A capture inside a job refreshes the thing's
+/// document from the claims State, which sends no statement for its claims, so
+/// the thing of 48 sends as few as the thing of none (11 against 24, the first
+/// capture of the run being the cold one). A refresh that reads the thing's
+/// claims back from the store sends about a hundred more.
+const MORE_STATEMENTS_PER_THING_OF_48: i64 = 10;
 /// The most statements one capture through the fold may send, whoever else names
-/// the owner it names. A capture is the insert and a read of its own thing: about
-/// 130 statements. Reading the claims of every other thing with that owner sent
-/// more than ten thousand.
-const MOST_STATEMENTS_FOR_ONE_CAPTURE: i64 = 250;
+/// the owner it names. A capture inside a job is the insert and a few reads: 24
+/// statements cold and 11 after. Reading the thing's claims back from the store
+/// sent about 130, and reading the claims of every other thing with that owner
+/// sent more than ten thousand.
+const MOST_STATEMENTS_FOR_ONE_CAPTURE: i64 = 40;
 
 /// A claim body of the length the build bots' big items carry.
 fn body(n: usize, version: usize) -> String {
@@ -241,9 +245,18 @@ async fn a_capture_through_the_fold_costs_no_more_for_a_thing_of_48_claims() {
             ("fold", folded.clone() as Arc<dyn Memory>),
             ("fold+mention+index", indexed.memory()),
         ] {
+            // **A capture the server serves carries a job from the verb layer**, and a
+            // capture with none is a row write that emits no claims event, which the
+            // State the fold refreshes from never learns of. So the capture runs
+            // inside one, and the count is the cost of the refresh it reaches.
             let (statements, millis) = measured(
                 &counter,
-                put(layer.as_ref(), claim(thing, &owner, 1000, None)),
+                jojobot_domain::log::claims::job::within(
+                    jojobot_domain::log::claims::job::test_job(
+                        &jojobot_domain::actor::Actor::Operator,
+                    ),
+                    put(layer.as_ref(), claim(thing, &owner, 1000, None)),
+                ),
             )
             .await;
             writeln!(
