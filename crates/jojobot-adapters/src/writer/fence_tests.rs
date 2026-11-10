@@ -26,6 +26,16 @@ async fn writer_recovery_independent_databases_do_not_share_a_native_fence() {
         duplicate.pool.acquire().await.is_err(),
         "a second writer acquired the same database's fence"
     );
+    // The wait that ended without the lock is remembered, on the session that waited
+    // and on no other: it is what tells a lock held elsewhere from a busy pool.
+    assert!(
+        duplicate.lock_missed(),
+        "the session that missed the lock remembers it"
+    );
+    assert!(
+        !first.lock_missed(),
+        "the session that holds the lock did not miss it"
+    );
     let independent = super::fence::Session::new(&beta);
     let other = independent
         .pool

@@ -13,6 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::Instrument;
 
 mod fence;
+pub(crate) use fence::LOCK_HELD;
 pub mod publish;
 pub(crate) mod recovery;
 pub(crate) mod sql;

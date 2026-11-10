@@ -137,7 +137,27 @@ pub(crate) fn store_error<E: super::recovery::StoreError>(error: sqlx::Error) ->
             // The server answered with an error code: the statement did not run.
             set_phase(Phase::BeforeCommit);
         }
-        E::store_native(error.to_string())
+        E::store_native(why(&error))
+    }
+}
+
+/// **What an error of the writer's pool says went wrong.** A pool timeout while the
+/// session's last wait for the log's lock missed it is the lock held by another
+/// writer, and says so; a timeout from a busy pool, and every other error, keeps its
+/// own text. Every place that turns a writer-pool error into text asks here.
+pub(crate) fn why(error: &sqlx::Error) -> String {
+    let held = matches!(error, sqlx::Error::PoolTimedOut)
+        && Writer::current().is_some_and(|writer| {
+            writer
+                .0
+                .sql
+                .get()
+                .is_some_and(super::fence::Session::lock_missed)
+        });
+    if held {
+        super::fence::LOCK_HELD.to_string()
+    } else {
+        error.to_string()
     }
 }
 

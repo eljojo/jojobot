@@ -1,13 +1,18 @@
 //! A connection's terminal boundary precedes every recovery read.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPoolOptions};
 use sqlx::{AssertSqlSafe, Connection, MySqlConnection, MySqlPool};
 
 const LOCK: &str = "jojobot-owned-writer";
+/// **What a write that gave up waiting for the log's lock says it waited on.**
+/// One server instance is the log's only writer; a second writer over the same
+/// store waits for the lock the first keeps, and this is the cause it reports. The
+/// public sentences of the port errors read it back (see `fold::uncertain`).
+pub(crate) const LOCK_HELD: &str = "another writer holds the log";
 const WAIT_SECONDS: u32 = 1;
 const CONNECT_WITHIN: Duration = Duration::from_secs(5);
 
@@ -24,6 +29,9 @@ pub(super) struct Session {
     pub(super) pool: MySqlPool,
     old_id: Arc<AtomicU64>,
     lock: String,
+    /// Whether the last wait for the lock ended without it: a pool timeout on this
+    /// session's pool is then the lock held elsewhere, and not a busy pool.
+    missed: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -31,6 +39,8 @@ impl Session {
         let options = source.connect_options();
         let old_id = Arc::new(AtomicU64::new(0));
         let recorded = old_id.clone();
+        let missed = Arc::new(AtomicBool::new(false));
+        let noted = missed.clone();
         let lock = lock_name(&options);
         let acquiring = lock.clone();
         let pool = MySqlPoolOptions::new()
@@ -41,6 +51,7 @@ impl Session {
             .acquire_timeout(CONNECT_WITHIN)
             .after_connect(move |connection, _| {
                 let recorded = recorded.clone();
+                let noted = noted.clone();
                 let lock = acquiring.clone();
                 Box::pin(async move {
                     let held: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK(?, ?)")
@@ -48,6 +59,7 @@ impl Session {
                         .bind(WAIT_SECONDS)
                         .fetch_one(&mut *connection)
                         .await?;
+                    noted.store(held != Some(1), Ordering::SeqCst);
                     if held != Some(1) {
                         return Err(sqlx::Error::PoolTimedOut);
                     }
@@ -66,7 +78,13 @@ impl Session {
             pool,
             old_id,
             lock,
+            missed,
         }
+    }
+
+    /// Whether the session's last wait for the log's lock ended without it.
+    pub(super) fn lock_missed(&self) -> bool {
+        self.missed.load(Ordering::SeqCst)
     }
 
     pub(super) fn same_store(&self, source: &MySqlPool) -> bool {

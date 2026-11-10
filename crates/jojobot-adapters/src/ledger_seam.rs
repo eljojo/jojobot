@@ -183,7 +183,7 @@ impl Seam {
             .writer()
             .begin()
             .await
-            .map_err(|e| LedgerError::Store(e.to_string()))?;
+            .map_err(|e| LedgerError::Store(sql::why(&e)))?;
         let settled = log.settle_on(&mut tx).await;
         let _ = tx.rollback().await;
         settled.map_err(refused)?;
@@ -288,7 +288,7 @@ impl Seam {
             .writer()
             .begin()
             .await
-            .map_err(|e| LedgerError::Store(e.to_string()))?;
+            .map_err(|e| LedgerError::Store(sql::why(&e)))?;
         let mut pending: Vec<Pending> = Vec::new();
         for chunk in chunks {
             let next = match pending.last() {
@@ -554,7 +554,7 @@ impl Seam {
             .writer()
             .begin()
             .await
-            .map_err(|e| LedgerError::Store(e.to_string()))?;
+            .map_err(|e| LedgerError::Store(sql::why(&e)))?;
         let pending = self.stage(&mut tx, events, at).await?;
         match sql::commit(tx).await {
             Ok(()) => {

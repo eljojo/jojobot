@@ -77,6 +77,7 @@ test-dolt_id_case
 test-dolt_import_rows
 test-dolt_kinds_per_store
 test-dolt_links_by_mark
+test-dolt_lock_wait_names_the_writer
 test-dolt_must_back
 test-dolt_numbered_restart
 test-dolt_race_through_writer
