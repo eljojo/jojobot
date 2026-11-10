@@ -1684,3 +1684,58 @@ async fn the_claim_beside_a_retraction_or_an_edit_cannot_set_the_overlay_keys() 
     .written()
     .expect("nothing blocks it");
 }
+
+/// **A claim written beside a merge faces the overlay-key screen a capture
+/// faces.** The refusal comes before the store beneath is asked, so the thing
+/// that would have been folded is still its own and no companion landed.
+/// **Paired with a plain companion, which still lands**: a layer that refused
+/// every companion would pass the refusal identically.
+#[tokio::test]
+async fn the_claim_beside_a_merge_cannot_set_the_overlay_keys() {
+    let keys = jojobot_domain::memory::owned::OVERLAY_NAME;
+    let kept = EntityId("thing:merge-kept".into());
+    let spare = EntityId("thing:merge-spare".into());
+    let day = Date::constant(2026, 6, 13);
+    let caller = EntityId("bot:sigma".into());
+    let store = InMemoryMemory::booted();
+    for (handle, name) in [(&kept, "merge-kept"), (&spare, "merge-spare")] {
+        store
+            .add_entity(jojobot_domain::memory::NewEntity::new(
+                handle.clone(),
+                name,
+                "the operator",
+            ))
+            .await
+            .expect("the operator's own thing is created")
+            .written()
+            .expect("an empty board blocks nothing");
+    }
+    let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
+    let beside = |overlay: bool| {
+        let mut claim = NewFact::about(kept.clone(), "beside", day);
+        if overlay {
+            claim.fields.insert(keys.to_string(), "Sneaked".to_string());
+            claim.sets.insert(keys.to_string());
+        }
+        claim
+    };
+
+    let refused = over
+        .merge_with_claim(&spare, &kept, None, day, &caller, beside(true))
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::InvalidFact(_))),
+        "a merge whose claim sets the overlay's key is refused: {refused:?}"
+    );
+    let held = over.recall(&kept).await.expect("recall reads");
+    assert!(
+        held.iter().all(|fact| fact.content != "beside"),
+        "no companion landed: {held:?}"
+    );
+
+    over.merge_with_claim(&spare, &kept, None, day, &caller, beside(false))
+        .await
+        .expect("a plain companion passes through")
+        .written()
+        .expect("the merge the refusal left undone lands");
+}

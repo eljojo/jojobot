@@ -880,6 +880,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         caller: &EntityId,
         claim: NewFact,
     ) -> Result<Guarded<(Merge, Fact)>, MemoryError> {
+        Self::refuse_overlay_keys(claim.fields.keys())?;
         for side in [folded, survivor] {
             if self.supplied_only(side).await?.is_some() {
                 return Err(MemoryError::SuppliedHandle {
