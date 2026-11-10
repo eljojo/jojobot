@@ -1757,18 +1757,25 @@ async fn a_deploy_boots_from_the_snapshot_its_pre_build_wrote() {
     let mut store = Dolt::start(&state.0.join("db"), port)
         .await
         .expect("the old process's store is up");
-    let out = tokio::task::spawn_blocking(move || {
-        Command::new(env!("CARGO_BIN_EXE_jojobot"))
+    let (out, pre_build_peak) = tokio::task::spawn_blocking(move || {
+        let child = Command::new(env!("CARGO_BIN_EXE_jojobot"))
             .env_clear()
             .env("PATH", std::env::var_os("PATH").expect("a PATH"))
             .env("JOJOBOT_STORE_PORT", port.to_string())
             .arg("snapshot-only")
-            .output()
-            .expect("the binary runs")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the binary runs");
+        peak_while_running(child)
     })
     .await
     .expect("the task ends");
     assert!(out.status.success(), "the pre-build failed: {out:?}");
+    // The store's peak up to now includes the reads the pre-build made of it.
+    let store_peak = store_serving(port)
+        .and_then(peak_kib_of)
+        .expect("the store's peak memory");
     store.stop().await;
 
     let copy = copy_of(&state, "jojobot-measure-deploy-again");
@@ -1780,5 +1787,112 @@ async fn a_deploy_boots_from_the_snapshot_its_pre_build_wrote() {
         "the restart did not start from the pre-built snapshot: {line}"
     );
     assert_eq!(run.boot_field("tail_batches"), 0, "{line}");
+    // **The memory of the pair, as an estimate.** During a deploy the old process
+    // serves while the pre-build reads its log, so three things hold memory at
+    // once: the old server, its store, and the pre-build. This case runs no old
+    // server, so the three parts are three measurements: the pre-build's peak as
+    // sampled while it ran, the store's peak after the pre-build had read it, and
+    // the peak of the server this case booted, standing in for the old server (the
+    // same build over the same store). It is printed and never asserted, because
+    // an estimate must not fail a run; the bound it is read against is the unit's
+    // MemoryMax, and the host figure is the memory of the machine this case ran
+    // on, which is the runner and not production.
+    let (stand_in, _) = run.peaks_kib();
+    let pair = pre_build_peak + store_peak + stand_in;
+    record(&format!(
+        "boot-measure deploy pair (ESTIMATE from three measured parts; this case runs no old server): \
+         pre_build_peak_kib={pre_build_peak} (sampled VmHWM of the pre-build while it ran) + \
+         store_peak_kib={store_peak} (the store's VmHWM after the pre-build read it) + \
+         old_server_stand_in_kib={stand_in} (the booted server's VmHWM, standing in for the old server) \
+         = {pair} kB against a bound of {} kB (the module's memoryMax); this machine has {} kB of memory",
+        memory_bound_kib(),
+        host_memory_kib()
+    ));
+    assert!(
+        pre_build_peak > 0 && store_peak > 0 && stand_in > 0,
+        "a part of the estimate read as zero: {pre_build_peak} {store_peak} {stand_in}"
+    );
     let _ = run.stopped();
+}
+
+/// **The peak resident memory the kernel has kept for `pid`**, in kB, or none when
+/// the process is gone or the field is missing.
+fn peak_kib_of(pid: u32) -> Option<u64> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse().ok())
+}
+
+/// **Wait for `child`, sampling its peak memory while it runs.** The kernel drops
+/// a process's counters when it exits, so the last sample taken before the exit is
+/// the figure; the peak only grows, and the samples are 20 ms apart.
+fn peak_while_running(mut child: Child) -> (std::process::Output, u64) {
+    let pid = child.id();
+    let mut peak = 0;
+    loop {
+        if let Some(seen) = peak_kib_of(pid) {
+            peak = peak.max(seen);
+        }
+        if child
+            .try_wait()
+            .expect("the child can be waited on")
+            .is_some()
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().expect("the child's output");
+    (out, peak)
+}
+
+/// **The pid of the store serving `port`**: the process whose command line is a
+/// `sql-server` started with that port.
+fn store_serving(port: u16) -> Option<u32> {
+    let wanted = format!("--port\0{port}\0");
+    std::fs::read_dir("/proc")
+        .ok()?
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .find(|pid| {
+            std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|raw| {
+                let line = String::from_utf8_lossy(&raw);
+                line.contains("sql-server") && line.contains(&wanted)
+            })
+        })
+}
+
+/// **The sampler reads a process that runs for a moment**, and the host's memory
+/// reads as a number. The deploy case's estimate is built from these, and that case
+/// needs the recorded store, so the readers are shown here to read something.
+#[test]
+fn the_memory_readers_read_a_child_and_the_host() {
+    let child = Command::new("sleep")
+        .arg("0.3")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("a child runs");
+    let (out, peak) = peak_while_running(child);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        peak > 0,
+        "no peak was read from a child that ran for 300 ms"
+    );
+    assert!(peak_kib_of(std::process::id()).is_some_and(|own| own > 0));
+    assert!(host_memory_kib() > 0, "the host's memory read as zero");
+}
+
+/// The memory of the machine this runs on, in kB.
+fn host_memory_kib() -> u64 {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("MemTotal:"))
+                .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse().ok())
+        })
+        .unwrap_or(0)
 }
