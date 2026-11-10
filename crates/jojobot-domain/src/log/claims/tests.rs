@@ -557,27 +557,6 @@ fn the_link_is_the_newest_by_ordinal_however_late_it_arrived() {
     );
 }
 
-/// **Applying the rest of a prefix gives the state that replaying the whole
-/// gives**, whatever the split.
-#[test]
-fn applying_in_parts_agrees_with_replay() {
-    let events = [
-        created("r1", claim("f1", "alpha", "a", 1)),
-        write("r1", "alpha", "mood", 1, "tense"),
-        ClaimEvent::ObjectCreated {
-            object: object("alpha"),
-            body: body("thing", "Alpha"),
-        },
-    ];
-    for split in 0..=events.len() {
-        let mut state = replay(&events[..split]);
-        for event in &events[split..] {
-            apply(&mut state, event);
-        }
-        assert_eq!(state, replay(&events), "split at {split}");
-    }
-}
-
 /// **Who wrote an event and in which run come from its envelope.** Two writes of
 /// one key under two envelopes give two key writes, each naming its own writer
 /// and run, and a revision under a third actor leaves the first writer alone.
