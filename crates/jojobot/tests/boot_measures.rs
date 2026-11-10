@@ -1830,22 +1830,38 @@ fn peak_kib_of(pid: u32) -> Option<u64> {
 /// the figure; the peak only grows, and the samples are 20 ms apart.
 fn peak_while_running(mut child: Child) -> (std::process::Output, u64) {
     let pid = child.id();
+    // **Both pipes are read while the child runs.** A child that writes more than a
+    // pipe holds blocks on its write until somebody reads, and the loop below would
+    // wait for its exit for good.
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
     let mut peak = 0;
-    loop {
+    let status = loop {
         if let Some(seen) = peak_kib_of(pid) {
             peak = peak.max(seen);
         }
-        if child
-            .try_wait()
-            .expect("the child can be waited on")
-            .is_some()
-        {
-            break;
+        if let Some(status) = child.try_wait().expect("the child can be waited on") {
+            break status;
         }
         std::thread::sleep(Duration::from_millis(20));
-    }
-    let out = child.wait_with_output().expect("the child's output");
+    };
+    let out = std::process::Output {
+        status,
+        stdout: stdout.join().expect("the stdout reader ends"),
+        stderr: stderr.join().expect("the stderr reader ends"),
+    };
     (out, peak)
+}
+
+/// Read `pipe` to its end on a thread of its own.
+fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
 }
 
 /// **The pid of the store serving `port`**: the process whose command line is a
@@ -1883,6 +1899,31 @@ fn the_memory_readers_read_a_child_and_the_host() {
     );
     assert!(peak_kib_of(std::process::id()).is_some_and(|own| own > 0));
     assert!(host_memory_kib() > 0, "the host's memory read as zero");
+}
+
+/// **The sampler does not stall on a child that writes more than a pipe holds.** A
+/// pre-build that logs a lot blocks on its write when nobody reads the pipe, and
+/// then never exits, so the sampler waits for it for good. The child here writes
+/// 300 KB, several times what a pipe holds, and a watchdog turns a stall into a
+/// failure and not a hang.
+#[test]
+fn the_sampler_reads_the_output_of_a_child_that_writes_more_than_a_pipe_holds() {
+    let (sent, received) = mpsc::channel();
+    std::thread::spawn(move || {
+        let child = Command::new("head")
+            .args(["-c", "300000", "/dev/zero"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("a child runs");
+        let (out, _) = peak_while_running(child);
+        let _ = sent.send((out.status.success(), out.stdout.len()));
+    });
+    let (success, written) = received
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the sampler stalled on a child whose output it did not read");
+    assert!(success, "the child did not end well");
+    assert_eq!(written, 300_000, "the sampler lost part of the output");
 }
 
 /// The memory of the machine this runs on, in kB.
