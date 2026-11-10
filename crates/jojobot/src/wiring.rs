@@ -1061,6 +1061,10 @@ pub async fn boot_store_observed(
             skipped_key_writes,
         }) => {
             tracing::info!(events, "imported today's claims into the event log");
+            // **Covered before anything serves**, so a stop with no orderly end does
+            // not leave the next boot to replay the import. The teaching import's
+            // snapshot is of a log that held no claims yet.
+            snapshots.after_import().await;
             // **Named once, at info**: the numbers stay empty and are never
             // reissued, and they do not stop the boot.
             // **Each home the import skipped, with its claim count**: its rows were
