@@ -133,6 +133,34 @@ impl InMemoryMemory {
         }
     }
 
+    /// **Bind the records the build supplies in the claims State**, as the boot's
+    /// import and reconcile do for a real store: each is an object under its
+    /// supply identity, answering at its handle, with the build's name and none of
+    /// the operator's overlay. A case about what a reader serves for a record the
+    /// State knows starts from this; without it the fake's State has never heard
+    /// of one, which a served store's State has.
+    pub fn bind_supplied_in_state(
+        &self,
+        supplied: &crate::memory::owned::Provisions,
+        day: jiff::civil::Date,
+    ) {
+        let rows: Vec<crate::log::claims::import::SuppliedRow> = supplied
+            .records_with_first_handles()
+            .map(|(entity, first)| crate::log::claims::import::SuppliedRow {
+                handle: entity.id.to_string(),
+                first_handle: first.to_string(),
+                kind: entity.kind.as_token().to_string(),
+                name: entity.name.clone(),
+                source: entity.source.clone(),
+            })
+            .collect();
+        let mut claims = self.claims.lock().expect("fake mutex poisoned");
+        let events = crate::log::claims::import::reconcile_supply_list(&claims, &rows, day);
+        for event in &events {
+            claims.apply(event);
+        }
+    }
+
     /// The claims State as the entity writers have left it.
     pub fn claims_state(&self) -> crate::log::claims::State {
         self.claims.lock().expect("fake mutex poisoned").clone()

@@ -131,6 +131,83 @@ async fn a_write_before_the_import_refreshes_the_fold_from_the_store() {
     );
 }
 
+/// **A relist after an unrelated entity write serves the operator's name on a
+/// record the build supplies**, over a State that knows the record. The boot's
+/// import binds each supplied record in the State with the build's name; the
+/// operator's name and aliases are laid over it by the layer above the store and
+/// are in no State row. The fake's State is bound the same way, so the premise of
+/// the relist (a supplied record is one the State has never heard of) does not
+/// hold here as it does not hold in the served store.
+#[tokio::test]
+async fn a_relist_after_an_unrelated_write_keeps_the_operators_name_on_a_supplied_record() {
+    use jojobot_domain::memory::EntityPatch;
+    use jojobot_domain::memory::owned::{Provision, Provisions};
+    use jojobot_domain::memory::{Entity, EntityKind};
+    let id = EntityId("view:loops".into());
+    let record = Provision::record(
+        Entity {
+            folded_names: Vec::new(),
+            id: id.clone(),
+            kind: EntityKind::VIEW,
+            name: "The shipped board".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        },
+        std::collections::BTreeMap::new(),
+    );
+    let supplied = Provisions::new(vec![record]);
+    let fake = InMemoryMemory::booted().knowing(supplied.clone());
+    fake.bind_supplied_in_state(&supplied, date(2026, 11, 9));
+    let store = Arc::new(crate::provisioned::Provisioned::new(fake, supplied));
+    let folded = Folded::new(store);
+    folded.rebuild().await.expect("the fold loads");
+    folded
+        .update_entity(
+            &id,
+            EntityPatch {
+                name: Some("Weekly rounds".into()),
+                aliases: Some(vec!["rounds".into()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the operator names the view")
+        .written()
+        .expect("it lands");
+    let named = |listed: &[Entity]| {
+        listed
+            .iter()
+            .find(|entity| entity.id == id)
+            .map(|entity| (entity.name.clone(), entity.aliases.clone()))
+    };
+    let wanted = Some(("Weekly rounds".to_string(), vec!["rounds".to_string()]));
+    let before = folded.list_entities(None).await.expect("lists");
+    assert_eq!(
+        named(&before),
+        wanted,
+        "the control: the listing wears the operator's name before the unrelated write"
+    );
+
+    folded
+        .add_entity(NewEntity::new(alpha(), "Alpha", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let after = folded.list_entities(None).await.expect("lists");
+    assert_eq!(
+        named(&after),
+        wanted,
+        "the relist after an unrelated write lost the operator's name"
+    );
+}
+
 /// **An entity write keeps the records the build supplies in the listing.** The
 /// State's listing leaves them out, so the relist after the write must carry them
 /// over from the image, or the supplied view is unknown to the fold.

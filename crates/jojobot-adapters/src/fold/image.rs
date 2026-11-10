@@ -625,6 +625,18 @@ impl Image {
             .collect()
     }
 
+    /// **The rows this image holds for the handles `wanted` names**, in the order
+    /// the image holds them. A record the build supplies is listed with the build's
+    /// name by the claims State and with the operator's name and aliases laid over
+    /// it by the layer above the store; the image holds the second.
+    pub(super) fn held_rows(&self, wanted: impl Fn(&EntityId) -> bool) -> Vec<Entity> {
+        self.entities
+            .iter()
+            .filter(|held| wanted(&held.id))
+            .cloned()
+            .collect()
+    }
+
     /// Put the listing read in the place of the one held, and let go of the
     /// documents of the things it no longer lists.
     fn take_in_listing(&mut self, entities: Vec<Entity>) {

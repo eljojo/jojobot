@@ -404,6 +404,22 @@ impl Folded {
                                 })
                                 .map_err(Self::without_state)?;
                             listed.extend(supplied);
+                            // **A record the build supplies is in the State's listing
+                            // too, as the build ships it**: the operator's name and
+                            // aliases are laid over it by the layer over the store and
+                            // are in no State row. The write that brought this relist
+                            // was about another thing (one about the record itself is
+                            // read from the store above), so the row the image holds
+                            // for it is still the one served. TEMPORARY(9.3.5), until
+                            // supplied records are supplied events.
+                            for held in self
+                                .held(|image| image.held_rows(|id| self.inner.supplies_at(id)))
+                                .unwrap_or_default()
+                            {
+                                if let Some(row) = listed.iter_mut().find(|row| row.id == held.id) {
+                                    *row = held;
+                                }
+                            }
                             Some(listed)
                         }
                         None => None,
