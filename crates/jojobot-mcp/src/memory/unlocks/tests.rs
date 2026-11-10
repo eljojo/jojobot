@@ -489,6 +489,7 @@ async fn a_type_step_leaves_out_the_keys_jojobot_computes() {
 #[tokio::test]
 async fn a_kinds_required_keys_are_named_and_its_optional_keys_are_not() {
     let jojobot = handler();
+    told_the_first_contact(&jojobot).await;
     a_loop(&jojobot, "rhythm:descale").await;
     ensure(&jojobot, "project:atlas").await;
     jojobot
@@ -580,7 +581,7 @@ async fn a_kinds_required_keys_are_named_and_its_optional_keys_are_not() {
 #[tokio::test]
 async fn a_thing_that_is_not_a_rhythm_is_offered_no_check_in_step_and_refused_the_check_in() {
     let jojobot = handler();
-    ensure(&jojobot, "thing:kettle").await;
+    told_the_first_contact(&jojobot).await;
     let receipt = capture_sets(
         &jojobot,
         "thing:kettle",
