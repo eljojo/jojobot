@@ -43,6 +43,104 @@ fn a_pre_build_that_cannot_reach_the_store_exits_non_zero() {
     assert!(said.contains(&port.to_string()), "it named no port: {said}");
 }
 
+/// **A boot after a pre-build that failed says it has no snapshot, and counts it.**
+/// The pre-build finds no store and exits non-zero, so it wrote nothing; the next
+/// boot, over a store that holds no snapshot, replays the log. That boot names the
+/// reason on its boot line, reports that it did not start from a snapshot, and
+/// serves the count on the scrape, so a deploy that lost its snapshot is seen by
+/// whoever reads the log or the numbers and not only by the step that ran the
+/// pre-build.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_boot_after_a_failed_pre_build_replays_the_log_and_says_so() {
+    let failed = tokio::task::spawn_blocking(|| pre_build(free_port()))
+        .await
+        .expect("the task ends");
+    assert!(
+        !failed.status.success(),
+        "a pre-build with no store succeeded: {failed:?}"
+    );
+
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-failed-pre-build");
+    let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let scratch = Scratch(state_dir.clone());
+    let metrics_port = free_port();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_jojobot"))
+        .env("STATE_DIRECTORY", &state_dir)
+        .env("JOJOBOT_STORE_PORT", free_port().to_string())
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
+        .env("JOJOBOT_METRICS_BIND", format!("127.0.0.1:{metrics_port}"))
+        .env("JOJOBOT_ALLOW_NO_AUTH", "1")
+        .env_remove("JOJOBOT_ISSUER")
+        .env("RUST_LOG", "info")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the binary runs");
+    let serving = jojobot_adapters::testing::wait_for_serving_line(
+        &mut child,
+        jojobot_exercise::room::READY_TIMEOUT,
+        "serving http://",
+    )
+    .await
+    .unwrap_or_else(|failure| panic!("the boot after a failed pre-build {failure}"));
+
+    let named = serving
+        .seen
+        .iter()
+        .find(|line| line.contains("no snapshot held"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the boot did not say it held no snapshot:\n{:#?}",
+                serving.seen
+            )
+        });
+    assert!(named.contains("none_held"), "it named no reason: {named}");
+    let booted = serving
+        .seen
+        .iter()
+        .find(|line| line.contains("event log boot"))
+        .unwrap_or_else(|| panic!("no boot line:\n{:#?}", serving.seen));
+    assert!(
+        booted.contains("from_snapshot=false"),
+        "the boot says it started from a snapshot: {booted}"
+    );
+
+    let scraped = reqwest::get(format!("http://127.0.0.1:{metrics_port}/metrics"))
+        .await
+        .expect("the metrics listener answers")
+        .text()
+        .await
+        .expect("a body");
+    // A boot reads more than one log, and each one that holds no snapshot counts, so
+    // the count is read as "at least one", and no other reason moved.
+    let skips: std::collections::BTreeMap<&str, u64> = scraped
+        .lines()
+        .filter_map(|line| line.strip_prefix("jojobot_snapshot_skips{reason=\""))
+        .filter_map(|rest| {
+            let (reason, value) = rest.split_once("\"} ")?;
+            Some((reason, value.trim().parse().ok()?))
+        })
+        .collect();
+    assert!(
+        skips.get("none_held").is_some_and(|count| *count >= 1),
+        "the scrape does not count the skipped snapshot:\n{scraped}"
+    );
+    let others: Vec<_> = skips
+        .iter()
+        .filter(|(reason, count)| **reason != "none_held" && **count != 0)
+        .collect();
+    assert!(
+        others.is_empty(),
+        "a reason other than none_held moved: {others:?}"
+    );
+
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+    drop(scratch);
+}
+
 /// **A pre-build against a serving store writes the snapshot a boot then loads.**
 /// The store is started and filled by the test, the way the old process leaves it;
 /// the binary connects to it and writes one snapshot at the head.
