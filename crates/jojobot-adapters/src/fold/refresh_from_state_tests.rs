@@ -219,6 +219,7 @@ async fn a_relist_after_an_unrelated_write_keeps_the_operators_name_on_a_supplie
         .expect("add ok")
         .written()
         .expect("not blocked");
+    assert_held(&folded, "an entity added beside a supplied record");
     let after = folded.list_entities(None).await.expect("lists");
     assert_eq!(
         named(&after),
