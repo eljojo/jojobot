@@ -33,6 +33,33 @@ pub async fn finish_or_abandon(mut task: JoinHandle<()>, grace: Duration) -> End
     }
 }
 
+/// **The writer's last act, then the store's stop, whichever way the last act
+/// ends.** Every accepted write and the shutdown snapshot run as the writer's final
+/// job, and `bound` is how long that job is given. A job still running at the bound
+/// is let go: a cut snapshot costs the next boot a longer replay and nothing else,
+/// while a store left to the service manager's kill never gets its own stop. The
+/// writer keeps running the job it was left with; `stop` ends the store beneath it.
+pub async fn finish_writer_then_stop(
+    writer: &jojobot_adapters::writer::Writer,
+    bound: Duration,
+    last: impl std::future::Future<Output = ()> + Send + 'static,
+    stop: impl std::future::Future<Output = ()>,
+) -> Ended {
+    let ended = match tokio::time::timeout(bound, writer.finish(last)).await {
+        Ok(()) => Ended::Finished,
+        Err(_) => {
+            tracing::warn!(
+                bound_seconds = bound.as_secs(),
+                "the writer's final job outlasted its bound: the store stops anyway, and the \
+                 next boot replays the tail of the log"
+            );
+            Ended::Abandoned
+        }
+    };
+    stop.await;
+    ended
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +97,60 @@ mod tests {
             Ended::Abandoned
         );
         assert!(!done.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// **A final writer job that outlasts its bound is cut, and the store is still
+    /// stopped.** The final job is every accepted write and then the shutdown
+    /// snapshot, whose tail replay has no length of its own. Without a bound the
+    /// stop waits behind it for as long as the service manager lets it, and the
+    /// store is left to the manager's kill.
+    #[tokio::test]
+    async fn a_final_job_past_its_bound_is_cut_and_the_store_still_stops() {
+        let writer = jojobot_adapters::writer::Writer::default();
+        let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping = stopped.clone();
+        let ended = tokio::time::timeout(
+            Duration::from_secs(5),
+            finish_writer_then_stop(
+                &writer,
+                Duration::from_millis(100),
+                std::future::pending::<()>(),
+                async move { stopping.store(true, std::sync::atomic::Ordering::SeqCst) },
+            ),
+        )
+        .await
+        .expect("the stop did not wait behind a final job that never ends");
+        assert_eq!(ended, Ended::Abandoned);
+        assert!(
+            stopped.load(std::sync::atomic::Ordering::SeqCst),
+            "the store was not stopped after the cut"
+        );
+    }
+
+    /// **The pair of the case above**: a final job that ends inside its bound runs
+    /// to its end, and the store is stopped after it.
+    #[tokio::test]
+    async fn a_final_job_inside_its_bound_runs_and_the_store_stops_after_it() {
+        let writer = jojobot_adapters::writer::Writer::default();
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let running = ran.clone();
+        let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (stopping, seen_ran) = (stopped.clone(), ran.clone());
+        let ended = finish_writer_then_stop(
+            &writer,
+            Duration::from_secs(30),
+            async move { running.store(true, std::sync::atomic::Ordering::SeqCst) },
+            async move {
+                assert!(
+                    seen_ran.load(std::sync::atomic::Ordering::SeqCst),
+                    "the store stopped before the final job ran"
+                );
+                stopping.store(true, std::sync::atomic::Ordering::SeqCst)
+            },
+        )
+        .await;
+        assert_eq!(ended, Ended::Finished);
+        assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

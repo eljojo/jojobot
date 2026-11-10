@@ -22,6 +22,13 @@ const CUT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// drain, before the store stops.
 const TASK_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// **How long the writer's final job is given**: every accepted write still queued,
+/// then the shutdown snapshot with the tail of the log it replays. The service unit
+/// sets no `TimeoutStopSec`, so the service manager's default of 90 seconds ends
+/// this process; the bound stays well under that so the notes grace, the counts
+/// settle and the store's own stop still fit inside it.
+const FINAL_JOB_BOUND: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// TEMPORARY(9.3.3): remove when the oversized futures are boxed and
 /// `clippy::large_futures` holds them.
 ///
@@ -384,17 +391,24 @@ async fn run() -> anyhow::Result<()> {
         tracing::warn!("queued call counts were still unsaved at the grace; they are dropped");
     }
     // Accepted writes outlive an abandoned caller. Closing admission and taking
-    // the snapshot as the final job covers those writes too. The service manager's
-    // stop deadline can cut this work; the next boot then replays the tail.
-    booted
-        .writer
-        .finish(async move { booted.snapshots.shutdown().await })
-        .await;
+    // the snapshot as the final job covers those writes too. **The job has a bound,
+    // and the store stops whether it ends or is cut**: a cut snapshot makes the next
+    // boot replay a longer tail, where a store left to the service manager's kill
+    // never gets its own stop.
     // **The store outlives the drain and stops here, asked and then killed.** The
     // unit signals this process alone, and the store has a process group of its
     // own, so nothing stops it before the calls above have finished with it.
-    store.stop().await;
-    tracing::info!("shut down: no call in flight, the store is stopped");
+    let final_job = jojobot::background::finish_writer_then_stop(
+        &booted.writer,
+        FINAL_JOB_BOUND,
+        async move { booted.snapshots.shutdown().await },
+        store.stop(),
+    )
+    .await;
+    tracing::info!(
+        ?final_job,
+        "shut down: no call in flight, the store is stopped"
+    );
 
     Ok(())
 }
