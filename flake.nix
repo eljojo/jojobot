@@ -374,6 +374,55 @@
               touch $out
             '';
 
+          # **The recipients a `post_message` grant names reach the apps file**, each
+          # app's own. An app that lists none reaches the operator's box only, and
+          # one that lists the operator beside a colleague keeps both, in order.
+          # Paired: the same grant with and without a list, in one system.
+          appsRecipients =
+            let
+              evaluated = nixpkgs.lib.nixosSystem {
+                inherit system;
+                modules = [
+                  self.nixosModules.default
+                  {
+                    boot.isContainer = true;
+                    system.stateVersion = "26.05";
+                    services.jojobot = {
+                      enable = true;
+                      allowNoAuth = true;
+                      package = jojobot;
+                      doltPackage = dolt;
+                      apps = {
+                        watch-home = {
+                          operations = [ { operation = "post_message"; } ];
+                          tokenHashFile = "/run/agenix/watch-home-token-hash";
+                        };
+                        watch-colleague = {
+                          operations = [
+                            {
+                              operation = "post_message";
+                              recipients = [
+                                "person:homer"
+                                "bot:marge"
+                              ];
+                            }
+                          ];
+                          tokenHashFile = "/run/agenix/watch-colleague-token-hash";
+                        };
+                      };
+                    };
+                  }
+                ];
+              };
+              appsFile = evaluated.config.systemd.services.jojobot.environment.JOJOBOT_APPS_FILE;
+            in
+            pkgs.runCommand "jojobot-apps-recipients" { } ''
+              set -eu
+              grep -qF '"name":"watch-home","operations":[{"keys":[],"kinds":[],"operation":"post_message","recipients":[]}]' ${appsFile}
+              grep -qF '"name":"watch-colleague","operations":[{"keys":[],"kinds":[],"operation":"post_message","recipients":["person:homer","bot:marge"]}]' ${appsFile}
+              touch $out
+            '';
+
           # **The module evaluates with the metrics listener on**, and the unit
           # names its address beside the main one, on a port of its own. With
           # it off, the unit names no metrics address at all.
