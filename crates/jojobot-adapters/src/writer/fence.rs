@@ -24,6 +24,24 @@ pub(super) fn lock_name(options: &MySqlConnectOptions) -> String {
     ))
 }
 
+/// What the server's answer to the lock call means for the session.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct LockAnswer {
+    /// The wait ended without the lock: another writer holds it.
+    pub(super) missed: bool,
+    /// The session does not hold the lock, whatever the reason.
+    pub(super) refused: bool,
+}
+
+/// **Only an answer of 0 is a wait that ended; NULL is an error of the call, not
+/// a held lock.** Anything but 1 leaves the session without the lock.
+pub(super) fn lock_answer(held: Option<i64>) -> LockAnswer {
+    LockAnswer {
+        missed: held == Some(0),
+        refused: held != Some(1),
+    }
+}
+
 pub(super) struct Session {
     options: Arc<MySqlConnectOptions>,
     pub(super) pool: MySqlPool,
@@ -59,9 +77,9 @@ impl Session {
                         .bind(WAIT_SECONDS)
                         .fetch_one(&mut *connection)
                         .await?;
-                    // 0 is a wait that ended; NULL is an error of the call, not a held lock.
-                    noted.store(held == Some(0), Ordering::SeqCst);
-                    if held != Some(1) {
+                    let answer = lock_answer(held);
+                    noted.store(answer.missed, Ordering::SeqCst);
+                    if answer.refused {
                         return Err(sqlx::Error::PoolTimedOut);
                     }
                     let id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")

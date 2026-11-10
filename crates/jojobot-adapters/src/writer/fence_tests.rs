@@ -135,3 +135,37 @@ async fn a_pool_timeout_names_the_lock_only_after_a_missed_lock() {
         "only a pool timeout is read as the lock"
     );
 }
+
+/// **Only an answer of 0 is a wait that ended, so only it is remembered as the lock
+/// held elsewhere.** NULL is an error of the call: the session is refused the lock
+/// and is not told another writer holds it. Paired with 1, the one answer that
+/// grants the lock, and with 0, the wait that ended.
+#[test]
+fn a_null_answer_of_the_lock_is_refused_and_is_not_a_wait_that_ended() {
+    use super::fence::{LockAnswer, lock_answer};
+
+    assert_eq!(
+        lock_answer(None),
+        LockAnswer {
+            missed: false,
+            refused: true
+        },
+        "NULL is an error of the call, not another writer"
+    );
+    assert_eq!(
+        lock_answer(Some(0)),
+        LockAnswer {
+            missed: true,
+            refused: true
+        },
+        "0 is a wait that ended without the lock"
+    );
+    assert_eq!(
+        lock_answer(Some(1)),
+        LockAnswer {
+            missed: false,
+            refused: false
+        },
+        "1 grants the lock"
+    );
+}
