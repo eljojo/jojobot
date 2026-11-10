@@ -378,12 +378,12 @@ TIMED_OUT_EXIT = 124
 def bar_logs(said):
     """**The text of the logs the bar named in its output.**
 
-    `make narrow` prints the bar's summary and keeps the runner's result lines in
-    its log, so the counts are only there. The bar prints the path for this run;
+    `make narrow` keeps the runner's result lines in its log and names that log
+    before the phases and in the final summary. Read each announced path once;
     other logs may belong to older runs.
     """
     text = ""
-    for log in re.findall(r"^log: (.+) \(\d+ lines\)$", said, re.MULTILINE):
+    for log in dict.fromkeys(re.findall(r"^log: (.+) \(\d+ lines\)$", said, re.MULTILINE)):
         with open(log, encoding="utf-8") as reading:
             text += "\n" + reading.read()
     return text

@@ -1949,6 +1949,8 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
 
     let log_path = PathBuf::from(format!("target/bar/narrow-{krate}.log"));
     fresh_log(&log_path)?;
+    println!("log: {} (0 lines)", log_path.display());
+    std::io::stdout().flush()?;
     let mut summary = Summary::new();
     jojobot_bar::static_checks::phase(&mut summary);
     if !summary.green {

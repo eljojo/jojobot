@@ -51,3 +51,76 @@ sys.exit(101 if probe else 0)
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn sabotage_reads_only_the_current_log_before_or_after_a_run_ends() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/sabotage");
+    for (stop_at, stopped) in [("", false), ("clippy", false), ("build", true)] {
+        let root = std::env::temp_dir().join(jojobot_bar::scratch::name("sabotage-current-log"));
+        fs::create_dir_all(&root).unwrap();
+        support::loop_repository(&root);
+        let cargo = root.join("cargo");
+        support::write_loop_cargo(
+            &cargo,
+            r#"#!/bin/sh
+if [ "$1" = "$STOP_AT" ]; then
+  kill -TERM "$PPID"
+  exit 0
+fi
+case "$1" in
+  test)
+    case " $* " in
+      *" --list "*)
+        case " $* " in *" --ignored "*) ;; *) echo 'alpha::first: test' ;; esac
+        exit 0 ;;
+    esac
+    echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s' ;;
+esac
+exit 0
+"#,
+        );
+        let log = root.join("target/bar/narrow-jojobot-bar.log");
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        fs::write(&log, "test result: ok. 99 passed; 0 failed;\n").unwrap();
+        let ran = support::output_fenced(
+            Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+                .current_dir(&root)
+                .args(["narrow", "--crate", "jojobot-bar", "--filter", "alpha"])
+                .env("CARGO", &cargo)
+                .env("TMPDIR", &root)
+                .env("STOP_AT", stop_at),
+        )
+        .unwrap();
+        if stop_at.is_empty() {
+            assert!(ran.status.success(), "{ran:?}");
+        } else {
+            assert_eq!(ran.status.signal(), Some(15), "{ran:?}");
+        }
+        let stdout = String::from_utf8(ran.stdout).unwrap();
+        let current = fs::read_to_string(&log).unwrap();
+        assert!(!current.contains("99 passed"), "{current}");
+        let code = ran.status.code().unwrap_or(143);
+        let read = support::output_fenced(
+            Command::new("python3")
+                .current_dir(&root)
+                .args(["-c", r#"
+import json, runpy, sys
+g = runpy.run_path(sys.argv[1])
+said = sys.argv[2]
+read = g['bar_logs'](said)
+print(json.dumps({'read': read, 'stopped': g['stopped_before_any_test'](int(sys.argv[3]), said + read)}))
+"#])
+                .arg(&tool)
+                .arg(&stdout)
+                .arg(code.to_string()),
+        )
+        .unwrap();
+        assert!(read.status.success(), "{read:?}");
+        let got: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+        assert_eq!(got["stopped"], stopped, "{stop_at}: {stdout}\n{current}");
+        assert_eq!(got["read"], format!("\n{current}"), "{stop_at}: {stdout}");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
