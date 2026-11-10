@@ -794,6 +794,9 @@ pub fn phase(summary: &mut Summary) {
             return;
         }
     }
+    if release.is_some() && matches!(base, Base::Unknown(_)) {
+        summary.note("  marker distance not read: the base is unknown");
+    }
     let Base::Known { rev, changes, .. } = &base else {
         let Base::Unknown(why) = &base else { return };
         let dispatch_note = in_ci()
@@ -855,9 +858,17 @@ pub fn phase(summary: &mut Summary) {
     }
     // Printed for the architect to judge, like growth: it refuses nothing.
     if let Some(release) = &release {
+        // A path the base lacks is none; a base git cannot read is an error, so it
+        // is never read as every marker added.
         let at_base = |path: &str| {
+            let listed = git_output(&["ls-tree", "--name-only", rev, "--", path])
+                .ok_or_else(|| format!("git could not list {path} at {rev}"))?;
+            if listed.is_empty() {
+                return Ok(None);
+            }
             git_output(&["show", &format!("{rev}:{path}")])
-                .map(|out| String::from_utf8_lossy(&out).into_owned())
+                .map(|out| Some(String::from_utf8_lossy(&out).into_owned()))
+                .ok_or_else(|| format!("git could not show {path} at {rev}"))
         };
         match markers::added_markers(&files, at_base) {
             Ok(added) => {

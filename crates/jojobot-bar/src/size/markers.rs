@@ -206,10 +206,11 @@ pub fn distance_report(release: &str, added: &[Added]) -> Vec<String> {
 }
 
 /// The added temporary markers of every file the bar measured. `at_base` reads a
-/// path as the base held it, none for a path the base lacks.
+/// path as the base held it: none for a path the base lacks, an error for a base
+/// that cannot be read, which must never read as every marker added.
 pub fn added_markers(
     files: &[Measured],
-    at_base: impl Fn(&str) -> Option<String>,
+    at_base: impl Fn(&str) -> Result<Option<String>, String>,
 ) -> Result<Vec<Added>, String> {
     let mut added = Vec::new();
     for file in files {
@@ -219,7 +220,8 @@ pub fn added_markers(
         }
         let text = std::fs::read_to_string(&file.path)
             .map_err(|e| format!("{}: could not be read: {e}", file.path))?;
-        added.extend(added_in(&file.path, &text, at_base(&file.path).as_deref()));
+        let base = at_base(&file.path)?;
+        added.extend(added_in(&file.path, &text, base.as_deref()));
     }
     Ok(added)
 }
@@ -519,11 +521,17 @@ mod tests {
             path: path.to_str().expect("source path").into(),
             lines: 1,
         }];
-        let same = added_markers(&files, |_| Some(head.clone())).expect("scan");
-        let new = added_markers(&files, |_| None).expect("scan");
+        let same = added_markers(&files, |_| Ok(Some(head.clone()))).expect("scan");
+        let new = added_markers(&files, |_| Ok(None)).expect("scan");
+        let unread = added_markers(&files, |_| Err("base gone".into()));
         std::fs::remove_dir_all(&root).expect("remove source directory");
         assert!(same.is_empty(), "{same:?}");
         assert_eq!(new.len(), 1, "{new:?}");
+        assert_eq!(
+            unread,
+            Err("base gone".into()),
+            "an unreadable base is no list"
+        );
     }
 
     #[test]
