@@ -162,16 +162,20 @@ def main(argv):
         return 2
     start, count, baseline_run = 0, None, None
     it = iter(options)
-    for option in it:
-        if option == "--from":
-            start = int(next(it))
-        elif option == "--count":
-            count = int(next(it))
-        elif option == "--baseline-run":
-            baseline_run = int(next(it))
-        else:
-            print(USAGE, file=sys.stderr)
-            return 2
+    try:
+        for option in it:
+            if option == "--from":
+                start = int(next(it))
+            elif option == "--count":
+                count = int(next(it))
+            elif option == "--baseline-run":
+                baseline_run = int(next(it))
+            else:
+                raise ValueError(option)
+    except (ValueError, StopIteration):
+        # An option that is not known, or whose value is missing or not a number.
+        print(USAGE, file=sys.stderr)
+        return 2
     sample = rows(MANIFEST)
     found = problems(sample)
     if found:

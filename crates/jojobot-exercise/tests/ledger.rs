@@ -346,60 +346,61 @@ struct NotAProof {
     /// The commit the run is on, the checkout's own when none.
     commit: Option<&'static str>,
     workflow: &'static str,
+    /// The one job the forge lists for the run that the case is about, and its status.
+    job_name: &'static str,
     job_status: &'static str,
+    /// Whether a job of another name that passed is listed before it.
+    beside: bool,
     /// Whether the forge lists the run at all.
     listed: bool,
     lane: &'static [&'static str],
 }
 
 /// **A baseline named by a run that does not prove it is refused before any
-/// mutation**: another commit, no such run, a failed job, another workflow, or a
-/// lane no pull-request job runs. Each leaves nothing recorded and calls no
-/// sabotage, and the refusal says which input it refused.
+/// mutation**: another commit, no such run, a failed job, a failed job beside a
+/// passing one, another workflow, the wrong lane's job, or a lane no pull-request
+/// job runs. Each leaves nothing recorded and calls no sabotage, and the refusal
+/// says which input it refused.
 #[test]
 fn a_baseline_run_that_does_not_prove_the_lane_is_refused() {
     const CHECK: &[&str] = &["make", "check"];
+    let proof = |wrong, lane| NotAProof {
+        wrong,
+        commit: None,
+        workflow: "pull-request.yml",
+        job_name: "check",
+        job_status: "success",
+        beside: false,
+        listed: true,
+        lane,
+    };
     let cases = [
         NotAProof {
-            wrong: "another commit",
             commit: Some("0000000000000000000000000000000000000000"),
-            workflow: "pull-request.yml",
-            job_status: "success",
-            listed: true,
-            lane: CHECK,
+            ..proof("another commit", CHECK)
         },
         NotAProof {
-            wrong: "no such run",
-            commit: None,
-            workflow: "pull-request.yml",
-            job_status: "success",
             listed: false,
-            lane: CHECK,
+            ..proof("no such run", CHECK)
         },
         NotAProof {
-            wrong: "a failed job",
-            commit: None,
-            workflow: "pull-request.yml",
             job_status: "failure",
-            listed: true,
-            lane: CHECK,
+            ..proof("a failed job", CHECK)
+        },
+        // The job is found by its name: a run whose first job passed is not a run
+        // whose check job passed.
+        NotAProof {
+            job_status: "failure",
+            beside: true,
+            ..proof("a failed check beside a passing job", CHECK)
         },
         NotAProof {
-            wrong: "another workflow",
-            commit: None,
             workflow: "ledger-runs.yml",
-            job_status: "success",
-            listed: true,
-            lane: CHECK,
+            ..proof("another workflow", CHECK)
         },
-        NotAProof {
-            wrong: "a lane no job runs",
-            commit: None,
-            workflow: "pull-request.yml",
-            job_status: "success",
-            listed: true,
-            lane: &["false"],
-        },
+        // The rooms lane is proved by the rooms job, not by the check job.
+        proof("the check job for the rooms lane", &["make", "rooms"]),
+        proof("a lane no job runs", &["false"]),
     ];
     for case in cases {
         let one = a_sample_dir("refused");
@@ -410,10 +411,12 @@ fn a_baseline_run_that_does_not_prove_the_lane_is_refused() {
         } else {
             serde_json::json!({"workflow_runs": []})
         };
-        let (api, stop, forge) = a_forge(
-            runs,
-            serde_json::json!([{"name": "check", "status": case.job_status}]),
-        );
+        let mut jobs = Vec::new();
+        if case.beside {
+            jobs.push(serde_json::json!({"name": "static", "status": "success"}));
+        }
+        jobs.push(serde_json::json!({"name": case.job_name, "status": case.job_status}));
+        let (api, stop, forge) = a_forge(runs, serde_json::Value::Array(jobs));
         let mut args = vec!["--baseline-run", "7", "--"];
         args.extend_from_slice(case.lane);
         let run = sampled(&one, &api, &args);
@@ -430,5 +433,54 @@ fn a_baseline_run_that_does_not_prove_the_lane_is_refused() {
             "{}: nothing ran: {said}",
             case.wrong
         );
+    }
+}
+
+/// **The rooms job of a pull-request run stands in for the rooms lane's
+/// baseline**, and a failed check job beside it does not matter: each lane is
+/// proved by its own job.
+#[test]
+fn a_pull_request_rooms_job_stands_for_the_rooms_lane() {
+    let one = a_sample_dir("rooms");
+    let (api, stop, forge) = a_forge(
+        serde_json::json!({"workflow_runs": [{"id": 7, "index_in_repo": 70,
+            "commit_sha": one.sha, "workflow_id": "pull-request.yml", "status": "failure"}]}),
+        serde_json::json!([{"name": "check", "status": "failure"},
+            {"name": "rooms", "status": "success"}]),
+    );
+    let run = sampled(&one, &api, &["--baseline-run", "7", "--", "make", "rooms"]);
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    forge.join().unwrap();
+    let said = said(&run);
+    let record = std::fs::read_to_string(one.dir.join("target/mutants/killed.tsv"));
+    let lane_ran = one.dir.join("lane_ran").exists();
+    let _ = std::fs::remove_dir_all(&one.dir);
+    assert_eq!(run.status.code(), Some(0), "{said}");
+    assert!(!lane_ran, "the lane was not run for a baseline: {said}");
+    assert!(
+        record.is_ok_and(|rows| rows.contains("\tRED")),
+        "the mutant got its verdict: {said}"
+    );
+}
+
+/// **An option value that is not a number is a usage refusal, not a traceback**,
+/// and nothing runs.
+#[test]
+fn an_option_value_that_is_not_a_number_is_a_usage_refusal() {
+    for args in [
+        &["--baseline-run", "x", "--", "make", "check"][..],
+        &["--baseline-run"][..],
+        &["--from", "x", "--", "make", "check"][..],
+    ] {
+        let one = a_sample_dir("usage");
+        let run = sampled(&one, "", args);
+        let said = said(&run);
+        let sabotaged = one.dir.join("sabotaged").exists();
+        let recorded = one.dir.join("target").exists();
+        let _ = std::fs::remove_dir_all(&one.dir);
+        assert_eq!(run.status.code(), Some(2), "{args:?}: {said}");
+        assert!(said.contains("usage"), "{args:?}: {said}");
+        assert!(!said.contains("Traceback"), "{args:?}: {said}");
+        assert!(!sabotaged && !recorded, "{args:?}: nothing ran: {said}");
     }
 }
