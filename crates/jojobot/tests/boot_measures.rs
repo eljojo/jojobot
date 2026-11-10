@@ -1800,10 +1800,11 @@ async fn a_deploy_boots_from_the_snapshot_its_pre_build_wrote() {
     let (stand_in, _) = run.peaks_kib();
     let pair = pre_build_peak + store_peak + stand_in;
     record(&format!(
-        "boot-measure deploy pair (ESTIMATE from three measured parts; this case runs no old server): \
+        "boot-measure deploy pair (ESTIMATE, sum of peaks; not a gate: this case runs no old server, \
+         the three peaks were reached at different times, so the sum is an upper bound, and there is no verdict): \
          pre_build_peak_kib={pre_build_peak} (sampled VmHWM of the pre-build while it ran) + \
          store_peak_kib={store_peak} (the store's VmHWM after the pre-build read it) + \
-         old_server_stand_in_kib={stand_in} (the booted server's VmHWM, standing in for the old server) \
+         old_server_stand_in_kib={stand_in} (the VmHWM of a fresh boot of the new build, standing in for the old server) \
          = {pair} kB against a bound of {} kB (the module's memoryMax); this machine has {} kB of memory",
         memory_bound_kib(),
         host_memory_kib()
