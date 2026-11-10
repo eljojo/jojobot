@@ -90,6 +90,7 @@ exit 0
                 .args(["narrow", "--crate", "jojobot-bar", "--filter", "alpha"])
                 .env("CARGO", &cargo)
                 .env("TMPDIR", &root)
+                .env("BAR_HISTORY_DIR", root.join("history"))
                 .env("STOP_AT", stop_at),
         )
         .unwrap();
