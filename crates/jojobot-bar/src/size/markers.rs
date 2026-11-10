@@ -87,6 +87,143 @@ pub fn offences_in(path: &str, text: &str, release: Option<&str>) -> Vec<String>
     found
 }
 
+/// A temporary marker the head holds and the release's base does not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Added {
+    pub place: String,
+    pub step: Vec<u32>,
+    pub text: String,
+}
+
+/// The temporary markers in `head` that `base` does not hold, as many times as
+/// the head holds one more than the base. A marker is its own line, so moving it
+/// within a file adds nothing.
+pub fn added_in(path: &str, head: &str, base: Option<&str>) -> Vec<Added> {
+    let needle = temporary();
+    let mut held: BTreeMap<&str, usize> = BTreeMap::new();
+    for line in base
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.contains(&needle))
+    {
+        *held.entry(line.trim()).or_default() += 1;
+    }
+    let mut added = Vec::new();
+    for (at, line) in head.lines().enumerate() {
+        let Some((_, rest)) = line.split_once(&needle) else {
+            continue;
+        };
+        if let Some(left) = held.get_mut(line.trim()).filter(|left| **left > 0) {
+            *left -= 1;
+            continue;
+        }
+        // A marker that is no step is already an offence of the scan.
+        if let Some(step) = steps(rest.split(')').next().unwrap_or("")) {
+            added.push(Added {
+                place: format!("{path}:{}", at + 1),
+                step,
+                text: line.trim().into(),
+            });
+        }
+    }
+    added
+}
+
+/// How many steps `step` lies past `release`: the last part's difference in the
+/// same series, one for a sub-step of the release, none at or before it. A step
+/// in another series has no distance and is far.
+fn steps_out(release: &[u32], step: &[u32]) -> Option<u32> {
+    if step <= release {
+        return Some(0);
+    }
+    if step.len() == release.len() + 1 && step.starts_with(release) {
+        return Some(1);
+    }
+    match (release.split_last(), step.split_last()) {
+        (Some((r, r_series)), Some((s, s_series))) if r_series == s_series => Some(s - r),
+        _ => None,
+    }
+}
+
+/// The ruling a marker's own line names: a rule number or a work handle.
+fn ruling_of(text: &str) -> Option<String> {
+    let rule = text
+        .match_indices("rule ")
+        .map(|(at, _)| &text[at..])
+        .find(|rest| rest["rule ".len()..].starts_with(|c: char| c.is_ascii_digit()))
+        .map(|rest| {
+            let digits = rest["rule ".len()..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>();
+            format!("rule {digits}")
+        });
+    rule.or_else(|| {
+        let prefix = ["work", ":q-"].concat();
+        text.match_indices(&prefix).find_map(|(at, _)| {
+            let handle: String = text[at..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '-'))
+                .collect();
+            (handle.len() > prefix.len()).then_some(handle)
+        })
+    })
+}
+
+/// **The block the ready line prints.** The added markers by step, nearest first;
+/// each marker more than one step past `release` is listed under its step with
+/// its ruling, or "far, no ruling" when its line names none. It refuses nothing.
+pub fn distance_report(release: &str, added: &[Added]) -> Vec<String> {
+    let Some(release_step) = steps(release).filter(|_| !added.is_empty()) else {
+        return Vec::new();
+    };
+    let mut by_step: BTreeMap<&[u32], Vec<&Added>> = BTreeMap::new();
+    for marker in added {
+        by_step.entry(&marker.step).or_default().push(marker);
+    }
+    let mut lines = vec![format!(
+        "temporary markers added since the base, by step ({} for release {release}):",
+        added.len()
+    )];
+    for (step, markers) in by_step {
+        let name = step
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(".");
+        let far = steps_out(&release_step, step).is_none_or(|out| out > 1);
+        let mark = if far { ", far" } else { "" };
+        lines.push(format!("  {name}: {} added{mark}", markers.len()));
+        if far {
+            for marker in markers {
+                let ruling = ruling_of(&marker.text)
+                    .map_or_else(|| "far, no ruling".to_string(), |r| format!("far, {r}"));
+                lines.push(format!("    {}: {ruling}", marker.place));
+            }
+        }
+    }
+    lines
+}
+
+/// The added temporary markers of every file the bar measured. `at_base` reads a
+/// path as the base held it, none for a path the base lacks.
+pub fn added_markers(
+    files: &[Measured],
+    at_base: impl Fn(&str) -> Option<String>,
+) -> Result<Vec<Added>, String> {
+    let mut added = Vec::new();
+    for file in files {
+        let own = file.path.starts_with("crates/jojobot-bar/src/size");
+        if own || !(file.path.ends_with(".rs") || file.path.ends_with(".nix")) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file.path)
+            .map_err(|e| format!("{}: could not be read: {e}", file.path))?;
+        added.extend(added_in(&file.path, &text, at_base(&file.path).as_deref()));
+    }
+    Ok(added)
+}
+
 #[derive(Default)]
 struct LegacyPair {
     readers: Vec<String>,
@@ -289,6 +426,104 @@ mod tests {
         assert_eq!(offences_in("a.rs", &m("9.3.10"), Some("10")).len(), 1);
         assert!(offences_in("a.rs", &m("10"), Some("9.3.10")).is_empty());
         assert_eq!(offences_in("a.rs", &m("10"), Some("10")).len(), 1);
+    }
+
+    fn added(place: &str, step: &str, text: &str) -> Added {
+        Added {
+            place: place.into(),
+            step: steps(step).expect("a step"),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn the_report_groups_by_step_and_flags_a_far_marker_by_its_ruling() {
+        let t = temporary();
+        let rows = [
+            added("a.rs:1", "9.3.4", &format!("// {t}9.3.4): near")),
+            added("a.rs:2", "9.3.6", &format!("// {t}9.3.6): rule 741")),
+            added("a.rs:3", "9.3.6", &format!("// {t}9.3.6): work:q-1001")),
+            added("b.rs:4", "9.3.10", &format!("// {t}9.3.10): nothing")),
+        ];
+        let lines = distance_report("9.3.3", &rows);
+        let text = lines.join("\n");
+        let at = |needle: &str| lines.iter().position(|l| l.contains(needle));
+        assert!(
+            at("9.3.4") < at("9.3.6") && at("9.3.6") < at("9.3.10"),
+            "{text}"
+        );
+        assert!(at("9.3.4").is_some(), "{text}");
+        let line_of = |place: &str| lines.iter().find(|l| l.contains(place)).cloned();
+        assert!(
+            line_of("a.rs:1").is_none(),
+            "a near marker is not listed: {text}"
+        );
+        let ruled = line_of("a.rs:2").expect(&text);
+        assert!(ruled.contains("far") && ruled.contains("741") && !ruled.contains("no ruling"));
+        let handled = line_of("a.rs:3").expect(&text);
+        assert!(
+            handled.contains("far") && !handled.contains("no ruling"),
+            "{handled}"
+        );
+        let bare = line_of("b.rs:4").expect(&text);
+        assert!(bare.contains("far, no ruling"), "{bare}");
+        assert!(distance_report("9.3.3", &[]).is_empty());
+    }
+
+    #[test]
+    fn the_distance_is_numeric_on_the_last_part_and_a_longer_step_is_one_out() {
+        let t = temporary();
+        let far = |release: &str, step: &str| {
+            let row = added("a.rs:1", step, &format!("// {t}{step}): x"));
+            distance_report(release, &[row])
+                .iter()
+                .any(|l| l.contains("far, no ruling"))
+        };
+        assert!(!far("9.3.3", "9.3.4"));
+        assert!(far("9.3.3", "9.3.5"));
+        assert!(far("9.3.3", "9.3.10"));
+        assert!(!far("9.3.3", "9.3.3.1"), "a sub-step is one out");
+        assert!(far("9.3.3", "10"), "another series is far");
+        assert!(!far("9.3.9", "9.3.10"));
+    }
+
+    #[test]
+    fn a_marker_is_added_when_the_base_holds_fewer_of_its_line() {
+        let t = temporary();
+        let one = format!("fn a() {{}}\n// {t}9.3.5): x\n");
+        let two = format!("{one}// {t}9.3.5): x\n// {t}9.3.6): y\n");
+        assert!(added_in("a.rs", &one, Some(&one)).is_empty());
+        let rows = added_in("a.rs", &two, Some(&one));
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(
+            rows.iter()
+                .any(|r| r.step == vec![9, 3, 6] && r.place == "a.rs:4")
+        );
+        assert_eq!(
+            added_in("a.rs", &one, None).len(),
+            1,
+            "no base file: all added"
+        );
+        assert!(added_in("a.rs", &format!("x\n{one}"), Some(&one)).is_empty());
+    }
+
+    #[test]
+    fn added_markers_read_each_file_against_the_base_copy() {
+        let root = std::env::temp_dir().join(crate::scratch::name("added-markers"));
+        std::fs::create_dir_all(&root).expect("source directory");
+        let t = temporary();
+        let head = format!("// {t}9.3.7): x\n");
+        let path = root.join("a.rs");
+        std::fs::write(&path, &head).expect("source text");
+        let files = [Measured {
+            path: path.to_str().expect("source path").into(),
+            lines: 1,
+        }];
+        let same = added_markers(&files, |_| Some(head.clone())).expect("scan");
+        let new = added_markers(&files, |_| None).expect("scan");
+        std::fs::remove_dir_all(&root).expect("remove source directory");
+        assert!(same.is_empty(), "{same:?}");
+        assert_eq!(new.len(), 1, "{new:?}");
     }
 
     #[test]

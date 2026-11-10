@@ -853,6 +853,21 @@ pub fn phase(summary: &mut Summary) {
     for line in render_net(rev, &net_by_area(changes)) {
         summary.note(&format!("  {line}"));
     }
+    // Printed for the architect to judge, like growth: it refuses nothing.
+    if let Some(release) = &release {
+        let at_base = |path: &str| {
+            git_output(&["show", &format!("{rev}:{path}")])
+                .map(|out| String::from_utf8_lossy(&out).into_owned())
+        };
+        match markers::added_markers(&files, at_base) {
+            Ok(added) => {
+                for line in markers::distance_report(release, &added) {
+                    summary.note(&format!("  {line}"));
+                }
+            }
+            Err(refusal) => summary.note(&format!("  marker distance not read: {refusal}")),
+        }
+    }
 }
 
 /// What every session loads before it starts: the served tool descriptions and
