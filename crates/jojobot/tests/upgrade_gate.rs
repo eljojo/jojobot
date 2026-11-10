@@ -946,6 +946,62 @@ fn degradations<'a>(
         .collect()
 }
 
+/// **The words of the warning a boot logs when it uses no snapshot.** Written out
+/// here, and not taken from the code that logs them, so a change to those words
+/// makes the gate fail and is not followed silently.
+const NO_SNAPSHOT_WARNING: &str = "SNAPSHOT NOT USED";
+
+/// **The warnings a boot may log**: the caller's, and, over a store that holds no
+/// snapshot, the one that says none was used. A store the last deployed build
+/// recorded holds none, so its first boot may log that warning (a log with history
+/// does, a log with none logs at info); a boot over a store that holds one may not,
+/// and the warning is then a degradation like any other.
+fn warnings_a_boot_may_log<'a>(
+    tolerated_warnings: &[&'a str],
+    snapshot_held_before: bool,
+) -> Vec<&'a str> {
+    let mut may = tolerated_warnings.to_vec();
+    if !snapshot_held_before {
+        may.push(NO_SNAPSHOT_WARNING);
+    }
+    may
+}
+
+/// **A boot over a store with no snapshot warns at most once, naming the reason
+/// `none_held`; a boot over a store that holds one does not warn at all.** The
+/// warning is tolerated above and is counted here. A boot over a log with no
+/// history logs at info that it held no snapshot, so it warns zero times; a boot
+/// over a log with history warns once. The gate cannot tell the two apart from
+/// outside, so it allows either and fails a second warning, another reason, and
+/// any warning over a store that holds a snapshot.
+fn check_the_no_snapshot_warning(
+    seen: &[String],
+    snapshot_held_before: bool,
+) -> Result<(), String> {
+    let said: Vec<&String> = seen
+        .iter()
+        .filter(|line| line.contains("WARN") && line.contains(NO_SNAPSHOT_WARNING))
+        .collect();
+    match (snapshot_held_before, said.as_slice()) {
+        (_, []) => Ok(()),
+        (false, [line]) if line.contains("none_held") => Ok(()),
+        (false, [line]) => Err(format!(
+            "the boot said no snapshot was used for a reason other than none_held: {line}"
+        )),
+        (held, said) => Err(format!(
+            "a boot over a store that {} may warn {} that no snapshot was used, \
+             and warned {} time(s): {said:?}",
+            if held {
+                "holds a snapshot"
+            } else {
+                "holds no snapshot"
+            },
+            if held { "never" } else { "at most once" },
+            said.len()
+        )),
+    }
+}
+
 /// **The wait for the store's lock lasts as long as something holds the lock and
 /// no longer.** A lock file held by an open handle keeps the wait going; the wait
 /// ends once the handle is gone, and it ends at once where there is no lock file.
@@ -1128,7 +1184,7 @@ async fn boot_current_with(
     ambiguous_reports: Option<usize>,
     tolerated_warnings: &[&str],
 ) -> Booted {
-    let (marked_before, expected_r1) =
+    let (marked_before, expected_r1, snapshot_held_before) =
         recorded_r1::recorded_r1_before_boot(state_dir, store_port).await;
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let mut child = tokio::process::Command::new(&binary)
@@ -1195,12 +1251,16 @@ async fn boot_current_with(
     // are allowed only at the counts the restored store predicts; missing,
     // duplicate and repeated reports fail too. Other exceptions are explicit in
     // degradations, including the gate's auth warning and busy-host alerts.
-    let warned = degradations(&seen, stored_over_the_ceiling, tolerated_warnings);
+    let may_warn = warnings_a_boot_may_log(tolerated_warnings, snapshot_held_before);
+    let warned = degradations(&seen, stored_over_the_ceiling, &may_warn);
     assert!(
         warned.is_empty(),
         "the current binary booted on a store recorded at {git_ref} and said part of its own \
          boot failed: {warned:?}"
     );
+    if let Err(wrong) = check_the_no_snapshot_warning(&seen, snapshot_held_before) {
+        panic!("the boot of a store recorded at {git_ref}: {wrong}: {seen:?}");
+    }
     // **A store the last deployed build recorded holds no key write without a
     // claim.** The import skips such a write and says so at info, which no check
     // for warnings reads; the gate reads it here, on every fixture it boots. The old
@@ -3165,6 +3225,58 @@ async fn lines_logged_around_a_slow_statement(label: &str) -> Vec<String> {
         .filter(|line| line.contains(label))
         .map(str::to_string)
         .collect()
+}
+
+/// The warning a boot logs when it finds no snapshot, as a boot of the binary wrote
+/// it (the shape a real boot printed, with its timestamp and target).
+const THE_NO_SNAPSHOT_LINE: &str = "2026-11-10T12:57:34.178514Z  WARN jojobot_adapters::log_snapshot: SNAPSHOT NOT USED — the boot replays the whole log, not a fast boot reason=\"none_held\"";
+
+/// **The first boot over a recording that holds no snapshot may warn that none was
+/// used, at most once, naming `none_held`.** The recording the last deployed build
+/// made holds none. A log with history replays the whole of it and warns; a log with
+/// none logs at info and does not. The gate lets the one warning through, accepts a
+/// boot that did not warn, and fails a boot that warned twice or named another
+/// reason.
+#[test]
+fn a_boot_over_a_store_with_no_snapshot_may_warn_once_naming_none_held() {
+    let said = vec![THE_NO_SNAPSHOT_LINE.to_string()];
+    let may = warnings_a_boot_may_log(&[], false);
+    assert!(
+        degradations(&said, false, &may).is_empty(),
+        "the warning that no snapshot was used counted as a degraded boot"
+    );
+    assert_eq!(check_the_no_snapshot_warning(&said, false), Ok(()));
+    assert_eq!(
+        check_the_no_snapshot_warning(&[], false),
+        Ok(()),
+        "a boot over an empty history, which does not warn, failed"
+    );
+    let twice = vec![said[0].clone(), said[0].clone()];
+    assert!(
+        check_the_no_snapshot_warning(&twice, false).is_err(),
+        "a boot that said it twice passed"
+    );
+    let other = vec![THE_NO_SNAPSHOT_LINE.replace("none_held", "fingerprint")];
+    assert!(
+        check_the_no_snapshot_warning(&other, false).is_err(),
+        "a boot that named another reason passed"
+    );
+}
+
+/// **A boot over a store that holds a snapshot may not warn that none was used.**
+/// The warning is then a degradation like any other, so a second boot that lost the
+/// snapshot the first one published fails the gate.
+#[test]
+fn a_boot_over_a_store_with_a_snapshot_may_not_warn_that_none_was_used() {
+    let said = vec![THE_NO_SNAPSHOT_LINE.to_string()];
+    let may = warnings_a_boot_may_log(&[], true);
+    assert_eq!(
+        degradations(&said, false, &may).len(),
+        1,
+        "the warning was let through over a store that holds a snapshot"
+    );
+    assert!(check_the_no_snapshot_warning(&said, true).is_err());
+    assert_eq!(check_the_no_snapshot_warning(&[], true), Ok(()));
 }
 
 /// **The slow-statement alert is not a failed boot.** On a busy machine a
