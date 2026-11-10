@@ -517,6 +517,16 @@ async fn a_snapshot_is_kept_for_each_shape_and_a_build_loads_its_own() {
     );
     put(&pool, &newer).await;
     assert_eq!(log.load_snapshot().await.unwrap(), Some(mine));
+    let theirs_now: Vec<u8> = sqlx::query_scalar("SELECT payload FROM event_log WHERE slot = ?")
+        .bind(snapshot_slot(old))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        decode_snapshot(&theirs_now).unwrap(),
+        newer,
+        "the old build's slot holds the snapshot it published last"
+    );
     server.stop().await;
 }
 
