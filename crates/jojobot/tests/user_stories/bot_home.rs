@@ -244,6 +244,7 @@ async fn a_lean_receipt_still_says_where_a_parentless_create_landed() {
     at_root["root"] = json!(true);
     let rooted = s.call("add_entity", at_root).await;
     assert_eq!(parent_of(&s, "thing:kappa").await, None);
+    assert_eq!(rooted.json()["id"], "thing:kappa", "{}", rooted.raw());
     assert!(
         rooted.json()["derived"].get("parent").is_none(),
         "{}",

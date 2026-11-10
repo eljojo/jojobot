@@ -189,6 +189,7 @@ impl Call {
             .pointer("/parent_defaulted/parent")
             .filter(|v| v.is_string())
             && !self.args.contains_key("parent")
+            && saving()
         {
             derived.insert("parent".into(), chosen.clone());
         }
@@ -396,6 +397,44 @@ mod tests {
         .expect("an answer body");
         assert_ne!(body["status"], "blocked", "{body}");
         body
+    }
+
+    #[tokio::test]
+    async fn parentless_placement_is_said_once_in_each_receipt_mode() {
+        for lean in [true, false] {
+            let handler = crate::harness::handler();
+            ensure(&handler, "bot:otto").await;
+            served(
+                &handler,
+                "capture",
+                json!({"subject":"bot:otto", "content":"Choose receipt mode",
+                    "sets":{"setting_token_saving":if lean { "on" } else { "off" }}}),
+            )
+            .await;
+            let made = served(
+                &handler,
+                "add_entity",
+                json!({"kind":"thing", "handle":"delta", "name":"Delta", "source":"user-named"}),
+            )
+            .await;
+            assert_eq!(made["id"], "thing:delta", "{made}");
+            if lean {
+                assert_eq!(made["derived"]["parent"], "bot:otto", "{made}");
+                assert!(made.get("parent_defaulted").is_none(), "{made}");
+            } else {
+                assert_eq!(made["parent_defaulted"]["parent"], "bot:otto", "{made}");
+                assert!(made["derived"].get("parent").is_none(), "{made}");
+            }
+            let rooted = served(
+                &handler,
+                "add_entity",
+                json!({"kind":"thing", "handle":"epsilon", "name":"Epsilon",
+                    "source":"user-named", "root":true}),
+            )
+            .await;
+            assert_eq!(rooted["id"], "thing:epsilon", "{rooted}");
+            assert!(rooted["derived"].get("parent").is_none(), "{rooted}");
+        }
     }
 
     /// A caller copying a served account learns which keys the server ignored.
