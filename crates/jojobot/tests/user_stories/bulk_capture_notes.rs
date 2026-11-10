@@ -193,3 +193,54 @@ async fn a_batch_serves_one_suggestion_and_the_dropped_one_is_not_spent() {
     );
     story.finish().await;
 }
+
+/// **A batch too big for the lean budget drops its note whole, names it, and
+/// spends nothing for it.** Fifty entries name a known person, so the listing of
+/// what landed fills the receipt and the note does not fit beside it. The budget
+/// is the owner's and the drop is accepted, as the elision rule asks, with no cap
+/// on the merged paragraphs; what the batch owes is the mark and the row: a later
+/// single capture naming the person still ships the note.
+#[tokio::test]
+async fn a_batch_too_big_for_the_budget_names_its_dropped_note_and_spends_nothing() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
+    s.add("person:homer", "Homer").await;
+    s.past_first_contact().await;
+
+    let words: Vec<String> = (1..=50)
+        .map(|n| format!("call Homer about item {n}"))
+        .collect();
+    let batch = s
+        .call(
+            "capture",
+            json!({"subject": "list:packing", "provenance": "testimony", "entries": words}),
+        )
+        .await;
+    let batch = batch.json();
+    assert_eq!(batch["count"], 50, "the batch landed whole: {batch}");
+    assert!(
+        batch.get("possible_subject_note").is_none(),
+        "the note does not fit beside fifty entries: {batch}"
+    );
+    assert!(
+        batch["left_out"]
+            .to_string()
+            .contains("possible_subject_note"),
+        "the dropped note is named: {batch}"
+    );
+
+    let later = s
+        .call(
+            "capture",
+            json!({"subject": "list:packing", "provenance": "testimony",
+                   "content": "ring Homer again"}),
+        )
+        .await;
+    assert!(
+        later.json()["possible_subject_note"].is_string(),
+        "nothing was spent for the dropped note: {}",
+        later.raw()
+    );
+    story.finish().await;
+}
