@@ -1739,3 +1739,140 @@ async fn the_claim_beside_a_merge_cannot_set_the_overlay_keys() {
         .written()
         .expect("the merge the refusal left undone lands");
 }
+
+/// Every caller-fields route meets the same screen, including both bags of an
+/// edit with a companion. App inputs use the event the authorization path emits.
+#[tokio::test]
+async fn every_claim_write_screens_overlay_keys() {
+    use jojobot_domain::app::{AppPrincipal, AppSpec, DeployEvent, authorize};
+    use jojobot_domain::memory::owned::OVERLAY_NAME;
+
+    let day = Date::constant(2026, 6, 13);
+    let caller = EntityId("bot:sigma".into());
+    let kept = EntityId("thing:merge-kept".into());
+    let spare = EntityId("thing:merge-spare".into());
+    let thread = EntityId("thread:contract-deploys".into());
+    let principal = AppPrincipal::from_spec(
+        &AppSpec {
+            name: "springfield-ci".into(),
+            operation: "record_deploy_event".into(),
+            thread: thread.to_string(),
+            kind: "event".into(),
+            keys: vec!["commit".into()],
+            operations: vec![],
+            revoked: false,
+        },
+        &jojobot_domain::app::hash_token(&jojobot_domain::app::mint_token()),
+    )
+    .expect("a plain grant");
+    let event = authorize(
+        &principal,
+        &DeployEvent {
+            attempt_id: "run-1".into(),
+            fields: [("commit".into(), "abc1234".into())].into(),
+        },
+    )
+    .expect("inside the grant")
+    .into_event("record_deploy_event", "2026-06-13T12:00:00Z".into(), day);
+
+    for route in [
+        "add_entity_with_first_claim",
+        "update_entity_with_claim",
+        "capture",
+        "update_fact",
+        "update_fact_with_claim.patch",
+        "update_fact_with_claim.claim",
+        "retract_with_claim",
+        "merge_with_claim",
+        "record_app_event",
+    ] {
+        let store = InMemoryMemory::booted();
+        for (id, name) in [
+            (&kept, "merge-kept"),
+            (&spare, "merge-spare"),
+            (&thread, "contract-deploys"),
+        ] {
+            store
+                .add_entity(NewEntity::new(id.clone(), name, "the operator"))
+                .await
+                .expect("created")
+                .written()
+                .expect("nothing blocks it");
+        }
+        let original = store
+            .capture(NewFact::about(kept.clone(), "original", day))
+            .await
+            .expect("captured")
+            .written()
+            .expect("nothing blocks it");
+        let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
+        let plain = NewFact::about(kept.clone(), "beside", day);
+        let mut claim = plain.clone();
+        claim.fields.insert(OVERLAY_NAME.into(), "Sneaked".into());
+        claim.sets.insert(OVERLAY_NAME.into());
+        let patch = FactPatch {
+            fields: claim.fields.clone(),
+            sets: claim.sets.clone(),
+            ..FactPatch::default()
+        };
+        let address = original.address();
+
+        let refused = match route {
+            "add_entity_with_first_claim" => {
+                claim.subject = event.entity.id.clone();
+                over.add_entity_with_first_claim(event.entity.clone(), claim)
+                    .await
+                    .map(|_| ())
+            }
+            "update_entity_with_claim" => over
+                .update_entity_with_claim(&kept, EntityPatch::default(), claim)
+                .await
+                .map(|_| ()),
+            "capture" => over.capture(claim).await.map(|_| ()),
+            "update_fact" => over.update_fact(&address, patch, &caller).await.map(|_| ()),
+            "update_fact_with_claim.patch" => over
+                .update_fact_with_claim(&address, patch, &caller, plain)
+                .await
+                .map(|_| ()),
+            "update_fact_with_claim.claim" => over
+                .update_fact_with_claim(&address, FactPatch::default(), &caller, claim)
+                .await
+                .map(|_| ()),
+            "retract_with_claim" => over
+                .retract_with_claim(&address, None, day, &caller, None, claim)
+                .await
+                .map(|_| ()),
+            "merge_with_claim" => over
+                .merge_with_claim(&spare, &kept, None, day, &caller, claim)
+                .await
+                .map(|_| ()),
+            "record_app_event" => {
+                let mut event = event.clone();
+                event
+                    .first
+                    .fields
+                    .insert(OVERLAY_NAME.into(), "Sneaked".into());
+                event.first.sets.insert(OVERLAY_NAME.into());
+                over.record_app_event(event).await.map(|_| ())
+            }
+            _ => unreachable!("the table names every route"),
+        };
+        assert!(
+            matches!(refused, Err(MemoryError::InvalidFact(_))),
+            "{route} must screen caller fields before forwarding: {refused:?}"
+        );
+        assert!(
+            over.inner
+                .list_entities(Some(EntityKind::EVENT))
+                .await
+                .expect("lists")
+                .is_empty(),
+            "the refused write created no event"
+        );
+        over.record_app_event(event.clone())
+            .await
+            .expect("plain event passes through")
+            .landed()
+            .expect("the refusal did not spend the attempt");
+    }
+}

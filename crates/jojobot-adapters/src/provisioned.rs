@@ -405,6 +405,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
                 },
             )));
         }
+        Self::refuse_overlay_keys(event.first.fields.keys())?;
         self.inner.record_app_event(event).await
     }
 
