@@ -110,7 +110,14 @@ fn id(handle: &str) -> EntityId {
 
 /// **Draw and apply `steps` writes through `w` from `seed`.** A write the store
 /// refuses is counted and skipped; the run goes on.
-pub async fn run_sequence(seed: u64, steps: usize, w: &dyn Memory) -> Trace {
+/// **`after_each` is called after every step** with the step's number, so a case
+/// can assert something that must hold after each write and not only at the end.
+pub async fn run_sequence(
+    seed: u64,
+    steps: usize,
+    w: &dyn Memory,
+    after_each: &dyn Fn(usize),
+) -> Trace {
     let mut rng = Rng::new(seed);
     let mut model = Model::default();
     let mut trace = Trace::default();
@@ -136,6 +143,7 @@ pub async fn run_sequence(seed: u64, steps: usize, w: &dyn Memory) -> Trace {
             trace.refused += 1;
         }
         trace.steps.push(format!("{n}: {line}"));
+        after_each(n);
     }
     trace
 }
@@ -475,7 +483,7 @@ pub async fn run_through_fold(
 ) -> (crate::fold::Folded, Trace) {
     let folded = crate::fold::Folded::new(store);
     folded.rebuild().await.expect("the fold loads");
-    let trace = run_sequence(seed, steps, &folded).await;
+    let trace = run_sequence(seed, steps, &folded, &|_| {}).await;
     (folded, trace)
 }
 

@@ -41,8 +41,12 @@ async fn a_fold_refreshed_from_the_state_agrees_with_one_filled_anew() {
         let store = Arc::new(InMemoryMemory::booted());
         let folded = Folded::new(store.clone());
         folded.rebuild().await.expect("the fold loads");
-        let trace = crate::fold_agreement::run_sequence(seed, 40, &folded).await;
-        assert_held(&folded, &format!("seed {seed}"));
+        // After each write, since the next write's refresh fills a dropped image
+        // from the store and an end check would not see the drop.
+        let trace = crate::fold_agreement::run_sequence(seed, 40, &folded, &|step| {
+            assert_held(&folded, &format!("seed {seed}, step {step}"));
+        })
+        .await;
         let fresh = Folded::new(store.clone());
         fresh.rebuild().await.expect("the fold loads again");
         if let Some(differs) = crate::fold_agreement::disagreement(&folded, &fresh).await {
@@ -131,6 +135,7 @@ async fn a_write_before_the_import_refreshes_the_fold_from_the_store() {
         .expect("add ok")
         .written()
         .expect("not blocked");
+    assert_held(&folded, "an entity added before the import");
     folded
         .capture(NewFact::about(alpha(), "is early", date(2026, 9, 1)))
         .await
@@ -285,6 +290,7 @@ async fn a_prose_write_is_served_as_a_fold_filled_anew_serves_it() {
         .expect("add ok")
         .written()
         .expect("not blocked");
+    assert_held(&folded, "an entity added before the prose");
     folded
         .set_prose(&alpha(), "walks the quokka at dawn", None)
         .await
