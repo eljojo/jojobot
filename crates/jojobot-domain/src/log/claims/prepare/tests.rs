@@ -156,6 +156,7 @@ fn request(subject: &str) -> CaptureRequest {
             stale_after: None,
             receipt: None,
             app: None,
+            moment: None,
         },
         edge: None,
         refs: Vec::new(),

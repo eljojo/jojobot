@@ -47,6 +47,7 @@ impl CaptureRequest {
                 stale_after: fact.stale_after,
                 receipt: fact.receipt.clone(),
                 app: fact.app_stamp.clone(),
+                moment: None,
             },
             edge: fact
                 .edge

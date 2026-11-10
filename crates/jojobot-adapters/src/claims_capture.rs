@@ -83,6 +83,9 @@ pub(crate) async fn admit(
     let mut request = seam.read_claims(|state| {
         let declared = state.declared_types();
         let mut request = build(state, &declared)?;
+        // **The claim is prepared at this write's moment**, so the rule that
+        // decides it hands the State a claim that already has one.
+        request.draft.moment = Some(at);
         request.door.measures = measure(state, &request);
         Ok::<_, MemoryError>(request)
     })?;
@@ -154,10 +157,11 @@ pub(crate) async fn admit(
     let events: Vec<Event<ClaimEvent>> = admitted
         .into_iter()
         .map(|mut payload| {
-            // **The moment the claim was inserted is the moment of this write.**
-            // The rule is pure and holds no clock, so the stamp is put on here.
+            // **A claim the rule gave no moment takes the moment of this write**: the
+            // claims the rule prepares carry it already, and the numbers it
+            // derives (generation.rs) are written without one.
             if let ClaimEvent::RecordCreated { claim, .. } = &mut payload {
-                claim.inserted_at = Some(at);
+                claim.inserted_at.get_or_insert(at);
             }
             payload
         })

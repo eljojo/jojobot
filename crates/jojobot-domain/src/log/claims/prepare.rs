@@ -95,6 +95,10 @@ pub struct Draft {
     pub stale_after: Option<Date>,
     pub receipt: Option<Receipt>,
     pub app: Option<AppStamp>,
+    /// **The moment the claim is prepared at**, the clock of the write that keeps it.
+    /// [`prepare`] holds no clock, so the writer hands it in; a request made where
+    /// none is held has none, and the claim then carries none either.
+    pub moment: Option<jiff::Timestamp>,
 }
 
 /// **One capture, as the caller asks it.** Every name is a spelling the caller
@@ -542,7 +546,7 @@ pub fn prepare(
         stands_for: Vec::new(),
         receipt,
         app: draft.app.clone(),
-        inserted_at: None,
+        inserted_at: draft.moment,
     };
     let mut events: Vec<ClaimEvent> = dropped.into_iter().map(|(_, archive)| archive).collect();
     events.push(ClaimEvent::RecordCreated {
