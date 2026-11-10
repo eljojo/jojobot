@@ -34,6 +34,7 @@ tokio::task_local! {
 
 /// **What a composite act could write, as the store held it before the act.** See
 /// [`InMemoryMemory::rows_before_an_act`].
+#[derive(Debug, PartialEq)]
 struct ActRows {
     entities: Vec<Entity>,
     badges: std::collections::HashMap<EntityId, String>,
@@ -2309,7 +2310,7 @@ impl ClockHandle {
 /// One row of the fake's field substrate — the shape the real store keeps in a
 /// table, kept here so the two cannot come to disagree about what a read
 /// projects.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 struct StoredWrite {
     /// The thing the key was written on. With [`StoredWrite::key`] it is the
     /// address a history is asked for.

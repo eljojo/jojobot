@@ -1370,18 +1370,22 @@ async fn deleting_a_renamed_thing_keeps_the_page_of_a_thing_at_its_vacated_handl
 }
 
 /// Everything a refused composite has to leave as it was: what the store shows of
-/// its own substrates, the claims State the writes emit, and the heartbeat home.
+/// its own substrates, the claims State the writes emit, the heartbeat home, and
+/// every row a composite act can write: badges, writes, entity versions and merges
+/// among them, which neither the summary nor the roster reads.
 async fn leaves_to_keep(
     store: &InMemoryMemory,
 ) -> (
     (Option<crate::memory::WriteSummary>, Vec<Entity>),
     crate::log::claims::State,
     std::collections::BTreeMap<EntityId, String>,
+    super::ActRows,
 ) {
     (
         shown(store).await,
         store.read_claims(|state| state.clone()),
         store.heartbeats_now(),
+        store.rows_before_an_act(),
     )
 }
 
