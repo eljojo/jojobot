@@ -475,8 +475,11 @@ impl ServedParts {
 }
 
 /// **The one exit of every capture answer**, a refusal and a note-free answer
-/// included. An answer that still holds two or more suggestions, and has not
-/// been composed, is composed here. Any other answer leaves exactly as built.
+/// included. An answer that carries no `status`, still holds two or more
+/// suggestions and has not been composed, is composed here: nothing it holds has
+/// been spent, since a path that spends builds its answer through
+/// [`Jojobot::own_capture_receipt`]. A refusal, which always carries a `status`,
+/// and any other answer leave exactly as built.
 pub(crate) fn exit(answered: Result<CallToolResult, McpError>) -> Result<CallToolResult, McpError> {
     let Ok(mut result) = answered else {
         return answered;
@@ -491,7 +494,7 @@ pub(crate) fn exit(answered: Result<CallToolResult, McpError>) -> Result<CallToo
     };
     let holds = |key: &str| body.contains_key(key);
     let suggestions = SUGGESTIONS.iter().filter(|(key, _)| holds(key)).count();
-    if suggestions < 2 || holds(LEFT_OUT_KEY) || holds(OVER_BUDGET_KEY) {
+    if suggestions < 2 || holds("status") || holds(LEFT_OUT_KEY) || holds(OVER_BUDGET_KEY) {
         return Ok(result);
     }
     let served = compose_receipt(Value::Object(body), &[]).served;
@@ -868,12 +871,16 @@ mod tests {
             serde_json::from_str::<Value>(&served.content[0].as_text().expect("text").text)
                 .expect("a json body")
         };
-        let two = answer(json!({"status": "blocked", "hint": "h", "unlocks": {"steps": []}}));
+        let two =
+            answer(json!({"address": "thing:delta#f1", "hint": "h", "unlocks": {"steps": []}}));
         assert_eq!(two["hint"], "h", "{two}");
         assert!(two.get("unlocks").is_none(), "{two}");
         assert_eq!(two["left_out"][0]["layer"], "unlocks", "{two}");
-        let one = json!({"status": "blocked", "hint": "h"});
+        let one = json!({"address": "thing:delta#f1", "hint": "h"});
         assert_eq!(answer(one.clone()), one);
+        // A refusal carries a `status` and leaves as it was built.
+        let refusal = json!({"status": "blocked", "hint": "h", "unlocks": {"steps": []}});
+        assert_eq!(answer(refusal.clone()), refusal);
     }
 
     /// **A fact about how the write stands ships beside a suggestion.** A status
