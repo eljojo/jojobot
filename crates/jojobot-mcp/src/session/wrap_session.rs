@@ -40,7 +40,7 @@ impl Jojobot {
                        after a day (two stated days if it states them) and offers it back to resume for \
                        {{offer}}; its story was never told. \
                        Wrapping is also how you ROTATE a long run (wrap, then a NEW \
-                       runtime agent boots fresh and reads your story) and how work moves to another agent NOW: \
+                       runtime agent boots fresh) and how work moves to another agent NOW: \
                        the wrap frees your role at once (a role still held is in the \
                        answer's `roles`, with `held_until` and the reason), and the \
                        next agent boots fresh and reads your story. A wrap ends every voucher your run holds, and \

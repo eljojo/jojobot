@@ -5204,7 +5204,7 @@ Two things happen together: the story is recorded in your chronology as its fina
 A retried wrap finishes the first one.
 The next boot of this identity is handed the story as the handover, so it is not private.
 A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day (two stated days if it states them) and offers it back to resume for 7 days; its story was never told.
-Wrapping is also how you ROTATE a long run (wrap, then a NEW runtime agent boots fresh and reads your story) and how work moves to another agent NOW: the wrap frees your role at once (a role still held is in the answer's `roles`, with `held_until` and the reason), and the next agent boots fresh and reads your story.
+Wrapping is also how you ROTATE a long run (wrap, then a NEW runtime agent boots fresh) and how work moves to another agent NOW: the wrap frees your role at once (a role still held is in the answer's `roles`, with `held_until` and the reason), and the next agent boots fresh and reads your story.
 A wrap ends every voucher your run holds, and so does picking a run up by name with start_here's resume; a session that needs one again asks for a code with start_here's ask_for_code.
 A resume note in `journal` is for a run that goes quiet; it is picked up by name once the lease has passed, and a key never travels.
 THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as resume reopens the run for 2 hours as a normal session, any write and the closing story included, with no second wrap needed; a second wrap or a newer run ends it early.
