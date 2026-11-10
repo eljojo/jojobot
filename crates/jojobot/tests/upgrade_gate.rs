@@ -1834,8 +1834,7 @@ const PLANTED_PARTS_ID: &str = "gate-parts";
 /// rows are dated `earlier_hours` ahead so that the ageing, which moves every
 /// moment in the store back by that much, leaves them at now. Each row is one a
 /// finished write leaves: a receipt, a part with the receipt that finishes its
-/// request (a part with none is a half-done write, which the boot's storage check
-/// reports), and an app attempt.
+/// request, and an app attempt.
 async fn plant_a_live_ledger(pool: &sqlx::MySqlPool, git_ref: &str, earlier_hours: i64) {
     use sqlx::Row;
     let bot = sqlx::query(

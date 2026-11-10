@@ -1,6 +1,6 @@
 //! **The boot's read-only check of the store for damage a cut-off write leaves.**
 //!
-//! A write that was cut, refused half way or lost its receipt can leave rows
+//! A write that was cut or refused half way can leave rows
 //! that disagree with each other. The schema has no foreign keys by design, so
 //! the store itself never says so. At every boot, after migrations and before
 //! the fold is filled, one pass counts each class of damage and the boot logs
