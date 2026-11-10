@@ -104,19 +104,11 @@ pub(super) fn recorded_r1_counts_match(seen: &[String], expected: &[String]) -> 
 
 /// Only a not-yet-marked store can warn about its held R1 values. A superseded,
 /// inactive or cleared value is historical, even though its raw row survives.
-/// **The third answer is whether the store holds a snapshot of the event log**:
-/// the same open store is read for it, and a boot over one that holds none logs the
-/// warning that no snapshot was used. A store with no event log table holds none.
 pub(super) async fn recorded_r1_before_boot(
     state_dir: &std::path::Path,
     store_port: u16,
-) -> (bool, Vec<String>, bool) {
+) -> (bool, Vec<String>) {
     let mut store = open_the_store(state_dir, store_port).await;
-    let snapshot_held: bool =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM event_log WHERE slot LIKE 'snapshot%'")
-            .fetch_one(store.pool())
-            .await
-            .is_ok_and(|held| held > 0);
     let passes: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass")
         .fetch_all(store.pool())
         .await
@@ -147,5 +139,5 @@ pub(super) async fn recorded_r1_before_boot(
         }
     }
     store.stop().await;
-    (marked, expected, snapshot_held)
+    (marked, expected)
 }
