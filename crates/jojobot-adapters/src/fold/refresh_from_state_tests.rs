@@ -20,6 +20,17 @@ async fn folded_over_a_counted_fake() -> (Folded, Arc<Counted>, Arc<InMemoryMemo
     (folded, counted, store)
 }
 
+/// **The image is still held after the writes**, so what the case read came from
+/// the image and not from the store a dropped image sends a read to. A case that
+/// compares with a fold filled anew through the Memory port cannot tell the two
+/// apart, because the store holds what the fresh fold holds.
+fn assert_held(folded: &Folded, case: &str) {
+    assert!(
+        folded.held(|_| ()).is_some(),
+        "{case}: the refresh dropped the image, and the reads went to the store"
+    );
+}
+
 /// **A fold refreshed from the claims State serves what a fold filled anew
 /// serves**, after sequences of writes nobody wrote by hand. The running fold
 /// reads its State for each write; the fold it is compared with and the store
@@ -31,6 +42,7 @@ async fn a_fold_refreshed_from_the_state_agrees_with_one_filled_anew() {
         let folded = Folded::new(store.clone());
         folded.rebuild().await.expect("the fold loads");
         let trace = crate::fold_agreement::run_sequence(seed, 40, &folded).await;
+        assert_held(&folded, &format!("seed {seed}"));
         let fresh = Folded::new(store.clone());
         fresh.rebuild().await.expect("the fold loads again");
         if let Some(differs) = crate::fold_agreement::disagreement(&folded, &fresh).await {
@@ -81,6 +93,7 @@ async fn a_claim_about_a_supplied_record_is_served_as_the_store_serves_it() {
         .expect("capture ok")
         .written()
         .expect("not blocked");
+    assert_held(&folded, "a claim about a supplied record");
     let fresh = Folded::new(store.clone());
     fresh.rebuild().await.expect("the fold loads again");
     let served = folded.recall(&id).await.expect("recall ok");
@@ -124,6 +137,7 @@ async fn a_write_before_the_import_refreshes_the_fold_from_the_store() {
         .expect("capture ok")
         .written()
         .expect("not blocked");
+    assert_held(&folded, "a write before the import");
     let served = folded.recall(&alpha()).await.expect("recall ok");
     assert!(
         served.iter().any(|fact| fact.content == "is early"),
@@ -246,6 +260,7 @@ async fn an_entity_write_keeps_a_supplied_record_in_the_listing() {
         .expect("add ok")
         .written()
         .expect("not blocked");
+    assert_held(&folded, "an entity write beside a supplied record");
     let listed = folded.list_entities(None).await.expect("lists");
     assert!(
         listed.iter().any(|entity| entity.id == id),
@@ -274,6 +289,7 @@ async fn a_prose_write_is_served_as_a_fold_filled_anew_serves_it() {
         .set_prose(&alpha(), "walks the quokka at dawn", None)
         .await
         .expect("prose lands");
+    assert_held(&folded, "a prose write");
     let fresh = Folded::new(store.clone());
     fresh.rebuild().await.expect("the fold loads again");
     let served = folded.scan_entity(&alpha()).await.expect("scan ok");
