@@ -42,6 +42,8 @@ struct Forge {
     runs: Vec<(u64, String, String, String)>,
     /// Whether the run records carry no `index_in_repo`, as an older forge's do.
     numberless: bool,
+    /// The jobs of each run, as `(run id, name, status)`; a run with none lists none.
+    jobs: Vec<(u64, &'static str, &'static str)>,
 }
 
 /// A stand-in forge on a free local port, answering until the test ends.
@@ -106,6 +108,22 @@ fn answer(forge: &Forge, path: &str) -> (u16, String) {
             200,
             json!({"total_count": listed.len(), "workflow_runs": listed}).to_string(),
         );
+    }
+    if let Some(id) = rest
+        .strip_prefix("/actions/runs/")
+        .and_then(|r| r.strip_suffix("/jobs"))
+    {
+        let run_id = id.parse::<u64>().unwrap_or(0);
+        let jobs: Vec<Value> = forge
+            .jobs
+            .iter()
+            .filter(|(of_run, _, _)| *of_run == run_id)
+            .enumerate()
+            .map(|(index, (_, name, status))| {
+                json!({"id": 5000 + index, "run_id": run_id, "name": name, "status": status})
+            })
+            .collect();
+        return (200, json!(jobs).to_string());
     }
     (404, "404 page not found".into())
 }
@@ -174,6 +192,7 @@ fn green(repo: &Repository) -> Forge {
         branches: vec![(BRANCH.into(), repo.head.clone())],
         runs: vec![(700, BRANCH.into(), repo.head.clone(), "success".into())],
         numberless: false,
+        jobs: Vec::new(),
     }
 }
 
@@ -366,6 +385,83 @@ fn a_run_that_is_not_a_green_run_of_the_commit_on_the_branch_fails() {
         let failed = failures(&out);
         assert_eq!(failed.len(), 1, "{name}: {out}");
         assert!(failed[0].contains("RUN"), "{name}: {out}");
+    }
+}
+
+/// A run the forge still lists as `running`, with these jobs and its cleanup job, the
+/// last of the run, not yet ended.
+fn running_beside_its_cleanup(repo: &Repository, jobs: &[(&'static str, &'static str)]) -> Forge {
+    let mut forge = green(repo);
+    forge.runs[0].3 = "running".into();
+    forge.jobs = jobs
+        .iter()
+        .map(|(name, status)| (700, *name, *status))
+        .collect();
+    forge.jobs.push((700, "artifact-cleanup", "running"));
+    forge
+}
+
+/// **A run whose verdict jobs succeeded is a green run while only its cleanup job is
+/// going.** The cleanup job deletes the run's large artifacts after every job above it
+/// and holds no check, but the forge lists the run `running` until it ends, 9 to 12
+/// seconds after the last verdict. A report written the moment the wait ended names
+/// that run, and it passes.
+#[test]
+fn a_run_whose_verdict_jobs_succeeded_passes_while_only_its_cleanup_job_is_going() {
+    let repo = repository();
+    let head = header(&repo);
+    let api = stand(running_beside_its_cleanup(
+        &repo,
+        &[
+            ("check", "success"),
+            ("rooms", "success"),
+            ("year", "skipped"),
+        ],
+    ));
+    let (code, out, err) = check(&repo, &api, &report(&with(&head, "RUN", "698")));
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+/// **Every other state of such a run fails as it did**: a verdict job that failed, one
+/// that was cancelled, a run whose verdict jobs were all skipped, and a verdict job
+/// still going beside the cleanup job. The failure names the status it read.
+#[test]
+fn a_run_with_only_its_cleanup_job_going_still_fails_unless_its_verdict_jobs_succeeded() {
+    let repo = repository();
+    let head = header(&repo);
+    type Jobs = &'static [(&'static str, &'static str)];
+    let cases: [(&str, Jobs, &str); 4] = [
+        (
+            "failed",
+            &[("check", "failure"), ("rooms", "success")],
+            "failure",
+        ),
+        (
+            "cancelled",
+            &[("check", "cancelled"), ("rooms", "success")],
+            "cancelled",
+        ),
+        (
+            "skipped",
+            &[("check", "skipped"), ("rooms", "skipped")],
+            "skipped",
+        ),
+        (
+            "going",
+            &[("check", "success"), ("rooms", "running")],
+            "running",
+        ),
+    ];
+    for (name, jobs, status) in cases {
+        let api = stand(running_beside_its_cleanup(&repo, jobs));
+        let (code, out, _) = check(&repo, &api, &report(&with(&head, "RUN", "698")));
+        assert_eq!(code, 1, "{name}: {out}");
+        let failed = failures(&out);
+        assert_eq!(failed.len(), 1, "{name}: {out}");
+        assert!(
+            failed[0].contains(&format!("run 698 is {status}")),
+            "{name}: {out}"
+        );
     }
 }
 
@@ -1370,6 +1466,7 @@ fn a_review_that_carries_a_wrong_key_fails_on_that_key() {
             "success".into(),
         )],
         numberless: false,
+        jobs: Vec::new(),
     };
     let api = stand(forge);
     let text = format!(

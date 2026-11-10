@@ -326,6 +326,7 @@ fn boundary_omissions_refuse_touched_crates_until_the_same_head_has_covering_pro
         "wrong-sha",
         "unrelated-omission",
         "integration-omission",
+        "pull-request-with-cleanup",
     ] {
         let mut branch = run(102, "dev-case-work", &head, "success");
         branch["workflow_id"] = json!("branch.yml");
@@ -350,7 +351,12 @@ fn boundary_omissions_refuse_touched_crates_until_the_same_head_has_covering_pro
                 } else {
                     &head
                 },
-                "success",
+                // The covering run is still listed `running` for its cleanup job.
+                if covering == "pull-request-with-cleanup" {
+                    "running"
+                } else {
+                    "success"
+                },
             );
             proof["workflow_id"] = json!(if covering == "targeted.yml" {
                 "targeted.yml"
@@ -368,6 +374,13 @@ fn boundary_omissions_refuse_touched_crates_until_the_same_head_has_covering_pro
             branches: vec![("em-carry", base.clone())],
             runs,
             ignore_head_sha: covering == "wrong-sha",
+            // Its report job has succeeded and only the cleanup job of the run is going.
+            primary_status: (covering == "pull-request-with-cleanup").then_some("success"),
+            more_jobs: if covering == "pull-request-with-cleanup" {
+                vec![(103, "artifact-cleanup", "running", String::new())]
+            } else {
+                Vec::new()
+            },
             ..Default::default()
         });
         let (code, output) = landing_in(&standing, json!({}), Some(&dir));
@@ -497,6 +510,42 @@ fn landing_gate_uses_the_newest_finished_verdict_without_waiting() {
             );
             assert_eq!(standing.asked_for("/actions/runs?"), 2);
         }
+    }
+}
+
+/// **The newest gate whose verdict jobs have ended is its verdict while only its cleanup
+/// job is going**: the forge lists the run `running` for the cleanup job's last seconds,
+/// and a landing that read that as no verdict read the gate before it. Green lands, a red
+/// outside the known reds refuses, and a cancelled run is no verdict, as ever.
+#[test]
+fn landing_gate_reads_a_gate_whose_only_unfinished_job_is_its_cleanup_job() {
+    for (jobs, log, code, number) in [
+        (
+            "success",
+            "wait-run-green-job.txt",
+            0,
+            "#100 (forge id 102)",
+        ),
+        ("failure", "wait-run-red-job.txt", 1, "#100 (forge id 102)"),
+        (
+            "cancelled",
+            "wait-run-green-job.txt",
+            0,
+            "#99 (forge id 101)",
+        ),
+    ] {
+        let standing = stand(Forge {
+            runs: vec![
+                (trunk_gate(102, "running"), fixture(log)),
+                (trunk_gate(101, "success"), String::new()),
+            ],
+            primary_status: Some(jobs),
+            more_jobs: vec![(102, "artifact-cleanup", "running", String::new())],
+            ..Default::default()
+        });
+        let (got, output) = landing(&standing);
+        assert_eq!(got, code, "{jobs}: {output}");
+        assert!(output.contains(number), "{jobs}: {output}");
     }
 }
 

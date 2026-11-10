@@ -18,7 +18,9 @@ per key, `pass` or `FAIL` and the reason, and exits 0 only when all pass.
   COMMIT is the head the forge holds for BRANCH.
   BASE is an ancestor of COMMIT in the current checkout (git merge-base
   --is-ancestor). It fetches nothing: a BASE the checkout does not hold fails.
-  RUN is the number of a run of COMMIT on BRANCH, and it succeeded. The number is
+  RUN is the number of a run of COMMIT on BRANCH, and it succeeded. A run the forge
+  still lists as going succeeded when its verdict jobs did and only its cleanup job
+  is going, as scripts/wait-run reads it. The number is
   the run's index in the repository, the one scripts/wait-run prints first; the
   forge id in brackets beside it fails, naming the number to write.
   BRANCH passes when the forge holds it.
@@ -556,10 +558,17 @@ def main():
                     results["RUN"] = (False, f"{number} is not a run number of {full}")
                 elif mine[0]["prettyref"] != branch:
                     results["RUN"] = (False, f"run {number} is on {mine[0]['prettyref']}, not {branch}")
-                elif mine[0]["status"] != "success":
-                    results["RUN"] = (False, f"run {number} is {mine[0]['status']}")
                 else:
-                    results["RUN"] = (True, f"run {number} of {full} on {branch} succeeded")
+                    # **A run whose verdict jobs have ended is read by their status**, while only
+                    # its cleanup job is going and the forge still lists it as going.
+                    try:
+                        status = wr.settled_status(mine[0]) or mine[0]["status"]
+                    except (urllib.error.URLError, TimeoutError, OSError) as err:
+                        status = f"unread, the forge did not answer: {err}"
+                    if status != "success":
+                        results["RUN"] = (False, f"run {number} is {status}")
+                    else:
+                        results["RUN"] = (True, f"run {number} of {full} on {branch} succeeded")
 
     for key in NAMED:
         if key in header:

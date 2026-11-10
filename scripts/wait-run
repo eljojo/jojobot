@@ -216,6 +216,16 @@ def verdict_without_cleanup(run):
     return "skipped"
 
 
+def settled_status(run):
+    """**The status to read for a run**: its own once it is final; while it is going, the
+    status [`verdict_without_cleanup`] gives it, which is None while a job other than a
+    cleanup job is going. The checks that read a run's verdict (the report's RUN, the
+    landing gate) read it here, so they and the wait agree on when a run has its verdict."""
+    if run["status"] in FINAL:
+        return run["status"]
+    return verdict_without_cleanup(run)
+
+
 def workflow_file(name):
     """The forge names a workflow by its file, so `prepush` is `prepush.yml`; a dispatched run
     reports an empty event and is found by this name and its commit alone."""
