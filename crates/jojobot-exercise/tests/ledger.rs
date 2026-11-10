@@ -267,6 +267,9 @@ fn sampled(dir: &SampleDir, api: &str, args: &[&str]) -> std::process::Output {
         .current_dir(&dir.dir)
         .env("MUTANT_MANIFEST", &dir.manifest)
         .env("WAIT_RUN_API", api)
+        // On a runner the forge is also named by its own context; a case that
+        // names none must not find one there.
+        .env_remove("GITHUB_ACTIONS")
         .env("PATH", path)
         .arg(root.join("scripts/mutant-sample"))
         .args(["--from", "0", "--count", "1"])
@@ -427,11 +430,51 @@ fn a_baseline_run_that_does_not_prove_the_lane_is_refused() {
         let recorded = one.dir.join("target").exists();
         let _ = std::fs::remove_dir_all(&one.dir);
         assert_eq!(run.status.code(), Some(2), "{}: {said}", case.wrong);
-        assert!(said.contains("baseline-run"), "{}: {said}", case.wrong);
+        // The usage line holds the option's name too and also exits 2, so the
+        // refusal is pinned by the words only a refusal says.
+        assert!(
+            said.contains("baseline-run: refused"),
+            "{}: {said}",
+            case.wrong
+        );
         assert!(
             !sabotaged && !recorded,
             "{}: nothing ran: {said}",
             case.wrong
+        );
+    }
+}
+
+/// **A baseline run that cannot be checked is refused, and says why.** With no
+/// forge named the sample cannot read the run; with a forge that does not answer
+/// it cannot read it either. Each leaves nothing recorded, calls no sabotage and
+/// never runs the lane.
+#[test]
+fn a_baseline_run_the_forge_cannot_confirm_is_refused_with_its_reason() {
+    // A port nothing listens on: the listener is bound, its port read, then dropped.
+    let closed = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    };
+    for (api, reason) in [
+        ("", "WAIT_RUN_API is not set"),
+        (closed.as_str(), "the forge could not be read"),
+    ] {
+        let one = a_sample_dir("unreadable");
+        let run = sampled(&one, api, &["--baseline-run", "7", "--", "make", "check"]);
+        let said = said(&run);
+        let sabotaged = one.dir.join("sabotaged").exists();
+        let recorded = one.dir.join("target").exists();
+        let lane_ran = one.dir.join("lane_ran").exists();
+        let _ = std::fs::remove_dir_all(&one.dir);
+        assert_eq!(run.status.code(), Some(2), "{reason}: {said}");
+        assert!(
+            said.contains(&format!("baseline-run: refused: {reason}")),
+            "{reason}: {said}"
+        );
+        assert!(
+            !sabotaged && !recorded && !lane_ran,
+            "{reason}: nothing ran: {said}"
         );
     }
 }
