@@ -115,14 +115,26 @@ pub fn skip_counts() -> Vec<(&'static str, u64)> {
         .collect()
 }
 
-fn skipped(skip: Skip) {
+/// **A boot that did not use a snapshot is counted once, and says so.** Every reason
+/// is a warning, the absence of a snapshot included, with one exception: a log that
+/// holds no history. There the boot had nothing a snapshot could have covered, so no
+/// snapshot is the ordinary state of a first boot and says nothing about a
+/// pre-build that failed. A log with history and no snapshot is the case the
+/// warning is for: a deploy whose pre-build failed lands there, and must not land
+/// quietly.
+fn skipped(skip: Skip, nothing_to_replay: bool) {
     SKIPS[skip.index()].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // **Every reason is a warning, the absence of a snapshot included**: a deploy
-    // whose pre-build failed lands here, and it must not land quietly.
-    tracing::warn!(
-        reason = skip.name(),
-        "SNAPSHOT NOT USED — the boot replays the whole log, not a fast boot"
-    );
+    if skip == Skip::NoneHeld && nothing_to_replay {
+        tracing::info!(
+            reason = skip.name(),
+            "no snapshot held and no history to replay; the boot starts from an empty log"
+        );
+    } else {
+        tracing::warn!(
+            reason = skip.name(),
+            "SNAPSHOT NOT USED — the boot replays the whole log, not a fast boot"
+        );
+    }
 }
 
 /// **Whether `snapshot` is of the shape this build reads.** The one place the
@@ -221,12 +233,13 @@ pub async fn boot(log: &dyn LogStore) -> Result<Boot, LogError> {
 async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError> {
     let began = std::time::Instant::now();
     let validity = log.validity().await?;
+    // The skip is reported once the replay is done: whether the log held any history
+    // is known only then.
+    let mut skip_to_report = None;
     let (mut boot, from_snapshot) = match restored(log, &validity).await? {
         Ok(boot) => (boot, true),
         Err(skip) => {
-            if report_skip {
-                skipped(skip);
-            }
+            skip_to_report = report_skip.then_some(skip);
             (
                 Boot {
                     state: State::default(),
@@ -242,6 +255,9 @@ async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError>
     loop {
         let batches = log.read_from(boot.position, READ_BOUND).await?;
         if batches.is_empty() {
+            if let Some(skip) = skip_to_report {
+                skipped(skip, boot.position == Position(0));
+            }
             tracing::info!(
                 from_snapshot,
                 restored_at = restored_at.0,
