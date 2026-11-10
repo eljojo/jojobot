@@ -32,6 +32,21 @@ tokio::task_local! {
     static COMPOSITE_CLAIM: ();
 }
 
+/// **What a composite act could write, as the store held it before the act.** See
+/// [`InMemoryMemory::rows_before_an_act`].
+struct ActRows {
+    entities: Vec<Entity>,
+    badges: std::collections::HashMap<EntityId, String>,
+    facts: Vec<Fact>,
+    writes: Vec<StoredWrite>,
+    claim_writes: Vec<(EntityId, FactId, ClaimWrite)>,
+    entity_writes: Vec<(EntityId, jiff::Timestamp)>,
+    entity_versions: Vec<(EntityId, super::super::EntityVersion)>,
+    merges: Vec<StoredMerge>,
+    claims: crate::log::claims::State,
+    heartbeats: std::collections::BTreeMap<EntityId, String>,
+}
+
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
 /// real store's per-doc numbering. A fresh instance starts empty.
@@ -2163,6 +2178,56 @@ impl InMemoryMemory {
         *self.lease_heartbeats.lock().expect("fake mutex poisoned") = before.clone();
     }
 
+    /// **Every row any composite act can write, kept to put back.** The real store
+    /// writes an act in one transaction, so a refused act leaves all of it as it was.
+    /// The five composites (a creation with its first claim, an entity edit, a claim
+    /// edit, a retraction and a merge) go through this one set and
+    /// [`Self::put_back_the_rows_of_an_act`], never a list of their own (rule 498):
+    /// a list kept per act was how the claims State and the heartbeat home each
+    /// went missing from some of them.
+    fn rows_before_an_act(&self) -> ActRows {
+        ActRows {
+            entities: self.entities.lock().expect("fake mutex poisoned").clone(),
+            badges: self.badges.lock().expect("fake mutex poisoned").clone(),
+            facts: self.facts.lock().expect("fake mutex poisoned").clone(),
+            writes: self.writes.lock().expect("fake mutex poisoned").clone(),
+            claim_writes: self
+                .claim_writes
+                .lock()
+                .expect("fake mutex poisoned")
+                .clone(),
+            entity_writes: self
+                .entity_writes
+                .lock()
+                .expect("fake mutex poisoned")
+                .clone(),
+            entity_versions: self
+                .entity_versions
+                .lock()
+                .expect("fake mutex poisoned")
+                .clone(),
+            merges: self.merges.lock().expect("fake mutex poisoned").clone(),
+            claims: self.claims.lock().expect("fake mutex poisoned").clone(),
+            heartbeats: self.heartbeats_now(),
+        }
+    }
+
+    /// Put every row of an act back as [`Self::rows_before_an_act`] kept it, and
+    /// drop the cache of what the rows answered.
+    fn put_back_the_rows_of_an_act(&self, before: &ActRows) {
+        *self.entities.lock().expect("fake mutex poisoned") = before.entities.clone();
+        *self.badges.lock().expect("fake mutex poisoned") = before.badges.clone();
+        *self.facts.lock().expect("fake mutex poisoned") = before.facts.clone();
+        *self.writes.lock().expect("fake mutex poisoned") = before.writes.clone();
+        *self.claim_writes.lock().expect("fake mutex poisoned") = before.claim_writes.clone();
+        *self.entity_writes.lock().expect("fake mutex poisoned") = before.entity_writes.clone();
+        *self.entity_versions.lock().expect("fake mutex poisoned") = before.entity_versions.clone();
+        *self.merges.lock().expect("fake mutex poisoned") = before.merges.clone();
+        *self.claims.lock().expect("fake mutex poisoned") = before.claims.clone();
+        self.put_heartbeats_back(&before.heartbeats);
+        *self.world_cache.lock().expect("fake mutex poisoned") = None;
+    }
+
     /// **What a write of a role's `claimed_at` does to the heartbeat home.** A
     /// renewal, plain or carrying other keys, keeps its moment there. A claim and a
     /// release write the field and clear the home, so the row never holds a
@@ -2441,30 +2506,10 @@ impl Memory for InMemoryMemory {
         // **One spend for the act**, after its last step: the inner writes take
         // nothing because this has taken the claim.
         let claim = crate::request::take();
-        // **Every row the act can write is kept to put back**: the entity, its
-        // badge, its writes and versions, and the claims and writes of the first
-        // claim and the records beside it. The real store does this in one
-        // transaction; removing only the entity left the rest behind.
-        let entities_before = self.entities.lock().expect("fake mutex poisoned").clone();
-        let badges_before = self.badges.lock().expect("fake mutex poisoned").clone();
-        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
-        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
-        let claim_writes_before = self
-            .claim_writes
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let entity_writes_before = self
-            .entity_writes
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let entity_versions_before = self
-            .entity_versions
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
+        // **Every row the act can write is kept to put back**, by the one set every
+        // composite uses. The real store does this in one transaction; removing
+        // only the entity left the rest behind.
+        let before = self.rows_before_an_act();
         let entity = match self.add_entity(new).await? {
             Guarded::Written(entity) => entity,
             Guarded::Blocked {
@@ -2477,21 +2522,7 @@ impl Memory for InMemoryMemory {
                 });
             }
         };
-        // **No heartbeat home to put back here**: every record of this act is about
-        // the thing it makes, which has no home before the act.
-        let take_back = || {
-            *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
-            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
-            *self.badges.lock().expect("fake mutex poisoned") = badges_before.clone();
-            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
-            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
-            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
-            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
-            *self.entity_writes.lock().expect("fake mutex poisoned") = entity_writes_before.clone();
-            *self.entity_versions.lock().expect("fake mutex poisoned") =
-                entity_versions_before.clone();
-            *self.world_cache.lock().expect("fake mutex poisoned") = None;
-        };
+        let take_back = || self.put_back_the_rows_of_an_act(&before);
         match COMPOSITE_CLAIM.scope((), self.capture(first)).await {
             Ok(Guarded::Written(fact)) => {
                 for record in also {
@@ -2563,25 +2594,7 @@ impl Memory for InMemoryMemory {
         // **One spend for the act**, after its last step.
         let request = crate::request::take();
         // A drop can rewrite an existing claim; truncating appended rows cannot undo it.
-        let entities_before = self.entities.lock().expect("fake mutex poisoned").clone();
-        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
-        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
-        let claim_writes_before = self
-            .claim_writes
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let entity_writes_before = self
-            .entity_writes
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let entity_versions_before = self
-            .entity_versions
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
+        let before = self.rows_before_an_act();
         let entity = match self.update_entity(handle, patch).await? {
             Guarded::Written(entity) => entity,
             Guarded::Blocked {
@@ -2594,20 +2607,7 @@ impl Memory for InMemoryMemory {
                 });
             }
         };
-        let heartbeats_before = self.heartbeats_now();
-        let take_back = || {
-            self.put_heartbeats_back(&heartbeats_before);
-            *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
-            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
-            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
-            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
-            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
-            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
-            *self.entity_writes.lock().expect("fake mutex poisoned") = entity_writes_before.clone();
-            *self.entity_versions.lock().expect("fake mutex poisoned") =
-                entity_versions_before.clone();
-            *self.world_cache.lock().expect("fake mutex poisoned") = None;
-        };
+        let take_back = || self.put_back_the_rows_of_an_act(&before);
         match COMPOSITE_CLAIM.scope((), self.capture(claim)).await {
             Ok(Guarded::Written(fact)) => {
                 if let Err(e) = self.spend_claim(request, || {
@@ -2657,23 +2657,8 @@ impl Memory for InMemoryMemory {
     ) -> Result<Guarded<(Fact, Fact)>, MemoryError> {
         // **One spend for the act**, after its last step.
         let request = crate::request::take();
-        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
-        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
-        let claim_writes_before = self
-            .claim_writes
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
-        let heartbeats_before = self.heartbeats_now();
-        let take_back = || {
-            self.put_heartbeats_back(&heartbeats_before);
-            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
-            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
-            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
-            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
-            *self.world_cache.lock().expect("fake mutex poisoned") = None;
-        };
+        let before = self.rows_before_an_act();
+        let take_back = || self.put_back_the_rows_of_an_act(&before);
         let edited = match self.update_fact(address, patch, caller).await? {
             Guarded::Written(edited) => edited,
             Guarded::Blocked {
@@ -2738,23 +2723,8 @@ impl Memory for InMemoryMemory {
     ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
         // **One spend for the act**, after its last step.
         let request = crate::request::take();
-        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
-        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
-        let claim_writes_before = self
-            .claim_writes
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
-        let heartbeats_before = self.heartbeats_now();
-        let take_back = || {
-            self.put_heartbeats_back(&heartbeats_before);
-            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
-            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
-            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
-            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
-            *self.world_cache.lock().expect("fake mutex poisoned") = None;
-        };
+        let before = self.rows_before_an_act();
+        let take_back = || self.put_back_the_rows_of_an_act(&before);
         let retraction = self.retract(address, reason, date, caller, session).await?;
         // **The same thing, by whichever spelling it is named**: the address is
         // resolved under a handle the thing wore before a rename, so the claim
@@ -5178,39 +5148,8 @@ impl Memory for InMemoryMemory {
         // **One spend for the act**, after its last step.
         let request = crate::request::take();
         let session = claim.session.clone();
-        let entities_before = self.entities.lock().expect("fake mutex poisoned").clone();
-        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
-        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
-        let claim_writes_before = self
-            .claim_writes
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let entity_writes_before = self
-            .entity_writes
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let merges_before = self.merges.lock().expect("fake mutex poisoned").clone();
-        let versions_before = self
-            .entity_versions
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
-        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
-        let heartbeats_before = self.heartbeats_now();
-        let take_back = || {
-            self.put_heartbeats_back(&heartbeats_before);
-            *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
-            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
-            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
-            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
-            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
-            *self.entity_writes.lock().expect("fake mutex poisoned") = entity_writes_before.clone();
-            *self.merges.lock().expect("fake mutex poisoned") = merges_before.clone();
-            *self.entity_versions.lock().expect("fake mutex poisoned") = versions_before.clone();
-            *self.world_cache.lock().expect("fake mutex poisoned") = None;
-        };
+        let before = self.rows_before_an_act();
+        let take_back = || self.put_back_the_rows_of_an_act(&before);
         let merged = self
             .merge(folded, survivor, reason, date, caller, session.as_deref())
             .await?;

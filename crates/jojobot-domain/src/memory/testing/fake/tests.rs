@@ -1300,3 +1300,144 @@ async fn deleting_a_renamed_thing_keeps_the_page_of_a_thing_at_its_vacated_handl
         "and its row survives"
     );
 }
+
+/// Everything a refused composite has to leave as it was: what the store shows of
+/// its own substrates, the claims State the writes emit, and the heartbeat home.
+async fn leaves_to_keep(
+    store: &InMemoryMemory,
+) -> (
+    (Option<crate::memory::WriteSummary>, Vec<Entity>),
+    crate::log::claims::State,
+    std::collections::BTreeMap<EntityId, String>,
+) {
+    (
+        shown(store).await,
+        store.read_claims(|state| state.clone()),
+        store.heartbeats_now(),
+    )
+}
+
+/// **A composite refused at its companion claim leaves the claims State as it was**,
+/// in each of the five acts: a creation with its first claim, an entity edit, a claim
+/// edit, a retraction and a merge. The first step of each writes, and emits to the
+/// State, before the companion is refused for a line break; the store then shows what
+/// it showed before the call, and so does the State. **Paired**: the same act with a
+/// clean companion lands and moves the State, so the equality above is a rollback and
+/// not an act that never ran.
+#[tokio::test]
+async fn every_refused_composite_leaves_the_whole_store_and_the_claims_state_as_it_was() {
+    let bot = EntityId("bot:sigma".to_string());
+    let bad = |subject: &EntityId| first_claim_about(subject, "noted\nover two lines");
+    let good = |subject: &EntityId| first_claim_about(subject, "noted in one line");
+
+    // A creation with its first claim.
+    let store = InMemoryMemory::booted();
+    let homer = EntityId("person:milhouse".to_string());
+    let before = leaves_to_keep(&store).await;
+    store
+        .add_entity_with_first_claim(
+            NewEntity::new(homer.clone(), "Milhouse", "fixture"),
+            bad(&homer),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(leaves_to_keep(&store).await, before, "a refused creation");
+    store
+        .add_entity_with_first_claim(
+            NewEntity::new(homer.clone(), "Milhouse", "fixture"),
+            good(&homer),
+        )
+        .await
+        .unwrap();
+    assert_ne!(leaves_to_keep(&store).await.1, before.1, "the control");
+
+    // An entity edit with its claim.
+    let store = InMemoryMemory::booted();
+    let subject = thing(&store, "person:lisa", "Lisa").await;
+    let rename = || EntityPatch {
+        name: Some("Lisa Simpson".into()),
+        ..Default::default()
+    };
+    let before = leaves_to_keep(&store).await;
+    store
+        .update_entity_with_claim(&subject, rename(), bad(&subject))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        leaves_to_keep(&store).await,
+        before,
+        "a refused entity edit"
+    );
+    store
+        .update_entity_with_claim(&subject, rename(), good(&subject))
+        .await
+        .unwrap();
+    assert_ne!(leaves_to_keep(&store).await.1, before.1, "the control");
+
+    // A claim edit with its claim.
+    let store = InMemoryMemory::booted();
+    let subject = thing(&store, "person:ralph", "Ralph").await;
+    let held = say(&store, &subject, "likes glue").await;
+    let reword = || FactPatch {
+        content: Some("likes paste".into()),
+        ..Default::default()
+    };
+    let before = leaves_to_keep(&store).await;
+    store
+        .update_fact_with_claim(&held, reword(), &bot, bad(&subject))
+        .await
+        .unwrap_err();
+    assert_eq!(leaves_to_keep(&store).await, before, "a refused claim edit");
+    store
+        .update_fact_with_claim(&held, reword(), &bot, good(&subject))
+        .await
+        .unwrap();
+    assert_ne!(leaves_to_keep(&store).await.1, before.1, "the control");
+
+    // A retraction with its claim.
+    let store = InMemoryMemory::booted();
+    let subject = thing(&store, "person:nelson", "Nelson").await;
+    let held = say(&store, &subject, "laughs at it").await;
+    let before = leaves_to_keep(&store).await;
+    store
+        .retract_with_claim(&held, None, date(2026, 6, 3), &bot, None, bad(&subject))
+        .await
+        .unwrap_err();
+    assert_eq!(leaves_to_keep(&store).await, before, "a refused retraction");
+    store
+        .retract_with_claim(&held, None, date(2026, 6, 3), &bot, None, good(&subject))
+        .await
+        .unwrap();
+    assert_ne!(leaves_to_keep(&store).await.1, before.1, "the control");
+
+    // A merge with its claim.
+    let store = InMemoryMemory::booted();
+    let folded = thing(&store, "person:martin", "Martin").await;
+    let survivor = thing(&store, "person:marge", "Marge").await;
+    say(&store, &folded, "owns a book").await;
+    let before = leaves_to_keep(&store).await;
+    store
+        .merge_with_claim(
+            &folded,
+            &survivor,
+            None,
+            date(2026, 6, 3),
+            &bot,
+            bad(&survivor),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(leaves_to_keep(&store).await, before, "a refused merge");
+    store
+        .merge_with_claim(
+            &folded,
+            &survivor,
+            None,
+            date(2026, 6, 3),
+            &bot,
+            good(&survivor),
+        )
+        .await
+        .unwrap();
+    assert_ne!(leaves_to_keep(&store).await.1, before.1, "the control");
+}
