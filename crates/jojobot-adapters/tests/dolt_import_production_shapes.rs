@@ -1,11 +1,11 @@
 //! **The claims import over the shapes a real store holds and the recorded fixture
 //! does not.** The fixture folds a thing that holds one claim or two; the store the
-//! import meets in production holds ten merges, one that moved five claims and one
-//! that moved none (the first case). It holds entities no build wrote a write row
-//! for, and claims older than the table that records their key writes (the second
-//! and third). The merges are made through the store's own route. A shape an old
-//! build left and no route makes today is written as that build left it, and the
-//! case says so.
+//! import meets holds many merges, among them one that moved five claims and one that
+//! moved none (the first case). It holds entities no build wrote a write row for, and
+//! claims older than the table that records their key writes (the second to fourth).
+//! The merges are made through the store's own route. A shape an old build left and no
+//! route makes today is written as that build left it, and the case says so. The
+//! days the rows are dated are the fixture's own, so no count reads the clock.
 
 use jiff::{Timestamp, civil::date};
 use jojobot_adapters::claims_import::{Imported, import_claims_once};
@@ -51,20 +51,18 @@ fn at() -> Timestamp {
     Timestamp::from_second(1_800_000_000).expect("a moment")
 }
 
-/// **The claims each of production's ten merges moved**, in merge-number order.
-/// Read from production's store on 2026-11-09, numbers only: `merge_event` held 26 rows,
-/// merge numbers 1 to 10 with none missing, and the rows of each merge, its own
-/// row first, numbered 2, 2, 2, 6, 2, 1, 3, 2, 3, 3. A merge that moved no claim
-/// is one row, and one that moved five is six.
-const CLAIMS_MOVED_BY_PRODUCTIONS_MERGES: [usize; 10] = [1, 1, 1, 5, 1, 0, 2, 1, 2, 2];
+/// **The claims each of ten merges moved**, in merge-number order. A merge writes one
+/// row of its own and one for each claim it moves, so a merge that moved no claim is
+/// one row and one that moved five is six.
+const CLAIMS_MOVED_BY_THE_MERGES: [usize; 10] = [1, 1, 1, 5, 1, 0, 2, 1, 2, 2];
 
-/// **The claims import takes the ten merges of the shape production holds.** The
-/// recorded fixture folds a thing that holds one claim or two, five times; the
-/// store the import meets holds ten merges, one that moved five claims and one that
-/// moved none. The merges here are made by the store's own merge route, so the rows
-/// are the rows it writes, and the case says first that they have production's
-/// shape. Every claim a merge moved is then served by the survivor, as the old
-/// rows serve it, and no merge number is left unexplained.
+/// **The claims import takes ten merges of a mixed shape.** The recorded fixture
+/// folds a thing that holds one claim or two, five times; a store that has run a
+/// while holds more merges, one that moved five claims and one that moved none. The
+/// merges here are made by the store's own merge route, so the rows are the rows it
+/// writes, and the case says first what they are. Every claim a merge moved is then
+/// served by the survivor, as the old rows serve it, and no merge number is left
+/// unexplained.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_takes_ten_merges_of_the_shape_production_holds() {
     let (_scratch, mut server, pool) = a_store("claims-import-production-merges").await;
@@ -89,11 +87,7 @@ async fn claims_import_takes_ten_merges_of_the_shape_production_holds() {
     ];
     // The keys each survivor must serve once its merges are in: one per moved claim.
     let mut expected: Vec<Vec<String>> = vec![Vec::new(); survivors.len()];
-    for (at, ((handle, name), moved)) in folded
-        .iter()
-        .zip(CLAIMS_MOVED_BY_PRODUCTIONS_MERGES)
-        .enumerate()
-    {
+    for (at, ((handle, name), moved)) in folded.iter().zip(CLAIMS_MOVED_BY_THE_MERGES).enumerate() {
         // **A name the screen finds near one already held is blocked**, so the ten
         // names here are far from each other and from the survivors' (a short slug
         // one letter pair from another, or a name inside another, is refused).
@@ -145,7 +139,7 @@ async fn claims_import_takes_ten_merges_of_the_shape_production_holds() {
     assert_eq!(
         rows,
         [2, 2, 2, 6, 2, 1, 3, 2, 3, 3],
-        "the store the case makes has the rows production holds, merge by merge"
+        "the store the case makes has the rows of each merge, one of its own and one for each claim it moved"
     );
     let mut old_fields = Vec::new();
     for survivor in &survivors {
@@ -154,7 +148,7 @@ async fn claims_import_takes_ten_merges_of_the_shape_production_holds() {
 
     let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
         .await
-        .expect("ten merges of production's shape import");
+        .expect("ten merges of a mixed shape import");
     let Imported::Done {
         empty_merge_numbers,
         skipped_homes,
@@ -166,7 +160,7 @@ async fn claims_import_takes_ten_merges_of_the_shape_production_holds() {
     };
     assert!(
         empty_merge_numbers.is_empty(),
-        "production holds merge numbers 1 to 10 and none is left unexplained: {empty_merge_numbers:?}"
+        "merge numbers 1 to 10 are all held and none is left unexplained: {empty_merge_numbers:?}"
     );
     assert!(skipped_homes.is_empty(), "{skipped_homes:?}");
     assert!(skipped_key_writes.is_empty(), "{skipped_key_writes:?}");
@@ -240,10 +234,9 @@ async fn say_with_key(memory: &DoltMemory, about: &EntityId, what: &str, key: &s
         .expect("not blocked");
 }
 
-/// **The claims import takes entities that have no `entity_write` row.** Production
-/// reads 3,384 entities of 3,398 with none, joining on the badge; the rows are filed
-/// under the handle, so that count may be the join and not the store. The import has
-/// a path for an entity with no row at all (an entity row whose snapshot no build
+/// **The claims import takes entities that have no `entity_write` row.** The write
+/// rows are filed under the handle the entity wore, or under its badge. The import
+/// has a path for an entity with no row at all (an entity row whose snapshot no build
 /// kept), and no case ran it. Today's routes write a row for each entity, so the
 /// rows of three are taken out the way an older build could have left them, and a
 /// fourth keeps its own. The import then serves every entity, key and claim the old
@@ -379,11 +372,11 @@ async fn claims_import_takes_entities_that_have_no_entity_write_row() {
 }
 
 /// **The claims import takes a claim older than the table that records its key
-/// writes, and one whose first write has no time.** Production holds 371 claims
-/// first written before the first dated key write (333 with a key write) and 32
-/// whose first write is undated (19 with one). A key write older than the table that
-/// stamps them has no moment and no claim-write number, so the rows of four claims are
-/// rewritten as that build left them: dated early with a key write stamped later,
+/// writes, and one whose first write has no time.** A store that has run a while holds
+/// claims first written before key writes were dated, some with a key write and some
+/// whose first write is undated. A key write older than the table that stamps them
+/// has no moment and no claim-write number, so the rows of four claims are rewritten
+/// as that build left them: dated early with a key write stamped later,
 /// dated early with an unstamped key write, undated with an unstamped key write, and
 /// undated with no key write. A fifth keeps today's rows. The import serves every
 /// claim and key the old rows served.
@@ -485,7 +478,7 @@ async fn claims_import_takes_a_claim_older_than_its_key_writes_and_one_with_no_f
     assert_eq!(
         (older, undated, bare_key_writes),
         (2, 2, 2),
-        "the store has production's shapes: claims dated before the first dated key \
+        "the store has the old shapes: claims dated before the first dated key \
          write, claims with no first time, and key writes with neither stamp nor number"
     );
     let old = memory.fields(&homer).await.expect("the old rows serve");
@@ -561,21 +554,21 @@ async fn homer_with_a_claim(
 }
 
 /// **The claims import takes a claim written before key writes were kept, that has
-/// none.** Production holds 51 claims first written before the first dated key
-/// write with no key write row at all. The claim is made through the store's own
-/// route and its first write is dated as the oldest write production holds
-/// (2026-09-04); it carries no key, so it has no `field_write` row. A claim written
-/// today, with a key, stands beside it. The import serves both and the one key.
+/// none.** A store that has run a while holds claims first written before the first
+/// dated key write, with no key write row at all. The claim is made through the
+/// store's own route and its first write is dated early; it carries no key, so it has
+/// no `field_write` row. A claim written later, with a key, stands beside it. The
+/// import serves both and the one key.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
     let (_scratch, mut server, pool, memory, homer, badge) =
         homer_with_a_claim("claims-import-old-no-key-write", "an old claim", None).await;
     say_with_key(&memory, &homer, "written today", "mood_e").await;
-    sqlx::query("UPDATE fact_write SET written_at = '2026-09-04T13:11:20Z' WHERE entity = ? AND content = 'an old claim'")
+    sqlx::query("UPDATE fact_write SET written_at = '2026-09-01T00:00:00Z' WHERE entity = ? AND content = 'an old claim'")
         .bind(&badge)
         .execute(&pool)
         .await
-        .expect("the first write is dated as the oldest write production holds");
+        .expect("the first write is dated early");
     let key_writes_of_old: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM field_write w JOIN fact_write f \
          ON f.entity = w.entity AND f.fact_id = w.fact_id \
@@ -595,7 +588,7 @@ async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
     assert_eq!(
         (early, key_writes_of_old),
         (1, 0),
-        "an old claim with no key write row at all, as 51 of production's are"
+        "an old claim with no key write row at all"
     );
     let old = memory.fields(&homer).await.expect("the old rows serve");
 
@@ -628,8 +621,8 @@ async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
 }
 
 /// **The claims import takes a timed key write over a claim whose first write has no
-/// time.** Production holds 18 claims whose key writes carry a time and whose first
-/// write does not. A key write stamped before the claim-write number existed has
+/// time.** A store that has run a while holds claims whose key writes carry a time and
+/// whose first write does not. A key write stamped before the claim-write number existed has
 /// neither number nor a claim write to name, so the case writes the rows as that
 /// build left them: the first write undated, the key write stamped and unnumbered.
 /// The import serves the claim and its key.
@@ -672,7 +665,7 @@ async fn claims_import_takes_a_timed_key_write_over_a_claim_whose_first_write_ha
     assert_eq!(
         (undated, timed),
         (1, 1),
-        "an undated first write beside a stamped, unnumbered key write, as 18 of production's are"
+        "an undated first write beside a stamped, unnumbered key write"
     );
     let old = memory.fields(&homer).await.expect("the old rows serve");
     assert_eq!(old.len(), 1, "the old rows serve the key");
