@@ -832,6 +832,42 @@ fn memory_day_verdict_ignores_what_an_earlier_invocation_wrote() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+/// **A report replaced by a shorter file is all this run's.** The script reads from the
+/// size the file had when it began, and a file with fewer bytes than that has been
+/// replaced, so a slice from that size would read nothing. The run writes a boot and a
+/// day of its own in less than the earlier report held.
+#[test]
+fn memory_day_verdict_reads_a_report_replaced_by_a_shorter_file_whole() {
+    let boot = "memory-report boot: server peak 1200.0 MiB";
+    let day = "memory-report day: server resident 1500.0 MiB at the end, 1500.0 MiB at the most; \
+               peak 1500.0 MiB";
+    assert!(
+        boot.len() + day.len() < STALE_REPORT.len(),
+        "the file must be shorter"
+    );
+    let dir = bundle(&format!(
+        "{PASSED}; printf '%s\\n%s\\n' '{boot}' '{day}' > ../../target/bar/boot-measures.log"
+    ));
+    seed_the_report(&dir);
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: ok"), "{verdict}");
+    assert_eq!(out.status.code(), Some(0), "{said}");
+    for number in ["1200.0", "1500.0"] {
+        assert!(
+            verdict.contains(number),
+            "the verdict lacks {number}: {verdict}"
+        );
+    }
+    assert!(
+        !said.contains("4500.0"),
+        "an earlier run's number reached this run: {said}"
+    );
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 /// **An old line does not fill a number this run did not measure.** The run writes a
 /// boot and no day, after an earlier run wrote both.
 #[test]
