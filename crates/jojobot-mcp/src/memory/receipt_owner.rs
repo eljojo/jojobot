@@ -637,6 +637,20 @@ mod tests {
         assert_eq!(named, ["hint", "unlocks"], "{served}");
     }
 
+    /// A suggestion dropped by the batch owner leaves its earned domain free.
+    #[test]
+    fn a_batch_spends_only_the_suggestion_it_serves() {
+        let spends = vec![
+            "possible-subject:delta".to_string(),
+            "type-unlocks:delta".to_string(),
+        ];
+        let (served, kept) =
+            super::own_batch_receipt(a_merged_batch_receipt(Value::Null, 0), spends);
+        assert!(served.get("possible_subject_note").is_some(), "{served}");
+        assert!(served.get("unlocks").is_none(), "{served}");
+        assert_eq!(kept, ["possible-subject:delta"]);
+    }
+
     /// **A mark an item left for a layer the batch serves is removed**, and with
     /// no layer left out the account goes.
     #[test]
