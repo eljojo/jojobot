@@ -259,6 +259,89 @@ fn two_faults_are_told_in_the_order() {
     }
 }
 
+/// **The claim's own inputs are told in the order the store reads them**: the
+/// words, the edge's spelling, the span, the fields, and the source an observation
+/// names. Each adjacent pair is one request with both faults, told as the earlier
+/// fault alone is told; the two faults alone are told differently, or the pair
+/// would prove nothing. The engine's route carries them, as it skips the verb's own
+/// guards.
+#[test]
+fn the_claims_own_inputs_are_told_in_the_order_the_store_reads_them() {
+    crate::memory::kinds::load_shipped();
+    let (state, declared) = world();
+    type Fault = fn(&mut CaptureRequest);
+    let faults: [(&str, Fault); 5] = [
+        ("content", |request| request.draft.content = "   ".into()),
+        ("edge", |request| {
+            request.edge = Some((EdgeShape::Location, "thing:omega".into()))
+        }),
+        ("span", |request| {
+            request.draft.happened_through = Some(day(5))
+        }),
+        ("fields", |request| {
+            request
+                .fields
+                .insert(crate::memory::RETRACTS.into(), "x".into());
+        }),
+        ("source", |request| {
+            request.draft.provenance = Provenance::Observation
+        }),
+    ];
+    let told = |chosen: &[Fault]| {
+        let mut request = CaptureRequest {
+            route: Route::Engine,
+            ..request("alpha")
+        };
+        for fault in chosen {
+            fault(&mut request);
+        }
+        prepare(&state, &declared, &request)
+    };
+    for pair in faults.windows(2) {
+        let ((earlier, first), (later, second)) = (pair[0], pair[1]);
+        let (alone_first, alone_second) = (told(&[first]), told(&[second]));
+        assert!(
+            alone_first.is_err() && alone_second.is_err() && alone_first != alone_second,
+            "{earlier} and {later} each refuse, and differently: {alone_first:?} {alone_second:?}"
+        );
+        assert_eq!(
+            told(&[second, first]),
+            alone_first,
+            "{earlier} is told before {later}"
+        );
+    }
+}
+
+/// **The verb's role-field guard is told before a key jojobot writes itself.** A
+/// request on a role that carries a lease key and a server-written key is refused
+/// for the lease key.
+#[test]
+fn a_role_lease_field_is_told_before_a_key_jojobot_writes_itself() {
+    let (state, declared) = world();
+    let both = CaptureRequest {
+        fields: BTreeMap::from([("holder".into(), "x".into()), ("due_on".into(), "v".into())]),
+        ..request("role:alpha")
+    };
+    assert_eq!(
+        prepare(&state, &declared, &both),
+        Err(Refusal::RoleFieldGuarded {
+            role: "alpha".into(),
+            key: "holder".into()
+        })
+    );
+    let server_only = CaptureRequest {
+        fields: BTreeMap::from([("due_on".into(), "v".into())]),
+        ..request("alpha")
+    };
+    assert_eq!(
+        prepare(&state, &declared, &server_only),
+        Err(Refusal::ServerWritten {
+            key: "due_on".into()
+        }),
+        "the server-written key is refused alone"
+    );
+}
+
 /// Refusing changes nothing.
 #[test]
 fn a_refused_request_leaves_the_state_as_it_was() {
