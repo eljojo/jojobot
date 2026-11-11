@@ -2,7 +2,7 @@
 //! does not.** The fixture folds a thing that holds one claim or two; the store the
 //! import meets holds many merges, among them one that moved five claims and one that
 //! moved none (the first case). It holds entities no build wrote a write row for, and
-//! claims older than the table that records their key writes (the second to fourth).
+//! claims older than the table that records their key writes (the second to fifth).
 //! The merges are made through the store's own route. A shape an old build left and no
 //! route makes today is written as that build left it, and the case says so. The
 //! days the rows are dated are the fixture's own, so no count reads the clock.
