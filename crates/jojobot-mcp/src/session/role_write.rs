@@ -501,29 +501,33 @@ mod tests {
     /// second bot, which is refused for the holder the handle claim made.
     #[tokio::test]
     async fn a_claim_named_by_its_handle_claims_the_same_role_as_its_bare_name() {
-        let jojobot = handler();
-        make_bot(&jojobot, "gamma").await;
-        make_bot(&jojobot, "delta").await;
-        let by_handle = booted(&jojobot, "gamma", Some("role:gamma")).await;
-        let claim = &by_handle["session"]["claim"];
-        assert_eq!(claim["status"], "taken", "{by_handle}");
-        assert_eq!(claim["role"], "gamma", "{by_handle}");
-        let sid = sid_of(&by_handle).expect("a handle");
-        let fields = jojobot
-            .memory
-            .fields(&EntityId("role:gamma".into()))
-            .await
-            .expect("fields ok");
-        assert_eq!(
-            fields.get("holder"),
-            Some(&run_name(&jojobot, &sid)),
-            "the run that claimed by handle holds the role: {fields:?}"
-        );
-        let rival = booted(&jojobot, "delta", Some("gamma")).await;
-        assert_ne!(
-            rival["session"]["claim"]["status"], "taken",
-            "the role is held, whichever spelling took it: {rival}"
-        );
+        // **The padded spelling is read as the handle**: the claim is trimmed before
+        // the kind is dropped.
+        for spelling in ["role:gamma", "  role:gamma  "] {
+            let jojobot = handler();
+            make_bot(&jojobot, "gamma").await;
+            make_bot(&jojobot, "delta").await;
+            let by_handle = booted(&jojobot, "gamma", Some(spelling)).await;
+            let claim = &by_handle["session"]["claim"];
+            assert_eq!(claim["status"], "taken", "{spelling:?}: {by_handle}");
+            assert_eq!(claim["role"], "gamma", "{spelling:?}: {by_handle}");
+            let sid = sid_of(&by_handle).expect("a handle");
+            let fields = jojobot
+                .memory
+                .fields(&EntityId("role:gamma".into()))
+                .await
+                .expect("fields ok");
+            assert_eq!(
+                fields.get("holder"),
+                Some(&run_name(&jojobot, &sid)),
+                "the run that claimed by handle holds the role: {spelling:?}: {fields:?}"
+            );
+            let rival = booted(&jojobot, "delta", Some("gamma")).await;
+            assert_ne!(
+                rival["session"]["claim"]["status"], "taken",
+                "the role is held, whichever spelling took it: {spelling:?}: {rival}"
+            );
+        }
     }
 
     /// **A claim whose name builds no role handle is the caller's to change, and
@@ -534,21 +538,36 @@ mod tests {
     /// with the bare name, which is taken: nothing was held by the refused call.
     #[tokio::test]
     async fn a_claim_name_that_builds_no_role_handle_is_refused_naming_it() {
-        let jojobot = handler();
-        make_bot(&jojobot, "gamma").await;
-        let spelled = booted(&jojobot, "gamma", Some("Role:A b")).await;
-        let claim = &spelled["session"]["claim"];
-        assert_eq!(claim["status"], "refused", "{spelled}");
-        assert_eq!(claim["fix_by"], "change", "{spelled}");
-        assert_eq!(claim["role"], "Role:A b", "{spelled}");
-        assert!(
-            claim["how_to_proceed"]
-                .as_str()
-                .is_some_and(|way| way.contains("Role:A b")),
-            "the answer names the name it could not read: {spelled}"
-        );
-        let bare = booted(&jojobot, "gamma", Some("gamma")).await;
-        assert_eq!(bare["session"]["claim"]["status"], "taken", "{bare}");
+        // **Each name is read after one leading `role:` is dropped, and the answer
+        // names what was left**: a capital and a space; the kind alone, with nothing
+        // to drop; and the kind twice, which leaves `role:gamma`, no role name either.
+        // The doubled name is built, not written out: the roster check reads a
+        // written `role:` followed by a word as a handle of that kind.
+        let doubled = format!("{0}{0}gamma", "role:");
+        for (name, left) in [
+            ("Role:A b", "Role:A b"),
+            ("role:", "role:"),
+            (doubled.as_str(), "role:gamma"),
+        ] {
+            let jojobot = handler();
+            make_bot(&jojobot, "gamma").await;
+            let spelled = booted(&jojobot, "gamma", Some(name)).await;
+            let claim = &spelled["session"]["claim"];
+            assert_eq!(claim["status"], "refused", "{name}: {spelled}");
+            assert_eq!(claim["fix_by"], "change", "{name}: {spelled}");
+            assert_eq!(claim["role"], left, "{name}: {spelled}");
+            assert!(
+                claim["how_to_proceed"]
+                    .as_str()
+                    .is_some_and(|way| way.contains(left)),
+                "the answer names the name it could not read: {name}: {spelled}"
+            );
+            let bare = booted(&jojobot, "gamma", Some("gamma")).await;
+            assert_eq!(
+                bare["session"]["claim"]["status"], "taken",
+                "nothing was held by the refused call: {name}: {bare}"
+            );
+        }
     }
 
     /// **A claim makes the role its own object, a child of the bot, and one read
