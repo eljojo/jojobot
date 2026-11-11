@@ -1676,13 +1676,39 @@ async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_
     assert_eq!(part_rows(&pool).await, 2);
 
     // ── another bot's parts under the same id are its own ───────────────────
+    // **The other bot exists and writes a part of its own under the same id**: a bot
+    // the store does not know is answered with no parts before any key is read, which
+    // would hold even if parts were keyed by the request id alone.
+    thing(&memory, "bot:omega", "Omega").await;
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    let others = request("bot:omega", "parts-1");
+    assert_eq!(
+        captured_as_part(
+            &memory,
+            &Scope::new(others.clone()),
+            "one",
+            Some("omega plan"),
+            claim_about(&homer, "owns a donut")
+        )
+        .await,
+        (true, true),
+        "the other bot's part lands under the same id"
+    );
+    let theirs = ledger
+        .parts(&others.bot, &others.id)
+        .await
+        .expect("readable");
+    assert_eq!(theirs.len(), 1, "its own part: {theirs:?}");
+    assert_eq!(theirs[0].recorded.note.as_deref(), Some("omega plan"));
+    assert_ne!(theirs[0].key, held[0].key, "a key of its own");
     assert_eq!(
         ledger
-            .parts(&EntityId("bot:omega".into()), &first.id)
+            .parts(&first.bot, &first.id)
             .await
             .expect("readable")
             .len(),
-        0
+        2,
+        "the first bot's two parts are not the other's"
     );
 
     // ── finishing spends the id, with the receipt ────────────────────────────
