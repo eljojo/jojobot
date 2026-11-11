@@ -1,8 +1,11 @@
-//! **The claims import over the merge shape a real store holds.** The recorded
-//! fixture folds a thing that holds one claim or two; the store the import meets
-//! in production holds ten merges, one that moved five claims and one that moved
-//! none. The case builds that shape through the store's own merge route and checks
-//! what the import does with it.
+//! **The claims import over the shapes a real store holds and the recorded fixture
+//! does not.** The fixture folds a thing that holds one claim or two; the store the
+//! import meets in production holds ten merges, one that moved five claims and one
+//! that moved none (the first case). It holds entities no build wrote a write row
+//! for, and claims older than the table that records their key writes (the second
+//! and third). The merges are made through the store's own route. A shape an old
+//! build left and no route makes today is written as that build left it, and the
+//! case says so.
 
 use jiff::{Timestamp, civil::date};
 use jojobot_adapters::claims_import::{Imported, import_claims_once};
@@ -13,7 +16,9 @@ use jojobot_adapters::testing::{Scratch, claims_events, free_port, migrated_data
 use jojobot_adapters::writer::Writer;
 use jojobot_domain::log::claims::State;
 use jojobot_domain::memory::owned::Provisions;
-use jojobot_domain::memory::{EntityId, Guarded, Memory, NewEntity, NewFact, Provenance};
+use jojobot_domain::memory::{
+    EntityId, EntityPatch, Guarded, Memory, NewEntity, NewFact, Provenance,
+};
 
 /// A migrated store of this case's own, with the shipped kinds.
 async fn a_store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool) {
@@ -207,5 +212,323 @@ async fn claims_import_takes_ten_merges_of_the_shape_production_holds() {
             "{handle} resolves to the survivor its merge named"
         );
     }
+    server.stop().await;
+}
+
+/// The badge the store keeps an entity under; every write table is keyed by it.
+async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
+    sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(handle)
+        .fetch_one(pool)
+        .await
+        .expect("a badge")
+}
+
+/// One claim that carries one key, as a caller writes it.
+async fn say_with_key(memory: &DoltMemory, about: &EntityId, what: &str, key: &str) {
+    let mut fact = NewFact::about(about.clone(), what, date(2026, 9, 1));
+    fact.provenance = Provenance::Testimony;
+    fact.fields = [(key.to_string(), "kept".to_string())]
+        .into_iter()
+        .collect();
+    fact.sets = fact.fields.keys().cloned().collect();
+    memory
+        .capture(fact)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+}
+
+/// **The claims import takes entities that have no `entity_write` row.** Production
+/// reads 3,384 entities of 3,398 with none, joining on the badge; the rows are filed
+/// under the handle, so that count may be the join and not the store. The import has
+/// a path for an entity with no row at all (an entity row whose snapshot no build
+/// kept), and no case ran it. Today's routes write a row for each entity, so the
+/// rows of three are taken out the way an older build could have left them, and a
+/// fourth keeps its own. The import then serves every entity, key and claim the old
+/// rows served.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_takes_entities_that_have_no_entity_write_row() {
+    let (_scratch, mut server, pool) = a_store("claims-import-no-entity-write").await;
+    let memory = DoltMemory::open(pool.clone());
+    let kept = "person:lenny";
+    let all = ["person:homer", "person:marge", "person:bart", kept];
+    for (handle, name) in [
+        ("person:homer", "Homer"),
+        ("person:marge", "Marge"),
+        ("person:bart", "Bart"),
+        (kept, "Lenny"),
+    ] {
+        let id = thing(&memory, handle, name).await;
+        say_with_key(&memory, &id, &format!("{name} keeps a note"), "note").await;
+    }
+    memory
+        .update_entity(
+            &EntityId(kept.to_string()),
+            EntityPatch {
+                name: Some("Lenny Leonard".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the rename lands");
+    // The rows are filed under the handle the entity wore when they were written
+    // (the badge only on a store that was moved to badges), so the count reads both.
+    let rows_of = |handle: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let badge = badge_of(&pool, handle).await;
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM entity_write WHERE entity = ? OR entity = ?",
+            )
+            .bind(handle)
+            .bind(badge)
+            .fetch_one(&pool)
+            .await
+            .expect("the write rows count")
+        }
+    };
+    for handle in all {
+        assert!(
+            rows_of(handle).await > 0,
+            "today's routes write a row for {handle}"
+        );
+    }
+    // Written as an older build could have left them: no row of the entity's own.
+    for handle in all.iter().filter(|handle| **handle != kept) {
+        sqlx::query("DELETE FROM entity_write WHERE entity = ? OR entity = ?")
+            .bind(*handle)
+            .bind(badge_of(&pool, handle).await)
+            .execute(&pool)
+            .await
+            .expect("the write rows go");
+    }
+    for handle in all {
+        assert_eq!(
+            rows_of(handle).await > 0,
+            handle == kept,
+            "{handle}: only the entity that kept its rows has an entity_write row"
+        );
+    }
+    let mut old = Vec::new();
+    for handle in all {
+        old.push(
+            memory
+                .fields(&EntityId(handle.to_string()))
+                .await
+                .expect("the old rows serve"),
+        );
+    }
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("entities with no write row import");
+    let Imported::Done {
+        skipped_homes,
+        skipped_key_writes,
+        ..
+    } = imported
+    else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert!(skipped_homes.is_empty(), "{skipped_homes:?}");
+    assert!(skipped_key_writes.is_empty(), "{skipped_key_writes:?}");
+
+    let events = claims_events(&pool).await;
+    let state = State::replay(events.iter());
+    for (handle, old) in all.iter().zip(&old) {
+        let badge = jojobot_domain::log::ObjectId(badge_of(&pool, handle).await);
+        assert_eq!(
+            state.resolve(handle),
+            Some(&badge),
+            "{handle} answers by its handle"
+        );
+        assert!(
+            state.object(&badge).is_some(),
+            "{handle} is an object of the State"
+        );
+        assert_eq!(
+            &state.fields(&badge, &[]),
+            old,
+            "the import serves the keys of {handle} as the old rows do"
+        );
+        let note = state
+            .active_records(&badge)
+            .into_iter()
+            .filter_map(|record| state.record(record))
+            .any(|record| record.claim.content.ends_with("keeps a note"));
+        assert!(note, "the import serves the claim of {handle}");
+        // An entity with a write row is baselined at the moment of its first
+        // write; one with none is baselined with no moment, and no moment is made up.
+        let baselined = events
+            .iter()
+            .find(|event| {
+                matches!(&event.payload,
+                    jojobot_domain::log::claims::ClaimEvent::ObjectBaselined { object, .. }
+                        if *object == badge)
+            })
+            .expect("the entity is baselined");
+        assert_eq!(
+            baselined.imported_source_time.is_some(),
+            *handle == kept,
+            "{handle}: the baseline holds a moment only when a write row gave one"
+        );
+    }
+    server.stop().await;
+}
+
+/// **The claims import takes a claim older than the table that records its key
+/// writes, and one whose first write has no time.** Production holds 371 claims
+/// first written before the first dated key write (333 with a key write) and 32
+/// whose first write is undated (19 with one). A key write older than the table that
+/// stamps them has no moment and no claim-write number, so the rows of four claims are
+/// rewritten as that build left them: dated early with a key write stamped later,
+/// dated early with an unstamped key write, undated with an unstamped key write, and
+/// undated with no key write. A fifth keeps today's rows. The import serves every
+/// claim and key the old rows served.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_takes_a_claim_older_than_its_key_writes_and_one_with_no_first_time() {
+    let (_scratch, mut server, pool) = a_store("claims-import-old-claims").await;
+    let memory = DoltMemory::open(pool.clone());
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    let badge = badge_of(&pool, "person:homer").await;
+    say_with_key(&memory, &homer, "dated early, key stamped later", "mood_a").await;
+    say_with_key(&memory, &homer, "dated early, key unstamped", "mood_b").await;
+    say_with_key(&memory, &homer, "undated, key unstamped", "mood_c").await;
+    memory
+        .capture({
+            let mut fact = NewFact::about(homer.clone(), "undated, no key", date(2026, 9, 1));
+            fact.provenance = Provenance::Testimony;
+            fact
+        })
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    say_with_key(&memory, &homer, "written today", "mood_e").await;
+
+    let fact_id = |content: &'static str| {
+        let pool = pool.clone();
+        let badge = badge.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT fact_id FROM fact_write WHERE entity = ? AND content = ?",
+            )
+            .bind(badge)
+            .bind(content)
+            .fetch_one(&pool)
+            .await
+            .expect("the claim has a write row")
+        }
+    };
+    for (content, first_write) in [
+        (
+            "dated early, key stamped later",
+            Some("2026-09-05T10:00:00Z"),
+        ),
+        ("dated early, key unstamped", Some("2026-09-06T10:00:00Z")),
+        ("undated, key unstamped", None),
+        ("undated, no key", None),
+    ] {
+        sqlx::query("UPDATE fact_write SET written_at = ? WHERE entity = ? AND fact_id = ?")
+            .bind(first_write)
+            .bind(&badge)
+            .bind(fact_id(content).await)
+            .execute(&pool)
+            .await
+            .expect("the first write is dated as the old build left it");
+    }
+    sqlx::query(
+        "UPDATE field_write SET written_at = '2026-10-09T10:00:00Z' \
+         WHERE entity = ? AND fact_id = ?",
+    )
+    .bind(&badge)
+    .bind(fact_id("dated early, key stamped later").await)
+    .execute(&pool)
+    .await
+    .expect("a key write stamped after the claim");
+    for content in ["dated early, key unstamped", "undated, key unstamped"] {
+        sqlx::query(
+            "UPDATE field_write SET written_at = NULL, fact_write_ordinal = NULL \
+             WHERE entity = ? AND fact_id = ?",
+        )
+        .bind(&badge)
+        .bind(fact_id(content).await)
+        .execute(&pool)
+        .await
+        .expect("a key write older than the stamp and the claim-write number");
+    }
+
+    let older: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND written_at < '2026-10-08'",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the early claims count");
+    let undated: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND written_at IS NULL",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the undated claims count");
+    let bare_key_writes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM field_write WHERE entity = ? AND written_at IS NULL \
+         AND fact_write_ordinal IS NULL",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the unstamped key writes count");
+    assert_eq!(
+        (older, undated, bare_key_writes),
+        (2, 2, 2),
+        "the store has production's shapes: claims dated before the first dated key \
+         write, claims with no first time, and key writes with neither stamp nor number"
+    );
+    let old = memory.fields(&homer).await.expect("the old rows serve");
+    assert_eq!(old.len(), 4, "the old rows serve the four keys");
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("claims older than their key writes import");
+    let Imported::Done {
+        skipped_homes,
+        skipped_key_writes,
+        ..
+    } = imported
+    else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert!(skipped_homes.is_empty(), "{skipped_homes:?}");
+    assert!(skipped_key_writes.is_empty(), "{skipped_key_writes:?}");
+
+    let state = State::replay(claims_events(&pool).await.iter());
+    let object = jojobot_domain::log::ObjectId(badge);
+    assert_eq!(
+        state.fields(&object, &[]),
+        old,
+        "the import serves the keys of the old claims as the old rows do"
+    );
+    let mut served: Vec<String> = state
+        .active_records(&object)
+        .into_iter()
+        .filter_map(|record| state.record(record))
+        .map(|record| record.claim.content.clone())
+        .collect();
+    served.sort();
+    assert_eq!(
+        served,
+        [
+            "dated early, key stamped later",
+            "dated early, key unstamped",
+            "undated, key unstamped",
+            "undated, no key",
+            "written today",
+        ],
+        "the import serves each claim, the undated ones included"
+    );
     server.stop().await;
 }
