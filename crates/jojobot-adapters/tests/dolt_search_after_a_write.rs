@@ -17,7 +17,12 @@ use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
 use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
 use tracing_subscriber::layer::{Context, SubscriberExt};
 
-static STATEMENTS: AtomicUsize = AtomicUsize::new(0);
+/// **One case's count of the statements its own store logs.** The subscriber a case
+/// installs is thread-local, and the counter it adds to belongs to that case alone:
+/// a count shared by the cases of this binary would take a statement of one case
+/// into the window of another when the harness runs them on two threads.
+#[derive(Clone, Default)]
+struct Counter(Arc<AtomicUsize>);
 
 /// **The one statement the driver sends when it opens a connection**, which it
 /// logs beside the statements of the code that asked for the connection. It is
@@ -37,7 +42,7 @@ impl tracing::field::Visit for Summary {
 
 /// Counts the statements the store's driver logs, one event each, **except the
 /// session setup of a connection the pool opened**.
-struct CountStatements;
+struct CountStatements(Arc<AtomicUsize>);
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CountStatements {
     fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
@@ -47,18 +52,27 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CountStatements {
         let mut summary = Summary(String::new());
         event.record(&mut summary);
         if !summary.0.starts_with(SESSION_SETUP) {
-            STATEMENTS.fetch_add(1, Ordering::SeqCst);
+            self.0.fetch_add(1, Ordering::SeqCst);
         }
     }
 }
 
 use jojobot_adapters::testing::Scratch;
 
-/// How many statements `run` cost.
-async fn counted<T>(run: impl std::future::Future<Output = T>) -> (T, usize) {
-    let before = STATEMENTS.load(Ordering::SeqCst);
-    let out = run.await;
-    (out, STATEMENTS.load(Ordering::SeqCst) - before)
+impl Counter {
+    /// Count this thread's statements into this counter until the guard drops.
+    fn install(&self) -> tracing::subscriber::DefaultGuard {
+        tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(CountStatements(Arc::clone(&self.0))),
+        )
+    }
+
+    /// How many statements `run` cost.
+    async fn counted<T>(&self, run: impl std::future::Future<Output = T>) -> (T, usize) {
+        let before = self.0.load(Ordering::SeqCst);
+        let out = run.await;
+        (out, self.0.load(Ordering::SeqCst) - before)
+    }
 }
 
 fn names(hits: &[Hit], who: &EntityId) -> bool {
@@ -86,25 +100,45 @@ async fn opening_a_connection_inside_the_window_adds_nothing_to_the_count() {
     let mut store = Dolt::start(&scratch.0, port)
         .await
         .expect("the store comes up");
-    let _counting =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(CountStatements));
+    let counter = Counter::default();
+    let _counting = counter.install();
 
     // A pool of its own has no connection yet, so its first statement opens one.
     let fresh = sqlx::mysql::MySqlPoolOptions::new()
         .max_connections(1)
         .connect_lazy(&format!("mysql://root@127.0.0.1:{port}/jojobot"))
         .expect("a pool of its own");
-    let (answer, statements) = counted(async {
-        sqlx::query_scalar::<_, i64>("SELECT 1")
-            .fetch_one(&fresh)
-            .await
-    })
-    .await;
+    let (answer, statements) = counter
+        .counted(async {
+            sqlx::query_scalar::<_, i64>("SELECT 1")
+                .fetch_one(&fresh)
+                .await
+        })
+        .await;
     assert_eq!(answer.expect("the statement runs"), 1);
     assert_eq!(
         statements, 1,
         "the statement is counted and the connection it opened is not"
     );
+
+    // **Another case's counter is its own.** A statement counted into it is not in the
+    // window of this one, as it would be if the counters were one.
+    let other = Counter::default();
+    let ((), mine) = counter
+        .counted(async {
+            let _theirs = other.install();
+            let (answer, theirs) = other
+                .counted(async {
+                    sqlx::query_scalar::<_, i64>("SELECT 1")
+                        .fetch_one(&fresh)
+                        .await
+                })
+                .await;
+            assert_eq!(answer.expect("the statement runs"), 1);
+            assert_eq!(theirs, 1, "the other counter counts its own statement");
+        })
+        .await;
+    assert_eq!(mine, 0, "a statement of another counter is not this one's");
     store.stop().await;
 }
 
@@ -125,10 +159,10 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
         .expect("the kinds are seeded");
     jojobot_adapters::testing::import_claims_now(&pool).await;
 
-    // The sink the store installs is global and quiet; the count is scoped to
-    // this thread, which is the one the whole case runs on.
-    let _counting =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(CountStatements));
+    // The sink the store installs is global and quiet; the count is this case's own
+    // counter, installed on the thread the whole case runs on.
+    let counter = Counter::default();
+    let _counting = counter.install();
 
     let indexed = Arc::new(
         IndexedMemory::new(Arc::new(DoltMemory::open(pool.clone()).journaled()))
@@ -155,7 +189,9 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
         .search(&SearchQuery::text("Bart"))
         .await
         .expect("search ok");
-    let (idle_hits, idle) = counted(retrieval.search(&SearchQuery::text("Bart"))).await;
+    let (idle_hits, idle) = counter
+        .counted(retrieval.search(&SearchQuery::text("Bart")))
+        .await;
     assert!(names(&idle_hits.expect("search ok"), &bart));
     assert_eq!(
         idle, 0,
@@ -173,8 +209,9 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
         .expect("capture ok")
         .written()
         .expect("nothing collides with it");
-    let (after_hits, after_a_write) =
-        counted(retrieval.search(&SearchQuery::text("lasagna"))).await;
+    let (after_hits, after_a_write) = counter
+        .counted(retrieval.search(&SearchQuery::text("lasagna")))
+        .await;
     assert!(
         names(&after_hits.expect("search ok"), &bart),
         "the claim just written is found"
@@ -200,7 +237,9 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
     // The fold holds the store as this process wrote it, so a row changed past
     // the process is seen when the fold reads the store again, as at a start.
     indexed.state().rebuild().await.expect("the fold loads");
-    let (hand_hits, _) = counted(retrieval.search(&SearchQuery::text("Renamed By Hand"))).await;
+    let (hand_hits, _) = counter
+        .counted(retrieval.search(&SearchQuery::text("Renamed By Hand")))
+        .await;
     assert!(
         names(&hand_hits.expect("search ok"), &milhouse),
         "an edit made past the application is found"
