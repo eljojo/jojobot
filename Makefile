@@ -29,7 +29,7 @@ AT_ROOT = $(if $(CI_ROOT),scripts/ci-root $(CI_ROOT) ,)
 BAR = $(if $(BAR_BUNDLE),cargo-target/debug/jojobot-bar,$(CARGO) run -q --locked -p jojobot-bar --)
 
 .DEFAULT_GOAL := help
-.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room year coverage mutants nix-build flake-check argument-coverage paid replay refresh-upgrade-fixture carried snapshot size static
+.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room year memory coverage mutants nix-build flake-check argument-coverage paid replay refresh-upgrade-fixture carried snapshot size static
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -311,6 +311,15 @@ room: ## One room's suite: make room ROOM=<name>
 # it: `rooms` leaves it out and `check` runs no room. Release QA runs it.
 year: ## The year room's suite
 	$(MAKE) room ROOM=year
+
+# **The whole-day memory replay, alone.** One ignored case of the boot_measures
+# binary: it boots over the grown store (`BOOT_STORE_DIR`), makes every entry of a
+# day through the running server and reports the server's own memory. A day takes
+# longer than the check lane allows one binary, so no other target runs it. It has
+# a deadline of its own (`MEMORY_DAY_DEADLINE_SECONDS`) and reports; no number
+# gates. With `BAR_BUNDLE` it runs the check lane's bundled binary.
+memory: ## The whole-day memory replay: needs BOOT_STORE_DIR, the grown store
+	$(AT_ROOT)python3 scripts/memory-day
 
 # **The coverage of the two proof lanes at one head** (rule 767: no coverage lost),
 # each with its own summary so its identity is kept: `contract.json` is what

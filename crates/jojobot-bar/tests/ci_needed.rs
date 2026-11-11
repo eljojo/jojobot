@@ -240,6 +240,7 @@ fn ci_needed_workflows_use_the_conservative_plan_for_expensive_steps() {
                                 "make bundle ",
                                 "make rooms",
                                 "make year ",
+                                "make memory ",
                                 "make check CI_ROOT=",
                                 "tar -xzf",
                             ]

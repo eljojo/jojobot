@@ -1,7 +1,8 @@
-//! The cache is an optimization: a miss must record the last deployed tag.
+//! The cache is an optimization: a miss must record the last deployed tag. The memory
+//! job's script, at the end, runs one case of the check lane's boot_measures binary.
 use std::fs;
-use std::path::Path;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 mod support;
 
@@ -482,6 +483,148 @@ echo deployed > "$BOOT_STORE_DIR/recorded"
     assert_eq!(
         fs::read_to_string(dir.join("output/recorded")).unwrap(),
         "deployed\n"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+// **The memory job's script** (`scripts/memory-day`): it runs one ignored case of the check lane's
+// boot_measures binary where the bar runs it, and reads a run that ran nothing, or ran past its
+// deadline, as red.
+
+/// A checkout holding a bundle of one binary in the shape the bar writes: the check
+/// lane's `tests/boot_measures.rs` under `cargo-target/debug/deps`, in the package
+/// directory `crates/jojobot`. The binary is a script that writes down what it was
+/// given and prints `body`.
+fn bundle(body: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-memory-day"));
+    let deps = dir.join("cargo-target/debug/deps");
+    fs::create_dir_all(&deps).unwrap();
+    fs::create_dir_all(dir.join("crates/jojobot")).unwrap();
+    fs::create_dir_all(dir.join("target/bundle")).unwrap();
+    fs::create_dir_all(dir.join("target/bar")).unwrap();
+    support::write_executable(
+        &deps.join("boot_measures-0123456789abcdef"),
+        &format!(
+            "#!/bin/sh\n\
+             echo \"$@\" > \"{root}/seen-args\"\n\
+             echo \"$PWD\" > \"{root}/seen-dir\"\n\
+             echo \"$CARGO_MANIFEST_DIR $JOJOBOT_BIN\" > \"{root}/seen-env\"\n\
+             echo 'memory-report wall: 7 s from the start of the case to its end' >> \
+             \"{root}/target/bar/boot-measures.log\"\n\
+             {body}\n",
+            root = dir.display()
+        ),
+    );
+    // The `describes` of another binary and of another lane must not be picked.
+    let exe = |lane: &str, describes: &str, path: &str| {
+        serde_json::json!({
+            "lane": lane, "describes": describes, "path": path, "dir": "crates/jojobot",
+        })
+    };
+    let manifest = serde_json::json!({
+        "root": dir,
+        "arch": "x86_64",
+        "exes": [
+            exe("check", "tests/ci.rs", "cargo-target/debug/deps/ci-fedcba9876543210"),
+            exe("check", "tests/boot_measures.rs",
+                "cargo-target/debug/deps/boot_measures-0123456789abcdef"),
+            exe("year", "tests/boot_measures.rs", "cargo-target/debug/deps/elsewhere-1"),
+        ],
+    });
+    fs::write(
+        dir.join("target/bundle/manifest.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    dir
+}
+
+fn run(dir: &Path, deadline: &str) -> Output {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/memory-day");
+    support::output_fenced(
+        Command::new("python3")
+            .arg(script)
+            .current_dir(dir)
+            .env("BAR_BUNDLE", "target/bundle/manifest.json")
+            .env("MEMORY_DAY_DEADLINE_SECONDS", deadline),
+    )
+    .unwrap()
+}
+
+#[test]
+fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
+    let dir =
+        bundle("echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'");
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{said}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let seen = |name: &str| {
+        fs::read_to_string(dir.join(name))
+            .unwrap()
+            .trim()
+            .to_string()
+    };
+    assert_eq!(
+        seen("seen-args"),
+        "--ignored --exact memory_report::the_servers_memory_after_a_replayed_day --nocapture"
+    );
+    let package = dir.join("crates/jojobot");
+    assert_eq!(seen("seen-dir"), package.display().to_string());
+    assert_eq!(
+        seen("seen-env"),
+        format!(
+            "{} {}",
+            package.display(),
+            dir.join("cargo-target/debug/jojobot").display()
+        ),
+        "the manifest directory and the server beside the binary"
+    );
+    assert!(
+        said.contains("memory-report wall: 7 s"),
+        "the numbers reach the job log: {said}"
+    );
+    assert!(said.contains("memory-day: ok after "), "{said}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn memory_day_is_red_when_the_case_fails() {
+    let dir = bundle("echo 'test result: FAILED. 0 passed; 1 failed'; exit 101");
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(101), "{said}");
+    assert!(said.contains("memory-day: FAILED with exit 101"), "{said}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// A name no test carries selects nothing, and the binary exits zero.
+#[test]
+fn memory_day_is_red_when_no_test_ran() {
+    let dir = bundle(
+        "echo 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out'",
+    );
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{said}");
+    assert!(said.contains("no test ran"), "{said}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn memory_day_kills_a_run_past_its_deadline_and_says_so() {
+    let dir = bundle("sleep 30");
+    let began = std::time::Instant::now();
+    let out = run(&dir, "1");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(124), "{said}");
+    assert!(said.contains("memory-day: TIMED OUT after "), "{said}");
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(20),
+        "the sleeping binary was waited for"
     );
     fs::remove_dir_all(dir).unwrap();
 }

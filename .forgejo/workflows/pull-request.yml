@@ -405,6 +405,63 @@ jobs:
         env:
           JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
+  # **The whole-day memory replay, in a job of its own.** It boots the head over
+  # the store of production's size, makes every entry of a day through the
+  # running server and reports the server's own memory. A day takes longer than
+  # the check lane allows one test binary, so only this job runs it, with a
+  # deadline of its own (scripts/memory-day). It is a report: no number gates, it
+  # is none of the checks main requires, and it runs the check's plan, so a
+  # docs-only change skips it. **The run step carries continue-on-error and is not
+  # wrapped in stop-with-siblings**, because this forge fails the run when a job
+  # fails and the siblings stop on a red job: a replay that ran out of time must
+  # not stop the check. The step's own lines say ok, FAILED or TIMED OUT.
+  memory:
+    needs: [static, build, boot-store]
+    runs-on: nix-x86_64
+    timeout-minutes: 60
+    steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
+      - name: Level
+        run: |
+          echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Job plan
+        id: plan
+        run: |
+          mkdir -p target/bar
+          nix develop -c cargo run -q --locked -p jojobot-bar -- plan check 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: test-bundle
+          path: target/bundle-download
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: boot-store
+          path: target/boot-store
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        continue-on-error: true
+        run: nix develop -c make memory CI_ROOT=${{ env.CI_ROOT }}
+        env:
+          BAR_BUNDLE: target/bundle/manifest.json
+          BOOT_STORE_DIR: target/boot-store
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: bar-logs-memory
+          path: |
+            target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
   # **The last job of every run: it deletes the run's large artifacts.** The
   # bundle is 1.2 GB and the forge shares its disk with production, so nothing
   # large outlives the run, whether the jobs above passed, failed or were
@@ -413,7 +470,7 @@ jobs:
   # reach it: the scheduled artifact-sweep workflow deletes what such a run
   # leaves. A refused deletion never changes the run's verdict.
   artifact-cleanup:
-    needs: [build, boot-store, check, rooms, year]
+    needs: [build, boot-store, check, rooms, year, memory]
     if: ${{ always() }}
     runs-on: nix
     timeout-minutes: 10

@@ -849,6 +849,53 @@ fn the_pull_request_builds_once_and_runs_the_three_bars_side_by_side() {
     );
 }
 
+/// **The whole-day memory replay has a job of its own, and that job can fail
+/// without stopping another.** It runs after the store job and the build, makes no
+/// check main requires, and runs the bundled binary on the grown store. Its run
+/// step carries `continue-on-error` and is not wrapped in `stop-with-siblings`: the
+/// siblings stop on any red job, and a replay that ran out of time must not stop
+/// the check. **The positives are in the same case**: the job is found, and so is
+/// the step.
+#[test]
+fn the_memory_replay_has_a_job_that_cannot_stop_the_check() {
+    let yaml = forgejo_workflow("pull-request");
+    let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+    let block = lines_under(&jobs, "memory:", 2).join("\n");
+    assert!(!block.is_empty(), "the pull request has no memory job");
+    assert!(
+        block.contains("    needs: [static, build, boot-store]\n"),
+        "{block}"
+    );
+    let step = block
+        .split("      - ")
+        .find(|step| step.contains("make memory CI_ROOT="))
+        .unwrap_or_else(|| panic!("no step runs `make memory` at the shared path:\n{block}"));
+    for wanted in [
+        "continue-on-error: true",
+        "BAR_BUNDLE: target/bundle/manifest.json",
+        "BOOT_STORE_DIR: target/boot-store",
+        "if: ${{ steps.plan.outputs.fast != 'true' }}",
+    ] {
+        assert!(
+            step.contains(wanted),
+            "the run step lacks {wanted}:\n{step}"
+        );
+    }
+    assert!(
+        !block.contains("stop-with-siblings"),
+        "a red memory job would stop the check:\n{block}"
+    );
+    assert!(
+        block.contains("name: bar-logs-memory"),
+        "its logs are kept:\n{block}"
+    );
+    let target = dry_run(&["memory", "CI_ROOT=/tmp/jojobot-ci/1"]);
+    assert!(
+        target.contains("scripts/ci-root /tmp/jojobot-ci/1 python3 scripts/memory-day"),
+        "`make memory` does not run the script at the shared path: {target}"
+    );
+}
+
 /// **A job that holds the bundle runs the bundled bar, and a job with none
 /// builds the bar.** The bundle carries the bar built from the same commit, so
 /// a `cargo run` in a job that built nothing would compile the bar and every
@@ -912,7 +959,7 @@ fn each_job_runs_an_sccache_server_on_a_socket_in_its_own_checkout() {
 fn every_job_that_makes_or_runs_the_bundle_runs_on_an_x86_64_host() {
     let yaml = forgejo_workflow("pull-request");
     let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
-    for job in ["build", "check", "rooms", "year"] {
+    for job in ["build", "check", "rooms", "year", "memory"] {
         let block = lines_under(&jobs, &format!("{job}:"), 2);
         assert!(!block.is_empty(), "the pull request has no {job} job");
         let labels: Vec<&str> = block
@@ -961,6 +1008,7 @@ fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
             "  check:",
             "  rooms:",
             "  year:",
+            "  memory:",
             "  artifact-cleanup:",
             "  nix-build:",
             "  flake-check:"

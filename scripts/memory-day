@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Run the whole-day memory replay, the one case of the boot_measures binary that
+the check lane ignores. CI's memory job runs it; `make memory` is the same command.
+
+The case boots the current binary over the production-sized store (BOOT_STORE_DIR),
+makes every entry of a day through the running server, and writes its numbers to
+target/bar/boot-measures.log. A day takes longer than the check lane allows one
+test binary, so this runs it alone, with a deadline of its own
+(MEMORY_DAY_DEADLINE_SECONDS, 2700 by default).
+
+With BAR_BUNDLE the binary is the one the bundle holds for the check lane, run
+where the bar runs it: in its package's directory, with CARGO_MANIFEST_DIR and the
+server beside it. Without it, cargo builds and runs it.
+
+The run is red when the case failed, when the deadline ended it (exit 124), or
+when no test ran: a filter that selects nothing exits 0 and would read as green.
+"""
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import time
+
+CASE = "memory_report::the_servers_memory_after_a_replayed_day"
+DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "2700"))
+BAR = Path("target/bar")
+
+
+def command():
+    """The command to run, the directory to run it in and its environment."""
+    arguments = ["--ignored", "--exact", CASE, "--nocapture"]
+    manifest = os.environ.get("BAR_BUNDLE")
+    if not manifest:
+        return (
+            ["cargo", "test", "-p", "jojobot", "--features", "room-harness",
+             "--test", "boot_measures", "--locked", "--", *arguments],
+            None,
+            dict(os.environ),
+        )
+    manifest = json.loads(Path(manifest).read_text())
+    held = [exe for exe in manifest["exes"]
+            if exe["lane"] == "check" and exe["describes"] == "tests/boot_measures.rs"]
+    if len(held) != 1:
+        sys.exit(f"memory-day: the bundle holds {len(held)} boot_measures binaries in the check lane, not one")
+    root = Path(manifest["root"])
+    binary = root / held[0]["path"]
+    directory = root / held[0]["dir"]
+    environment = dict(os.environ, CARGO_MANIFEST_DIR=str(directory))
+    # `target/<profile>/deps/<binary>` sits beside the server it spawns.
+    environment.setdefault("JOJOBOT_BIN", str(binary.parent.parent / "jojobot"))
+    return [str(binary), *arguments], directory, environment
+
+
+def main():
+    BAR.mkdir(parents=True, exist_ok=True)
+    log = BAR / "memory.log"
+    argv, directory, environment = command()
+    began = time.monotonic()
+    with log.open("w") as out:
+        child = subprocess.Popen(argv, cwd=directory, env=environment, stdout=out,
+                                 stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            code = child.wait(timeout=DEADLINE)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+            code = 124
+    wall = round(time.monotonic() - began)
+    text = log.read_text(errors="replace")
+    # What the case measured, in the job's own log: the rest is in memory.log.
+    measures = BAR / "boot-measures.log"
+    if measures.exists():
+        for line in measures.read_text(errors="replace").splitlines():
+            if line.startswith("memory-report "):
+                print(line)
+    if code == 124:
+        print(f"memory-day: TIMED OUT after {wall} s; the deadline is {DEADLINE} s and the run was killed")
+    elif code != 0:
+        print(f"memory-day: FAILED with exit {code} after {wall} s; the output is in {log}")
+    elif not re.search(r"test result: ok\. 1 passed", text):
+        print(f"memory-day: FAILED, no test ran: the case {CASE} was not found in the binary")
+        code = 1
+    else:
+        print(f"memory-day: ok after {wall} s")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
