@@ -875,7 +875,11 @@ fn verdict(kib: u64) -> &'static str {
 /// **The first-boot half of the report.** A first boot over the production-sized
 /// store, read as the server's own memory through each projection it builds. The
 /// replay of a day is its own case, which the lane's deadline does not bound.
+/// **It runs in the memory job beside the day** (rule 810: the ship-proof runs are
+/// measurements, and the one-minute limit binds every test but them), so no case in
+/// the check run waits on a first boot over the production-sized store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "runs in the memory job, which has its own deadline, never in `make check`"]
 async fn the_servers_memory_across_a_first_boot() {
     let boot = first_boot().await;
     record_per_thing(&boot);

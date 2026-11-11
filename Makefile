@@ -312,13 +312,14 @@ room: ## One room's suite: make room ROOM=<name>
 year: ## The year room's suite
 	$(MAKE) room ROOM=year
 
-# **The whole-day memory replay, alone.** One ignored case of the boot_measures
-# binary: it boots over the grown store (`BOOT_STORE_DIR`), makes every entry of a
-# day through the running server and reports the server's own memory. A day takes
-# longer than the check lane allows one binary, so no other target runs it. It has
-# a deadline of its own (`MEMORY_DAY_DEADLINE_SECONDS`) and reports; no number
-# gates. With `BAR_BUNDLE` it runs the check lane's bundled binary.
-memory: ## The whole-day memory replay: needs BOOT_STORE_DIR, the grown store
+# **The memory job's two cases, alone.** Two ignored cases of the boot_measures
+# binary: a first boot over the grown store (`BOOT_STORE_DIR`), and a replay that
+# makes every entry of a day through the running server, each reporting the
+# server's own memory. They take longer than the check lane allows one binary, so
+# no other target runs them. They have a deadline of their own
+# (`MEMORY_DAY_DEADLINE_SECONDS`) and report; no number gates. With `BAR_BUNDLE`
+# they run the check lane's bundled binary.
+memory: ## The memory job's cases, the first boot and the whole-day replay: needs BOOT_STORE_DIR, the grown store
 	$(AT_ROOT)python3 scripts/memory-day
 
 # **The coverage of the two proof lanes at one head** (rule 767: no coverage lost),

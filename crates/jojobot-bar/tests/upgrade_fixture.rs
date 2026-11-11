@@ -487,8 +487,8 @@ echo deployed > "$BOOT_STORE_DIR/recorded"
     fs::remove_dir_all(dir).unwrap();
 }
 
-// **The memory job's script** (`scripts/memory-day`): it runs one ignored case of the check lane's
-// boot_measures binary where the bar runs it, and reads a run that ran nothing, or ran past its
+// **The memory job's script** (`scripts/memory-day`): it runs the two ignored cases of the check
+// lane's boot_measures binary where the bar runs it, and reads a run that ran fewer, or ran past its
 // deadline, as red.
 
 /// A checkout holding a bundle of one binary in the shape the bar writes: the check
@@ -578,7 +578,7 @@ fn the_verdict_file_is_the_last_line(dir: &Path, said: &str) {
 #[test]
 fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
     let dir =
-        bundle("echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'");
+        bundle("echo 'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'");
     let out = run(&dir, "60");
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -594,7 +594,8 @@ fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
     };
     assert_eq!(
         seen("seen-args"),
-        "--ignored --exact memory_report::the_servers_memory_after_a_replayed_day --nocapture"
+        "--ignored --exact memory_report::the_servers_memory_across_a_first_boot \
+         memory_report::the_servers_memory_after_a_replayed_day --nocapture --test-threads=1"
     );
     let package = dir.join("crates/jojobot");
     assert_eq!(seen("seen-dir"), package.display().to_string());
@@ -617,7 +618,7 @@ fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
 }
 
 const PASSED: &str =
-    "echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'";
+    "echo 'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'";
 
 /// **The verdict states both of rule 800's numbers against its 4 GiB, and reads OVER
 /// when either reaches it.** The first-boot peak and the resident memory after the
@@ -705,7 +706,21 @@ fn memory_day_is_red_when_no_test_ran() {
     let out = run(&dir, "60");
     let said = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{said}");
-    assert!(said.contains("no test ran"), "{said}");
+    assert!(said.contains("memory-day: FAILED"), "{said}");
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// A name no test carries selects one case of the two: the binary exits zero and
+/// counts one pass, and the run is still red.
+#[test]
+fn memory_day_is_red_when_only_one_of_the_two_cases_ran() {
+    let dir =
+        bundle("echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'");
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{said}");
+    assert!(said.contains("memory-day: FAILED"), "{said}");
     the_verdict_file_is_the_last_line(&dir, &said);
     fs::remove_dir_all(dir).unwrap();
 }

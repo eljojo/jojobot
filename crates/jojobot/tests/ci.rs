@@ -979,6 +979,43 @@ fn the_memory_replay_has_a_job_that_cannot_stop_the_check() {
     );
 }
 
+/// **Both memory cases run in the memory job and in no other run** (rule 810: the
+/// ship-proof runs are measurements, and rule 651's minute binds every test but
+/// them). Each is ignored in the check lane, and the memory job's script names
+/// each one, so a case that is ignored and named nowhere cannot slip out of both.
+/// **The positive is in the same case**: both cases are found and both are named.
+#[test]
+fn both_memory_cases_are_ignored_in_the_check_run_and_named_by_the_memory_job() {
+    let script = std::fs::read_to_string(root().join("scripts/memory-day")).expect("the script");
+    let source =
+        std::fs::read_to_string(root().join("crates/jojobot/tests/boot_measures/memory_report.rs"))
+            .expect("the memory report");
+    let lines: Vec<&str> = source.lines().collect();
+    for case in [
+        "the_servers_memory_across_a_first_boot",
+        "the_servers_memory_after_a_replayed_day",
+    ] {
+        let at = lines
+            .iter()
+            .position(|line| line.trim_start().starts_with(&format!("async fn {case}(")))
+            .unwrap_or_else(|| panic!("the memory report has no case {case}"));
+        let mut ignored = false;
+        for above in lines[..at].iter().rev() {
+            let above = above.trim_start();
+            if above.starts_with("#[") {
+                ignored |= above.starts_with("#[ignore");
+            } else if !above.starts_with("///") {
+                break;
+            }
+        }
+        assert!(ignored, "{case} runs in `make check`: it is not ignored");
+        assert!(
+            script.contains(&format!("memory_report::{case}")),
+            "the memory job's script does not name {case}"
+        );
+    }
+}
+
 /// **A job that holds the bundle runs the bundled bar, and a job with none
 /// builds the bar.** The bundle carries the bar built from the same commit, so
 /// a `cargo run` in a job that built nothing would compile the bar and every
