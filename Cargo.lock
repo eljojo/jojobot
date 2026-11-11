@@ -1551,6 +1551,7 @@ dependencies = [
  "jojobot-query-api",
  "jojobot-ui",
  "jsonwebtoken",
+ "libc",
  "openmetrics-parser",
  "prometheus-client",
  "rand 0.8.8",

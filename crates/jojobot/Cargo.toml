@@ -50,6 +50,8 @@ http-body = "1"
 # Prometheus project's own client, and its label sets are typed, so a label is a
 # field the code names and never a value a caller sends.
 prometheus-client = "0.25"
+# Process RSS and glibc's all-arena allocator totals on the metrics scrape.
+libc.workspace = true
 
 # **Two lock cases that need a server built with the room harness.** The check
 # lane compiles the workspace with `jojobot/room-harness`, so it runs them against

@@ -69,6 +69,54 @@ const OTHER: &str = "other";
 /// interval can drive the store harder than this.
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
 
+/// RSS is the resident-page column of this process's statm, in bytes.
+fn resident_bytes() -> Option<u64> {
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let pages = statm.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+    // SAFETY: sysconf reads the process's fixed page-size setting.
+    let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    (size > 0).then(|| pages.saturating_mul(size as u64))
+}
+
+/// The aggregate after the last arena contains all arenas and mmap blocks.
+/// The per-arena lines would undercount a multithreaded server.
+fn allocator_bytes() -> Option<(u64, u64)> {
+    let mut buffer = std::ptr::null_mut();
+    let mut length = 0;
+    // SAFETY: open_memstream owns buffer until fclose; fclose publishes its
+    // length. free releases the C allocation after Rust has copied its bytes.
+    let stream = unsafe { libc::open_memstream(&mut buffer, &mut length) };
+    if stream.is_null() {
+        return None;
+    }
+    let wrote = unsafe { libc::malloc_info(0, stream) } == 0;
+    let closed = unsafe { libc::fclose(stream) } == 0;
+    let xml = if wrote && closed && !buffer.is_null() {
+        Some(unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), length) }.to_vec())
+    } else {
+        None
+    };
+    unsafe { libc::free(buffer.cast()) };
+    let xml = String::from_utf8(xml?).ok()?;
+    let totals = xml.rsplit_once("</heap>")?.1;
+    let size = |prefix: &str| {
+        totals
+            .lines()
+            .find(|line| line.trim_start().starts_with(prefix))?
+            .split_once("size=\"")?
+            .1
+            .split_once('"')?
+            .0
+            .parse::<u64>()
+            .ok()
+    };
+    let free = size("<total type=\"fast\"")?.saturating_add(size("<total type=\"rest\"")?);
+    let used = size("<system type=\"current\"")?
+        .saturating_sub(free)
+        .saturating_add(size("<total type=\"mmap\"")?);
+    Some((used, free))
+}
+
 /// The kind a thing is counted under: its own when the build ships it.
 fn kind_label(token: &str) -> String {
     if kinds::SHIPPED.contains(&token) {
@@ -187,6 +235,9 @@ pub struct Metrics {
     store_duration: Family<StoreEnd, Histogram, fn() -> Histogram>,
     app_writes: Family<AppStatus, Counter>,
     uptime: Gauge<f64, AtomicU64>,
+    process_resident: Gauge,
+    process_heap_in_use: Gauge,
+    process_allocator_retained: Gauge,
     sessions_live: Family<[(&'static str, &'static str); 0], Gauge>,
     mail: Family<BoxState, Gauge>,
     things: Family<Kind, Gauge>,
@@ -264,6 +315,24 @@ impl Metrics {
             "Seconds since this process started",
             uptime.clone(),
         );
+        let process_resident = Gauge::default();
+        registry.register(
+            "process_resident_memory_bytes",
+            "Resident bytes of this process",
+            process_resident.clone(),
+        );
+        let process_heap_in_use = Gauge::default();
+        registry.register(
+            "process_heap_in_use_bytes",
+            "Bytes in use across glibc allocator arenas and mmap blocks",
+            process_heap_in_use.clone(),
+        );
+        let process_allocator_retained = Gauge::default();
+        registry.register(
+            "process_allocator_retained_bytes",
+            "Free bytes retained in glibc allocator arenas",
+            process_allocator_retained.clone(),
+        );
         let sessions_live = Family::<[(&'static str, &'static str); 0], Gauge>::default();
         registry.register(
             "jojobot_sessions_live",
@@ -325,6 +394,9 @@ impl Metrics {
             store_duration,
             app_writes,
             uptime,
+            process_resident,
+            process_heap_in_use,
+            process_allocator_retained,
             sessions_live,
             mail,
             things,
@@ -381,6 +453,16 @@ impl Metrics {
     async fn scrape(&self, ports: &Ports) -> String {
         let mut last_read = self.scraping.lock().await;
         self.uptime.set(self.started.elapsed().as_secs_f64());
+        self.process_resident.set(
+            resident_bytes()
+                .and_then(|bytes| i64::try_from(bytes).ok())
+                .unwrap_or_default(),
+        );
+        let (in_use, retained) = allocator_bytes().unwrap_or_default();
+        self.process_heap_in_use
+            .set(i64::try_from(in_use).unwrap_or(i64::MAX));
+        self.process_allocator_retained
+            .set(i64::try_from(retained).unwrap_or(i64::MAX));
         // Read from the process, not the store: every scrape serves them.
         for (reason, count) in jojobot_adapters::log_snapshot::skip_counts() {
             self.snapshot_skips

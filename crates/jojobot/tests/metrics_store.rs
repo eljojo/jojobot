@@ -30,6 +30,34 @@ async fn scrape(metrics: Arc<Metrics>, ports: Ports) -> String {
 }
 
 #[tokio::test]
+async fn process_memory_is_on_each_metrics_scrape() {
+    let metrics = Arc::new(Metrics::new());
+    let ports = Ports {
+        mailboxes: Arc::new(
+            jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
+        ),
+        memory: Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
+        sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+    };
+    for _ in 0..2 {
+        let text = scrape(metrics.clone(), ports.clone()).await;
+        assert!(
+            sample(&text, "process_resident_memory_bytes", &[]).is_some_and(|bytes| bytes > 0.0),
+            "resident bytes on every scrape: {text}"
+        );
+        assert!(
+            sample(&text, "process_heap_in_use_bytes", &[]).is_some_and(|bytes| bytes > 0.0),
+            "heap bytes on every scrape: {text}"
+        );
+        assert!(
+            sample(&text, "process_allocator_retained_bytes", &[])
+                .is_some_and(|bytes| bytes >= 0.0),
+            "retained allocator bytes on every scrape: {text}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn metrics_store_mailbox_labels_use_the_shipped_owner_not_the_stored_name() {
     jojobot_domain::memory::kinds::load(jojobot_domain::memory::kinds::SHIPPED);
     let mailboxes =
@@ -216,10 +244,14 @@ async fn observed_calls() -> String {
 fn sample(text: &str, name: &str, labels: &[(&str, &str)]) -> Option<f64> {
     text.lines()
         .find(|line| {
-            line.starts_with(&format!("{name}{{"))
-                && labels
-                    .iter()
-                    .all(|(key, value)| line.contains(&format!("{key}=\"{value}\"")))
+            if labels.is_empty() {
+                line.starts_with(&format!("{name} "))
+            } else {
+                line.starts_with(&format!("{name}{{"))
+                    && labels
+                        .iter()
+                        .all(|(key, value)| line.contains(&format!("{key}=\"{value}\"")))
+            }
         })
         .and_then(|line| line.split_whitespace().last()?.parse().ok())
 }
