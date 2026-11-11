@@ -28,7 +28,7 @@
 * **A wrap hands back a code that opens a window of two hours.** Resumed with it, the wrapped run works as a normal session — journal, mail, any write, its closing story rewritten in place — and need not wrap again. The window closes two hours after the wrap, at a second wrap, or when a newer run of the bot starts, and after that nothing writes. Two hours covers the correction made while the work is fresh; editing yesterday's story is what the window exists to refuse.
 * **Abandoned means it was not wrapped up** — it is not a failure state, and resuming the most recent one always works unless it is stale.
 * **A run that has gone quiet is swept to abandoned, and the sweep decides in the CALLER'S day rather than on a clock.** A run acting out a stretch of time says which day it is in, and without that every one of its own sittings would still look like it is working — so each later boot would meet a resume offer for a run that is long over.
-* **A runtime agent cannot bind a different session after its bound run ends.** The binding refusal applies even to a fresh boot and outlives the wrap-code window; a new runtime agent takes the next run.
+* **A runtime agent cannot bind a different session after its bound run is wrapped.** The binding refusal applies even to a fresh boot and outlives the wrap-code window; a new runtime agent takes the next run.
 
 ## What a session carries
 
