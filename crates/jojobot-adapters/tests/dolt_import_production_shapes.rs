@@ -532,3 +532,175 @@ async fn claims_import_takes_a_claim_older_than_its_key_writes_and_one_with_no_f
     );
     server.stop().await;
 }
+
+/// What the two cases below read: one entity, its badge, and a claim written
+/// through the store's own route.
+async fn homer_with_a_claim(
+    label: &str,
+    what: &str,
+    key: Option<&str>,
+) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory, EntityId, String) {
+    let (scratch, server, pool) = a_store(label).await;
+    let memory = DoltMemory::open(pool.clone());
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    let badge = badge_of(&pool, "person:homer").await;
+    match key {
+        Some(key) => say_with_key(&memory, &homer, what, key).await,
+        None => {
+            let mut fact = NewFact::about(homer.clone(), what, date(2026, 9, 1));
+            fact.provenance = Provenance::Testimony;
+            memory
+                .capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked");
+        }
+    }
+    (scratch, server, pool, memory, homer, badge)
+}
+
+/// **The claims import takes a claim written before key writes were kept, that has
+/// none.** Production holds 51 claims first written before the first dated key
+/// write with no key write row at all. The claim is made through the store's own
+/// route and its first write is dated as the oldest write production holds
+/// (2026-09-04); it carries no key, so it has no `field_write` row. A claim written
+/// today, with a key, stands beside it. The import serves both and the one key.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
+    let (_scratch, mut server, pool, memory, homer, badge) =
+        homer_with_a_claim("claims-import-old-no-key-write", "an old claim", None).await;
+    say_with_key(&memory, &homer, "written today", "mood_e").await;
+    sqlx::query("UPDATE fact_write SET written_at = '2026-09-04T13:11:20Z' WHERE entity = ? AND content = 'an old claim'")
+        .bind(&badge)
+        .execute(&pool)
+        .await
+        .expect("the first write is dated as the oldest write production holds");
+    let key_writes_of_old: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM field_write w JOIN fact_write f \
+         ON f.entity = w.entity AND f.fact_id = w.fact_id \
+         WHERE w.entity = ? AND f.content = 'an old claim'",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the key writes count");
+    let early: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND written_at < '2026-10-08'",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the early claims count");
+    assert_eq!(
+        (early, key_writes_of_old),
+        (1, 0),
+        "an old claim with no key write row at all, as 51 of production's are"
+    );
+    let old = memory.fields(&homer).await.expect("the old rows serve");
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a claim with no key write imports");
+    let Imported::Done {
+        skipped_homes,
+        skipped_key_writes,
+        ..
+    } = imported
+    else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert!(skipped_homes.is_empty(), "{skipped_homes:?}");
+    assert!(skipped_key_writes.is_empty(), "{skipped_key_writes:?}");
+
+    let state = State::replay(claims_events(&pool).await.iter());
+    let object = jojobot_domain::log::ObjectId(badge);
+    let mut served: Vec<String> = state
+        .active_records(&object)
+        .into_iter()
+        .filter_map(|record| state.record(record))
+        .map(|record| record.claim.content.clone())
+        .collect();
+    served.sort();
+    assert_eq!(served, ["an old claim", "written today"]);
+    assert_eq!(state.fields(&object, &[]), old, "the one key is served");
+    server.stop().await;
+}
+
+/// **The claims import takes a timed key write over a claim whose first write has no
+/// time.** Production holds 18 claims whose key writes carry a time and whose first
+/// write does not. A key write stamped before the claim-write number existed has
+/// neither number nor a claim write to name, so the case writes the rows as that
+/// build left them: the first write undated, the key write stamped and unnumbered.
+/// The import serves the claim and its key.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_takes_a_timed_key_write_over_a_claim_whose_first_write_has_no_time() {
+    let (_scratch, mut server, pool, memory, homer, badge) = homer_with_a_claim(
+        "claims-import-timed-key-undated-claim",
+        "an undated claim",
+        Some("mood_f"),
+    )
+    .await;
+    sqlx::query("UPDATE fact_write SET written_at = NULL WHERE entity = ?")
+        .bind(&badge)
+        .execute(&pool)
+        .await
+        .expect("the first write has no time");
+    sqlx::query(
+        "UPDATE field_write SET written_at = '2026-10-09T10:00:00Z', fact_write_ordinal = NULL \
+         WHERE entity = ?",
+    )
+    .bind(&badge)
+    .execute(&pool)
+    .await
+    .expect("the key write is stamped and unnumbered");
+    let undated: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND written_at IS NULL",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the undated claims count");
+    let timed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM field_write WHERE entity = ? AND written_at IS NOT NULL \
+         AND fact_write_ordinal IS NULL",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the timed key writes count");
+    assert_eq!(
+        (undated, timed),
+        (1, 1),
+        "an undated first write beside a stamped, unnumbered key write, as 18 of production's are"
+    );
+    let old = memory.fields(&homer).await.expect("the old rows serve");
+    assert_eq!(old.len(), 1, "the old rows serve the key");
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a timed key write over an undated claim imports");
+    let Imported::Done {
+        skipped_homes,
+        skipped_key_writes,
+        ..
+    } = imported
+    else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert!(skipped_homes.is_empty(), "{skipped_homes:?}");
+    assert!(skipped_key_writes.is_empty(), "{skipped_key_writes:?}");
+
+    let state = State::replay(claims_events(&pool).await.iter());
+    let object = jojobot_domain::log::ObjectId(badge);
+    assert_eq!(state.fields(&object, &[]), old, "the key is served");
+    assert!(
+        state
+            .active_records(&object)
+            .into_iter()
+            .filter_map(|record| state.record(record))
+            .any(|record| record.claim.content == "an undated claim"),
+        "the claim is served"
+    );
+    server.stop().await;
+}
