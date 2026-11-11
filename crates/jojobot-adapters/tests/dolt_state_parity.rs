@@ -178,7 +178,10 @@ async fn written(label: &str) -> Written {
         1,
     )
     .await;
-    say(&memory, &krusty, "hosts a show", &[], 1).await;
+    // A thing with a keyed claim before it is renamed, and one before it is
+    // archived: the rename and the archive are compared over something.
+    say(&memory, &nelson, "teases", &[("mood", "smug")], 1).await;
+    say(&memory, &krusty, "hosts a show", &[("show", "late")], 1).await;
 
     // A merge: Lisa is folded into Bart.
     memory
@@ -260,6 +263,12 @@ async fn the_state_gives_the_ages_the_store_gives() {
     for handle in &world.standing {
         let at = object_of(&world.pool, handle).await;
         let stored = world.memory.field_ages(handle).await.expect("the store's");
+        // The comparison is not over two empty answers: each thing here holds a
+        // keyed claim, the renamed one and the archived one included.
+        assert!(
+            !stored.keys.is_empty(),
+            "{handle}: the store holds the moment of at least one key"
+        );
         assert_eq!(
             world.state.held_since(&at, &declared),
             stored.keys,
@@ -282,6 +291,10 @@ async fn the_state_gives_the_backing_the_store_gives() {
     for handle in &world.standing {
         let at = object_of(&world.pool, handle).await;
         let stored = world.memory.backing(handle).await.expect("the store's");
+        assert!(
+            !stored.is_empty(),
+            "{handle}: the store names who backs at least one key"
+        );
         assert_eq!(
             world.state.backing(&at, &declared),
             stored,
@@ -314,6 +327,14 @@ async fn the_state_gives_the_key_trails_the_store_gives() {
             write.fact.home = handles[write.fact.home.as_str()].clone();
         }
         assert_eq!(served, stored, "{handle}: the writes of each key");
+        if handle.as_str() == "person:bart" {
+            // The folded Lisa's writes are carried on the thing she was folded
+            // into: that is what her entry of the handle map above is for.
+            assert!(
+                stored.history.contains_key("instrument"),
+                "the history of Bart carries the key the merged Lisa wrote"
+            );
+        }
         if handle.as_str() == "person:homer" {
             // The comparison above is not over two empty answers.
             assert!(
