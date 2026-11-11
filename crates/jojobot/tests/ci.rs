@@ -966,12 +966,12 @@ fn the_memory_replay_has_a_job_that_cannot_stop_the_check() {
         .lines()
         .find_map(|line| line.trim().strip_prefix("if: "))
         .unwrap_or_else(|| panic!("the verdict step has no condition:\n{last}"));
-    for wanted in ["steps.plan.outputs.fast != 'true'", "!cancelled()"] {
-        assert!(
-            condition.contains(wanted),
-            "the verdict step's condition lacks {wanted}: {condition}"
-        );
-    }
+    // The whole expression, so that `||` in place of `&&`, or one condition dropped,
+    // is refused: the step runs only when both hold.
+    assert_eq!(
+        condition, "${{ steps.plan.outputs.fast != 'true' && !cancelled() }}",
+        "the verdict step runs when the day ran and the run was not cancelled"
+    );
     let target = dry_run(&["memory", "CI_ROOT=/tmp/jojobot-ci/1"]);
     assert!(
         target.contains("scripts/ci-root /tmp/jojobot-ci/1 python3 scripts/memory-day"),
