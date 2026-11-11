@@ -136,6 +136,20 @@ async fn a_grant_that_lists_the_operator_pages_the_operator_and_no_other_box() {
 #[tokio::test]
 async fn a_grant_that_lists_only_a_colleague_refuses_the_operator_page() {
     let (story, token, s) = a_controller_granted_pages_to(&["bot:marge"]).await;
+    // **The operator's box exists and holds a note of the colleague's own**, so
+    // reading it is not reading a box nobody owns, which reads empty whatever
+    // happened: the helper returns nothing for a box that is not there.
+    s.call(
+        "post_message",
+        json!({"to": "person:homer", "body": "A note first.", "subject": "note"}),
+    )
+    .await;
+    let note = [("note".to_string(), "A note first.".to_string())];
+    assert_eq!(
+        story.operators_mail("person:homer").await,
+        note,
+        "the operator's box is there and holds the colleague's note"
+    );
     let (status, refused) = story
         .app_calls(
             &token,
@@ -149,8 +163,9 @@ async fn a_grant_that_lists_only_a_colleague_refuses_the_operator_page() {
         why.contains("bot:marge") && why.contains("person:homer"),
         "{why}"
     );
-    assert!(
-        story.operators_mail("person:homer").await.is_empty(),
+    assert_eq!(
+        story.operators_mail("person:homer").await,
+        note,
         "the refused page did not reach the operator"
     );
     let (status, landed) = story
