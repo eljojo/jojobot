@@ -128,10 +128,14 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
         (Some("refused"), Some("change")),
         "a claim whose name builds no role handle is the caller's to change: {malformed_claim}"
     );
-    assert!(
-        unheld_claim["status"] != "refused" && unheld_claim["fix_by"] != "change",
-        "a well-spelled claim the store cannot hold for want of the kind is not the \
-         caller's to change: {unheld_claim}"
+    assert_eq!(
+        (
+            unheld_claim["status"].as_str(),
+            unheld_claim["fix_by"].as_str()
+        ),
+        (Some("unavailable"), Some("retry")),
+        "a well-spelled claim the store cannot hold for want of the kind is the store's \
+         to answer, not the caller's to change: {unheld_claim}"
     );
 
     ct.cancel();
