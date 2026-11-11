@@ -17,6 +17,20 @@ pub(crate) fn role_taken_way_forward(
     )
 }
 
+/// **What to do about a claim whose name builds no role handle.** The refusal a
+/// claim at the boot door gets when its name is not a bare role name, such as a
+/// name that already carries `role:`: the claim argument is the caller's to
+/// change, and nothing was held.
+// TEMPORARY(9.3.7): off the composer, start_here.
+pub(crate) fn role_name_way_forward(role: &str) -> String {
+    let bare = role.strip_prefix("role:").unwrap_or(role);
+    format!(
+        "'{role}' is not a role name: name the role by its bare name, lowercase letters, \
+         digits and hyphens only, with no kind in front of it, for example '{bare}'. Call \
+         start_here again with that claim. Nothing was held."
+    )
+}
+
 /// **What to do about a role that belongs to another bot.** The refusal a claim
 /// at the boot door gets when the role is carried by, or sits under, a bot
 /// other than the one booting.

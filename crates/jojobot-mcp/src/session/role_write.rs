@@ -494,6 +494,26 @@ mod tests {
         pass
     }
 
+    /// **A claim that names the role with its kind in front of it is the caller's
+    /// to change, and the answer says so.** The role is named by its bare name; the
+    /// handle is built from it, and a name that already carries `role:` builds a
+    /// handle no store holds. That is a refusal of the claim argument, so the
+    /// answer wears the word for it and is not `unavailable`, which would tell the
+    /// caller to try again and to call the operator. Paired with the bare name,
+    /// which is taken: nothing was held by the refused call.
+    #[tokio::test]
+    async fn a_claim_named_with_the_role_prefix_is_refused_for_the_caller_to_change() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let spelled = booted(&jojobot, "gamma", Some("role:gamma")).await;
+        let claim = &spelled["session"]["claim"];
+        assert_eq!(claim["status"], "refused", "{spelled}");
+        assert_eq!(claim["fix_by"], "change", "{spelled}");
+        assert_eq!(claim["role"], "role:gamma", "{spelled}");
+        let bare = booted(&jojobot, "gamma", Some("gamma")).await;
+        assert_eq!(bare["session"]["claim"]["status"], "taken", "{bare}");
+    }
+
     /// **A claim makes the role its own object, a child of the bot, and one read
     /// over the kind answers who holds what.** The positive: the object exists
     /// under the bot with the session as holder and a moment that reads as one.

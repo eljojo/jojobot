@@ -18,7 +18,8 @@ use numbers::{number_freed_advice, number_retired_advice};
 mod role_ways;
 mod room_advice;
 pub(crate) use role_ways::{
-    role_archived_way_forward, role_owned_way_forward, role_taken_way_forward,
+    role_archived_way_forward, role_name_way_forward, role_owned_way_forward,
+    role_taken_way_forward,
 };
 use room_advice::{
     naming_organizing, thought_ceiling_note, thoughts_to_archive, thoughts_to_archive_count,

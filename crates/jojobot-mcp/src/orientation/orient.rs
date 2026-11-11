@@ -1349,6 +1349,15 @@ impl Jojobot {
                              what you sent.",
                 })
             }
+            // **A claim name that builds no role handle is the caller's to change**,
+            // not a failure of the store: retrying it, or calling the operator,
+            // would change nothing.
+            Err(MemoryError::InvalidSubject(_)) => serde_json::json!({
+                "role": role,
+                "status": "refused",
+                FixBy::KEY: FixBy::Change.as_token(),
+                "how_to_proceed": crate::memory::role_name_way_forward(role),
+            }),
             Err(e) => {
                 tracing::warn!(error = %e, %bot, role, "a role claim could not be written");
                 unavailable_claim(
