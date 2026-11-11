@@ -626,6 +626,47 @@ fn memory_day_is_red_when_no_test_ran() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+/// Whether the process is still there to run.
+fn is_running(pid: &str) -> bool {
+    let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    // The state is the first field after the command name, which ends at the last `)`.
+    !stat
+        .rsplit(')')
+        .next()
+        .unwrap_or("")
+        .trim_start()
+        .starts_with('Z')
+}
+
+/// **A process that has exited and not been waited for is gone.** It stays in /proc as
+/// a zombie until its parent reaps it, and on a host where nothing reaps an orphan
+/// promptly a killed child stays one, so a check that looks only for the directory
+/// reads a dead process as alive. The test is the parent and does not wait.
+#[test]
+fn memory_day_reads_an_unreaped_process_as_gone() {
+    let mut child = support::fenced_spawn(&mut Command::new("true")).unwrap();
+    let pid = child.id().to_string();
+    let zombie = (0..50).any(|_| {
+        let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        let state = stat
+            .rsplit(')')
+            .next()
+            .unwrap_or("")
+            .trim_start()
+            .chars()
+            .next();
+        if state != Some('Z') {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        state == Some('Z')
+    });
+    assert!(zombie, "the exited child never showed as a zombie");
+    assert!(!is_running(&pid), "a zombie was read as running");
+    child.wait().unwrap();
+}
+
 /// **The deadline stops the server and its store too.** The case starts them in
 /// process groups of their own, which a kill of the binary's group does not reach, so a
 /// day that timed out would leave both running on the runner. The fake binary starts a
@@ -643,7 +684,7 @@ fn memory_day_stops_what_the_binary_started_in_a_group_of_its_own() {
         .trim()
         .to_string();
     let gone = (0..50).any(|_| {
-        let gone = !Path::new(&format!("/proc/{pid}")).exists();
+        let gone = !is_running(&pid);
         if !gone {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }

@@ -63,7 +63,10 @@ def descendants(pid):
         try:
             # The command name may hold spaces and brackets; the fields follow its `)`.
             fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            children.setdefault(int(fields[1]), []).append(int(entry.name))
+            # A zombie is dead and holds nothing to kill; counting it keeps the tree
+            # non-empty on a host where nothing reaps an orphan promptly.
+            if fields[0] != "Z":
+                children.setdefault(int(fields[1]), []).append(int(entry.name))
         except (OSError, IndexError, ValueError):
             continue
     found, pending = [], [pid]
@@ -88,6 +91,8 @@ def stop_tree(pid):
                 os.kill(victim, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        # Let a child that a victim started as it died show in the next read.
+        time.sleep(0.2)
     os.killpg(pid, signal.SIGKILL)
 
 
