@@ -494,22 +494,59 @@ mod tests {
         pass
     }
 
-    /// **A claim that names the role with its kind in front of it is the caller's
-    /// to change, and the answer says so.** The role is named by its bare name; the
-    /// handle is built from it, and a name that already carries `role:` builds a
-    /// handle no store holds. That is a refusal of the claim argument, so the
-    /// answer wears the word for it and is not `unavailable`, which would tell the
-    /// caller to try again and to call the operator. Paired with the bare name,
-    /// which is taken: nothing was held by the refused call.
+    /// **A claim names a role by its bare name or by its handle, and both claim the
+    /// same role.** `role:gamma` is the role `gamma`: the answer names the bare
+    /// name, the role object is the one the bare name makes, and the run that
+    /// claimed by handle holds it. Paired with a claim by the bare name from a
+    /// second bot, which is refused for the holder the handle claim made.
     #[tokio::test]
-    async fn a_claim_named_with_the_role_prefix_is_refused_for_the_caller_to_change() {
+    async fn a_claim_named_by_its_handle_claims_the_same_role_as_its_bare_name() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
-        let spelled = booted(&jojobot, "gamma", Some("role:gamma")).await;
+        make_bot(&jojobot, "delta").await;
+        let by_handle = booted(&jojobot, "gamma", Some("role:gamma")).await;
+        let claim = &by_handle["session"]["claim"];
+        assert_eq!(claim["status"], "taken", "{by_handle}");
+        assert_eq!(claim["role"], "gamma", "{by_handle}");
+        let sid = sid_of(&by_handle).expect("a handle");
+        let fields = jojobot
+            .memory
+            .fields(&EntityId("role:gamma".into()))
+            .await
+            .expect("fields ok");
+        assert_eq!(
+            fields.get("holder"),
+            Some(&run_name(&jojobot, &sid)),
+            "the run that claimed by handle holds the role: {fields:?}"
+        );
+        let rival = booted(&jojobot, "delta", Some("gamma")).await;
+        assert_ne!(
+            rival["session"]["claim"]["status"], "taken",
+            "the role is held, whichever spelling took it: {rival}"
+        );
+    }
+
+    /// **A claim whose name builds no role handle is the caller's to change, and
+    /// the answer names it.** A name with a space or a capital builds a handle no
+    /// store holds. That is a refusal of the claim argument, so the answer wears the
+    /// word for it, says which name it could not read, and is not `unavailable`,
+    /// which would tell the caller to try again and to call the operator. Paired
+    /// with the bare name, which is taken: nothing was held by the refused call.
+    #[tokio::test]
+    async fn a_claim_name_that_builds_no_role_handle_is_refused_naming_it() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let spelled = booted(&jojobot, "gamma", Some("Role:A b")).await;
         let claim = &spelled["session"]["claim"];
         assert_eq!(claim["status"], "refused", "{spelled}");
         assert_eq!(claim["fix_by"], "change", "{spelled}");
-        assert_eq!(claim["role"], "role:gamma", "{spelled}");
+        assert_eq!(claim["role"], "Role:A b", "{spelled}");
+        assert!(
+            claim["how_to_proceed"]
+                .as_str()
+                .is_some_and(|way| way.contains("Role:A b")),
+            "the answer names the name it could not read: {spelled}"
+        );
         let bare = booted(&jojobot, "gamma", Some("gamma")).await;
         assert_eq!(bare["session"]["claim"]["status"], "taken", "{bare}");
     }

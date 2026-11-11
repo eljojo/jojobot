@@ -445,11 +445,19 @@ impl Jojobot {
         // "stated nothing" would answer the sweep on the clock while the caller
         // believes it stated a frame.
         let today = parse_day(args.today.as_deref())?;
+        // **A role is claimed by its bare name or by its handle**: `role:alpha` is
+        // the role `alpha`, and every step after this reads the bare name. A name
+        // that is only the kind, or that is malformed, is kept as sent and refused
+        // at the claim.
         let claim = args
             .claim
             .as_deref()
             .map(str::trim)
-            .filter(|c| !c.is_empty());
+            .filter(|c| !c.is_empty())
+            .map(|c| match c.strip_prefix("role:") {
+                Some(bare) if !bare.is_empty() => bare,
+                _ => c,
+            });
         let instance_zone = self.instance_zone().await;
         // **The operator's code**: asked for on one call, which starts no
         // session, and presented on the boot that follows. See
