@@ -27,6 +27,9 @@ mod definite_error_tests;
 #[cfg(test)]
 mod publish_tests;
 
+#[cfg(test)]
+mod serial_tests;
+
 /// Recovery attempts and their publication results.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RecoveryCounts {
