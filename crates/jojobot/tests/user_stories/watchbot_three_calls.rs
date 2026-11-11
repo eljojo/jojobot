@@ -129,10 +129,13 @@ async fn a_grant_that_lists_the_operator_pages_the_operator_and_no_other_box() {
 
 /// **A grant that lists a colleague refuses the operator's page**: a list names
 /// every box the app may reach, so the operator is no default beside it. The
-/// operator's box holds nothing afterwards.
+/// operator's box holds nothing afterwards. Paired in the same story with the page
+/// the grant does allow: the colleague's box holds that one page and no other, so
+/// the refusal was the operator's alone and the colleague's box is a real box that
+/// would show a page that went astray.
 #[tokio::test]
 async fn a_grant_that_lists_only_a_colleague_refuses_the_operator_page() {
-    let (story, token, _s) = a_controller_granted_pages_to(&["bot:marge"]).await;
+    let (story, token, s) = a_controller_granted_pages_to(&["bot:marge"]).await;
     let (status, refused) = story
         .app_calls(
             &token,
@@ -149,6 +152,34 @@ async fn a_grant_that_lists_only_a_colleague_refuses_the_operator_page() {
     assert!(
         story.operators_mail("person:homer").await.is_empty(),
         "the refused page did not reach the operator"
+    );
+    let (status, landed) = story
+        .app_calls(
+            &token,
+            "post_message",
+            json!({"to": "bot:marge", "body": "The gate is open.", "subject": "gate"}),
+        )
+        .await;
+    assert_eq!(status, 200, "the colleague is on the list: {landed}");
+    let inbox = s
+        .call("read_mailbox", json!({"new_only": false}))
+        .await
+        .json();
+    let pages: Vec<(&str, &str)> = inbox["messages"]
+        .as_array()
+        .expect("the colleague's messages")
+        .iter()
+        .map(|message| {
+            (
+                message["subject"].as_str().unwrap_or_default(),
+                message["body"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        pages,
+        [("gate", "The gate is open.")],
+        "the colleague holds the one page the grant allowed, and not the refused one: {inbox}"
     );
     story.finish().await;
 }
