@@ -364,7 +364,10 @@ async fn a_capture_through_a_former_handle_is_written_under_the_current_one() {
             })
             .await;
     }
-    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let memory = declared(Arc::new(crate::dolt::memory::DoltMemory::open(
+        store.clone(),
+    )))
+    .await;
     let fact = NewFact::about(
         EntityId("person:homer".into()),
         "typed under the old handle",
@@ -510,7 +513,10 @@ fn job_with_boot(floor: Option<BootFloor>, asked: Arc<AtomicUsize>) -> CaptureJo
 #[tokio::test]
 async fn the_ports_capture_with_a_job_is_decided_over_the_state() {
     let (_scratch, mut server, store, _pool, writer) = world("capture-job-port").await;
-    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let memory = declared(Arc::new(crate::dolt::memory::DoltMemory::open(
+        store.clone(),
+    )))
+    .await;
     let written = {
         let memory = Arc::clone(&memory);
         let fact = NewFact::about(
@@ -583,7 +589,10 @@ fn starred(subject: &str) -> NewFact {
 #[tokio::test]
 async fn a_key_jojobot_writes_is_admitted_for_the_engine_and_refused_for_a_verb() {
     let (_scratch, mut server, store, _pool, writer) = world("capture-job-engine").await;
-    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let memory = declared(Arc::new(crate::dolt::memory::DoltMemory::open(
+        store.clone(),
+    )))
+    .await;
     let record = || {
         let mut fact = NewFact::about(
             EntityId("person:homer".into()),
@@ -659,7 +668,10 @@ async fn a_capture_of_a_request_spec_through_the_port_is_numbered_once() {
             })
             .await;
     }
-    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let memory = declared(Arc::new(crate::dolt::memory::DoltMemory::open(
+        store.clone(),
+    )))
+    .await;
     for desired in ["running", "stopped", "stopped"] {
         let memory = Arc::clone(&memory);
         let mut fact = NewFact::about(
@@ -707,7 +719,10 @@ async fn a_capture_of_a_request_spec_through_the_port_is_numbered_once() {
 #[tokio::test]
 async fn a_star_that_makes_the_boot_too_heavy_is_refused_and_writes_nothing() {
     let (_scratch, mut server, store, _pool, writer) = world("capture-job-boot-heavy").await;
-    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let memory = declared(Arc::new(crate::dolt::memory::DoltMemory::open(
+        store.clone(),
+    )))
+    .await;
     let asked = Arc::new(AtomicUsize::new(0));
     let heavy = BootFloor {
         after: jojobot_domain::text::BOOT_ANSWER.budget + 1,
@@ -746,7 +761,10 @@ async fn a_star_that_makes_the_boot_too_heavy_is_refused_and_writes_nothing() {
 #[tokio::test]
 async fn the_boot_is_asked_only_of_a_write_that_could_grow_it() {
     let (_scratch, mut server, store, _pool, writer) = world("capture-job-boot-asked").await;
-    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let memory = declared(Arc::new(crate::dolt::memory::DoltMemory::open(
+        store.clone(),
+    )))
+    .await;
     let asked = Arc::new(AtomicUsize::new(0));
     let capture = |fact: NewFact| {
         let memory = Arc::clone(&memory);
@@ -775,7 +793,10 @@ async fn the_boot_is_asked_only_of_a_write_that_could_grow_it() {
 #[tokio::test]
 async fn the_runs_of_a_subject_are_asked_of_a_write_that_could_be_a_thought() {
     let (_scratch, mut server, store, _pool, writer) = world("capture-job-run-bots").await;
-    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let memory = declared(Arc::new(crate::dolt::memory::DoltMemory::open(
+        store.clone(),
+    )))
+    .await;
     let asked: Arc<Mutex<Vec<Vec<RunId>>>> = Arc::default();
     let job = {
         let asked = Arc::clone(&asked);
@@ -832,7 +853,10 @@ async fn the_claim_carrying_an_overlay_on_a_supplied_record_is_a_capture_the_sta
     use jojobot_domain::memory::owned::{is_overlay_key, overlay_fields};
 
     let (_scratch, mut server, store, _pool, writer) = world("capture-job-overlay").await;
-    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let memory = declared(Arc::new(crate::dolt::memory::DoltMemory::open(
+        store.clone(),
+    )))
+    .await;
     let new = overlay_fields(Some("Weekly rounds"), Some(&["Rounds".to_string()]));
     let claim = NewFact {
         sets: new.keys().cloned().collect(),
@@ -935,4 +959,16 @@ async fn the_bots_a_callback_names_for_runs_reach_the_door() {
     );
     writer.drain().await;
     server.stop().await;
+}
+
+/// **A store's memory with the shipped kinds declared in it**, as a booted store
+/// holds them: admission asks the store's own kinds, so a case that opens a bare
+/// store would be refused for want of them.
+async fn declared(
+    memory: Arc<crate::dolt::memory::DoltMemory>,
+) -> Arc<crate::dolt::memory::DoltMemory> {
+    jojobot_domain::memory::kinds::seed(&*memory)
+        .await
+        .expect("the kinds are seeded");
+    memory
 }
