@@ -103,6 +103,28 @@ async fn a_sets_only_edit_of_a_shipped_view_lands_through_the_surface_like_one_o
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("view:my-bikes", "My Bikes").await;
+    // **The premise of the story, read through the surface**: the listing names the
+    // source of each row, and the store's row wins where both exist, so a shipped
+    // view the store holds no row for reads as the build's own, beside the stored
+    // view of the operator's, which reads as theirs.
+    let listed = s
+        .call("list_entities", json!({"kind": "view"}))
+        .await
+        .json();
+    let source_of = |handle: &str| {
+        listed["entities"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == handle))
+            .map(|row| row["source"].clone())
+            .unwrap_or_else(|| panic!("{handle} is not listed: {listed}"))
+    };
+    assert_eq!(source_of("view:my-bikes"), "user-named", "{listed}");
+    assert_eq!(
+        source_of("view:loops"),
+        "jojobot",
+        "the served store holds a row for the shipped view, so the story does not reach \
+         the overlay branch: {listed}"
+    );
     for handle in ["view:my-bikes", "view:loops"] {
         let landed = s
             .call(
