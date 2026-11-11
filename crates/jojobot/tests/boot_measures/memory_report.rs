@@ -21,8 +21,8 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 use super::{
-    Dolt, PRODUCTION_THINGS, Running, call, count_of, free_port, record, replay_dump, scrambled,
-    spawn, writing,
+    Dolt, PRODUCTION_THINGS, Running, Scratch, call, count_of, free_port, record, replay_dump,
+    scrambled, spawn, writing,
 };
 
 /// One reading of a process's memory, in kB, from `/proc/<pid>/status`.
@@ -139,7 +139,10 @@ impl Projection {
 
     fn label(self) -> &'static str {
         match self {
-            Projection::MemoryImage => "the image of memory",
+            // The first reading is the process at its spawn, so this step holds all
+            // that the boot does before the fold's fill ends: the start-up, the store
+            // coming up and the repairs of stored rows, with the fill itself.
+            Projection::MemoryImage => "the start-up and the image of memory",
             Projection::MemorySearch => "the search index over memory",
             Projection::RunImage => "the image of runs",
             Projection::MailImage => "the image of mail",
@@ -554,7 +557,13 @@ async fn replay_day(pid: u32, port: u16, first_call: usize) -> Vec<(Duration, us
     .expect("the client connects to the server");
     let peer = client.peer().clone();
     let sid = a_session(&peer).await;
-    let calls = Arc::new(day());
+    // **The sessions of the day are started after the others**, one at a time as the
+    // grow step starts its own: a run started for the same bot while four clients
+    // call under the first run's key could end that run, and a call under an ended
+    // run is refused.
+    let (sessions, others): (Vec<Call>, Vec<Call>) =
+        day().into_iter().partition(|call| *call == Call::Session);
+    let calls = Arc::new(others);
     let made = Arc::new(AtomicUsize::new(0));
     let finished = Arc::new(AtomicBool::new(false));
     let samples = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -588,15 +597,49 @@ async fn replay_day(pid: u32, port: u16, first_call: usize) -> Vec<(Duration, us
     while let Some(done) = shards.join_next().await {
         done.expect("a client finished its calls");
     }
+    let mut mine = Vec::new();
+    for (at, call) in sessions.iter().enumerate() {
+        make(&peer, &sid, *call, first_call + calls.len() + at, &mut mine).await;
+        made.fetch_add(1, Ordering::SeqCst);
+    }
     finished.store(true, Ordering::SeqCst);
     sampler.await.expect("the sampler stopped");
     assert_eq!(
         made.load(Ordering::SeqCst),
-        calls.len(),
+        calls.len() + sessions.len(),
         "every call of the day was made"
     );
     client.cancel().await.expect("the client closes");
     samples.lock().expect("the samples").clone()
+}
+
+/// How many claims a stopped store holds, counted by a store of its own that the
+/// count starts and stops.
+async fn claims_in(state: &Scratch) -> i64 {
+    let mut store = Dolt::start(&state.0.join("db"), free_port())
+        .await
+        .expect("the store comes up to be counted");
+    let claims = count_of(store.pool(), "(SELECT COUNT(*) FROM fact)").await;
+    store.stop().await;
+    claims
+}
+
+/// How many tool calls one entry of the day makes, before any retry of a write the
+/// server blocked.
+fn tool_calls_of(call: Call) -> usize {
+    match call {
+        Call::PostAndClose => 3,
+        Call::Session => 2,
+        _ => 1,
+    }
+}
+
+/// The tool calls of a day, which are more than its entries: a closed message is
+/// posted, read and marked, and a session is started and wrapped.
+fn day_tool_calls() -> usize {
+    DAY.iter()
+        .map(|(call, count)| tool_calls_of(*call) * count)
+        .sum()
 }
 
 fn mib(kib: u64) -> String {
@@ -613,6 +656,9 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
     // build recorded and the case grew to the instance's counts, with no binary
     // booted over it yet, so the boot imports the claims and takes the first snapshot.
     let state = replay_dump("jojobot-memory-report", &fixture).await;
+    // **The claims the boot reads are counted before it**, so a growth at boot is
+    // divided by what the boot held and not by what three days of calls made of it.
+    let claims = claims_in(&state).await;
     let mut run = spawn(state);
     let boot = watch_boot(&mut run);
     let (server_peak, store_peak) = boot.peak;
@@ -665,9 +711,10 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
         let last = samples.last().expect("a day has samples").2;
         let top = samples.iter().map(|s| s.2.resident).max().unwrap_or(0);
         record(&format!(
-            "memory-report day {day_number}: {} calls in {} s; server resident {} at the end, \
-             {} at the most; peak so far {}",
+            "memory-report day {day_number}: {} entries of the day, {} tool calls before any \
+             retry, in {} s; server resident {} at the end, {} at the most; peak so far {}",
             day().len(),
+            day_tool_calls(),
             samples.last().map_or(0, |s| s.0.as_secs()),
             mib(last.resident),
             mib(top),
@@ -684,12 +731,8 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
         .sum();
     let (state, _) = run.stopped();
 
-    // **What the store held when it was measured**, counted after the stop.
-    let mut store = Dolt::start(&state.0.join("db"), free_port())
-        .await
-        .expect("the store comes up to be counted");
-    let claims = count_of(store.pool(), "(SELECT COUNT(*) FROM fact)").await;
-    store.stop().await;
+    // **What the store held after the days**, counted after the stop.
+    let claims_after = claims_in(&state).await;
     let held = |kind: Projection| {
         steps
             .iter()
@@ -701,35 +744,43 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
         _ => "no count".to_string(),
     };
     record(&format!(
-        "memory-report per thing held (claims {claims}, things {things:?}, runs {runs:?}, \
-         messages {messages:?}, import events {events:?}): memory image {}; memory search {}; \
-         run image {} per run; mail image {} per message; claims import {} per claim",
+        "memory-report per thing held at the first boot (claims {claims}, and {claims_after} \
+         after the days; things {things:?}, runs {runs:?}, messages {messages:?}, import \
+         events {events:?}): the start-up and the image of memory {} per claim; memory search \
+         {} per claim; run image {} per run; mail image {} per message; claims import {} per \
+         claim",
         per(held(Projection::MemoryImage), Some(claims as u64)),
         per(held(Projection::MemorySearch), Some(claims as u64)),
         per(held(Projection::RunImage), runs),
         per(held(Projection::MailImage), messages),
         per(held(Projection::ClaimsImport), Some(claims as u64)),
     ));
-    let bound = 4 * 1024 * 1024;
+    // **The unit's own bound**, read from the module as the boot cases read it.
+    let bound = super::memory_bound_kib();
     let verdict = |kib: u64| {
         if kib < bound { "under" } else { "OVER" }
     };
+    let beside = finally.resident + store_resident;
     record(&format!(
-        "memory-report summary: the server's peak through the first boot {} ({} 4 GiB); its \
-         peak after three days of calls {} ({} 4 GiB); its resident memory after them {} ({} \
-         4 GiB), anonymous {}; the store beside it {} resident and {} at its peak ({}); the \
-         unit's cgroup holds both, so {} resident against its memoryMax",
+        "memory-report summary: the server's peak through the first boot {} ({} {}); its \
+         peak after three days of calls {} ({} {}); its resident memory after them {} ({} \
+         {}), anonymous {}; the store beside it {} resident and {} at its peak; the unit's \
+         cgroup holds both, so {} resident against its memoryMax of {} ({})",
         mib(server_peak),
         verdict(server_peak),
+        mib(bound),
         mib(server_peak_after),
         verdict(server_peak_after),
+        mib(bound),
         mib(finally.resident),
         verdict(finally.resident),
+        mib(bound),
         mib(finally.anonymous),
         mib(store_resident),
-        mib(store_peak_after),
-        store_peak_after.max(store_peak),
-        mib(finally.resident + store_resident),
+        mib(store_peak_after.max(store_peak)),
+        mib(beside),
+        mib(bound),
+        verdict(beside),
     ));
 }
 
@@ -898,6 +949,20 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         let first: std::collections::HashSet<Call> = calls.iter().take(100).copied().collect();
         assert!(first.len() >= 6, "{first:?}");
         assert_eq!(day(), calls, "the same day on every run");
+    }
+
+    #[test]
+    fn memory_report_counts_the_tool_calls_of_a_day_not_only_its_entries() {
+        let count = |kind: Call| {
+            DAY.iter()
+                .find(|(call, _)| *call == kind)
+                .map_or(0, |d| d.1)
+        };
+        assert_eq!(
+            day_tool_calls(),
+            day().len() + 2 * count(Call::PostAndClose) + count(Call::Session),
+            "a closed message is three calls and a session two; the rest are one"
+        );
     }
 
     #[test]
