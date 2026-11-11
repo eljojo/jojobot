@@ -88,6 +88,20 @@ impl WriterLog {
         }
     }
 
+    /// **Run a read of the log as a job of the writer.** It waits its turn and finds
+    /// the log settled as any job does, but it sends no write, so a read that fails
+    /// is a store error that leaves the log certain.
+    async fn read_job<T: Send + 'static>(
+        &self,
+        work: impl Future<Output = Result<T, LogError>> + Send + 'static,
+    ) -> Result<T, LogError> {
+        self.job(Box::pin(async move {
+            sql::nothing_sent();
+            work.await
+        }))
+        .await
+    }
+
     async fn append_in_job(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
         let mut tx = self
             .pool
@@ -150,8 +164,7 @@ impl WriterLog {
 impl LogStore for WriterLog {
     async fn validity(&self) -> Result<Validity, LogError> {
         let log = self.log.clone();
-        self.job(Box::pin(async move { log.validity().await }))
-            .await
+        self.read_job(async move { log.validity().await }).await
     }
 
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
@@ -164,15 +177,13 @@ impl LogStore for WriterLog {
         bound: usize,
     ) -> Result<Vec<SealedBatch>, LogError> {
         let log = self.log.clone();
-        self.job(Box::pin(
-            async move { log.read_from(position, bound).await },
-        ))
-        .await
+        self.read_job(async move { log.read_from(position, bound).await })
+            .await
     }
 
     async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
         let log = self.log.clone();
-        self.job(Box::pin(async move { log.load_snapshot().await }))
+        self.read_job(async move { log.load_snapshot().await })
             .await
     }
 

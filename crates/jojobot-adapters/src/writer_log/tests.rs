@@ -159,6 +159,56 @@ async fn batches(pool: &sqlx::MySqlPool) -> i64 {
         .unwrap()
 }
 
+/// **A read of the log that fails is a read failure, and leaves the log certain.**
+/// The table is moved away, so every read of the log (its validity, a read from a
+/// position and the load of a snapshot) meets a store that says it has no such
+/// table. Each answers a store error, never the indeterminate write; the writer
+/// attempts no recovery and marks nothing uncertain, so the first write after
+/// the table is back lands at once. A write whose commit is lost still marks the
+/// log: see `a_commit_whose_answer_is_lost_recovers_exactly_once`.
+#[tokio::test]
+async fn a_failed_read_of_the_log_is_a_store_error_and_leaves_the_log_certain() {
+    let (_scratch, mut server, pool, log, writer) = fixture().await;
+    let first = batch("read-fails-1", 0, &[b"a"]);
+    assert_eq!(
+        log.append(Position(0), &first).await.unwrap(),
+        Append::Committed(first.range())
+    );
+    sqlx::query("RENAME TABLE event_log TO event_log_away")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let answers = [
+        ("validity", log.validity().await.err()),
+        ("read_from", log.read_from(Position(0), 10).await.err()),
+        ("load_snapshot", log.load_snapshot().await.err()),
+    ];
+    sqlx::query("RENAME TABLE event_log_away TO event_log")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (read, error) in answers {
+        assert!(
+            matches!(error, Some(LogError::Store(_))),
+            "{read} answers a store error: {error:?}"
+        );
+    }
+    assert!(
+        !writer.rail_uncertain(RAIL),
+        "a read that failed wrote nothing, so nothing is uncertain"
+    );
+    assert_eq!(writer.recovery_counts().attempted, 0, "no recovery ran");
+    let second = batch("read-fails-2", 1, &[b"b"]);
+    assert_eq!(
+        log.append(Position(1), &second).await.unwrap(),
+        Append::Committed(second.range()),
+        "the write after the failed reads lands"
+    );
+    drop(log);
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **Two appends at one head: exactly one lands, and the other is refused by
 /// the head check.** Both go through the one writer, which runs them one after
 /// the other, so the second finds the head moved and is a conflict, not a store

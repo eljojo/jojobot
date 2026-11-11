@@ -87,6 +87,13 @@ fn set_phase(phase: Phase) {
     });
 }
 
+/// **Say that this job has sent no write.** A job that only reads calls it first: an
+/// error it ends with is then a failed read, and the rail is not marked uncertain
+/// for it, as it is for a write whose commit may have landed.
+pub(crate) fn nothing_sent() {
+    set_phase(Phase::BeforeCommit);
+}
+
 pub(super) fn handled() {
     let _ = NATIVE.try_with(|native| native.borrow_mut().unhandled = false);
 }
