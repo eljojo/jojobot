@@ -1820,6 +1820,39 @@ mod tests {
         );
     }
 
+    /// **A list nobody wrote to is held**: the guard compares the blocks the answer
+    /// carries with the ones it reads again, and when nothing moved they are the
+    /// same, so the second read is collapsed. A guard that never agreed with the
+    /// render would leave every list unheld, and no case above would notice.
+    #[tokio::test]
+    async fn a_list_read_twice_with_no_write_between_is_held() {
+        use rmcp::handler::server::wrapper::Parameters;
+        let jojobot = handler();
+        let reader = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+        errands_over(&jojobot, &["work:beta"], false).await;
+        let read = || RecallArgs {
+            sid: Some(reader.clone()),
+            subject: Some("list:errands".into()),
+            ..Default::default()
+        };
+        let mut first: CallToolResponse = jojobot
+            .recall(Parameters(read()))
+            .await
+            .expect("the first recall answers")
+            .into();
+        mark_call(&mut first, "recall", false);
+        jojobot.add_held_changed(&mut first, Some(&reader)).await;
+        assert!(body_in(&first)["held_collapsed"].is_null(), "{first:?}");
+        let mut second: CallToolResponse = jojobot
+            .recall(Parameters(read()))
+            .await
+            .expect("the second recall answers")
+            .into();
+        mark_call(&mut second, "recall", false);
+        jojobot.add_held_changed(&mut second, Some(&reader)).await;
+        assert_eq!(body_in(&second)["held_collapsed"]["count"], 1, "{second:?}");
+    }
+
     /// **A list over the work its entries link, and the writes another session
     /// makes to that work between a read's render and its held pass.** `works`
     /// are linked in order, each as an entry; `leave` makes a done tick take an
@@ -1971,78 +2004,80 @@ mod tests {
         assert_eq!(after["progress"]["done"], 1, "{after}");
     }
 
-    /// **A body whose blocks cannot be read again after the version is sampled is
-    /// left unheld**, for a piece of work and for a list alike: the next read ships
-    /// it whole, where a body held at the sampled version would be collapsed.
+    /// **A list whose blocks cannot be read again after the version is sampled is
+    /// left unheld**: the next read ships it whole, where a body held at the sampled
+    /// version would be collapsed. The work's own leg, a progress check that fails,
+    /// is `a_bundle_progress_check_failure_leaves_the_rows_unheld`: a store whose
+    /// work cannot be read here would change the version the pass samples, and so
+    /// would not reach the guard.
     #[tokio::test]
     async fn a_body_whose_blocks_cannot_be_read_again_is_not_held() {
         use crate::memory::testing::WorkFieldsDownFrom;
         use rmcp::handler::server::wrapper::Parameters;
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        for subject in ["work:alpha", "list:errands"] {
-            let down = Arc::new(AtomicBool::new(false));
-            let memory = Arc::new(InMemoryMemory::booted());
-            let jojobot = crate::harness::handler_over_mentions(Arc::new(WorkFieldsDownFrom {
-                inner: memory,
-                down: down.clone(),
-            }));
-            let reader = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
-            ensure(&jojobot, "work:alpha").await;
-            ensure(&jojobot, "work:beta").await;
-            jojobot
-                .memory
-                .add_entity(NewEntity {
-                    parent: Some(EntityId::person("work:alpha")),
-                    ..NewEntity::new(EntityId::person("list:errands"), "Errands", "fixture")
-                })
-                .await
-                .expect("the list is created")
-                .written()
-                .expect("nothing blocks it");
-            capture_ok(
-                &jojobot,
-                CaptureArgs {
-                    shape: Some("about".into()),
-                    object: Some("work:beta".into()),
-                    ..capture_args("list:errands", "finish beta")
-                },
-            )
-            .await;
-            let read = || RecallArgs {
-                sid: Some(reader.clone()),
-                subject: Some(subject.into()),
-                ..Default::default()
-            };
+        let subject = "list:errands";
+        let down = Arc::new(AtomicBool::new(false));
+        let memory = Arc::new(InMemoryMemory::booted());
+        let jojobot = crate::harness::handler_over_mentions(Arc::new(WorkFieldsDownFrom {
+            inner: memory,
+            down: down.clone(),
+        }));
+        let reader = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+        ensure(&jojobot, "work:alpha").await;
+        ensure(&jojobot, "work:beta").await;
+        jojobot
+            .memory
+            .add_entity(NewEntity {
+                parent: Some(EntityId::person("work:alpha")),
+                ..NewEntity::new(EntityId::person("list:errands"), "Errands", "fixture")
+            })
+            .await
+            .expect("the list is created")
+            .written()
+            .expect("nothing blocks it");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("about".into()),
+                object: Some("work:beta".into()),
+                ..capture_args("list:errands", "finish beta")
+            },
+        )
+        .await;
+        let read = || RecallArgs {
+            sid: Some(reader.clone()),
+            subject: Some(subject.into()),
+            ..Default::default()
+        };
 
-            let mut first: CallToolResponse = jojobot
-                .recall(Parameters(read()))
-                .await
-                .expect("the first recall answers")
-                .into();
-            assert!(
-                body_in(&first)["objects"][0]["progress"].is_object()
-                    || body_in(&first)["objects"][0]["progress"].is_array(),
-                "{subject}: the read carries progress: {first:?}"
-            );
-            // The store stops answering for work between the render and the held pass.
-            down.store(true, Ordering::SeqCst);
-            mark_call(&mut first, "recall", false);
-            jojobot.add_held_changed(&mut first, Some(&reader)).await;
-            down.store(false, Ordering::SeqCst);
+        let mut first: CallToolResponse = jojobot
+            .recall(Parameters(read()))
+            .await
+            .expect("the first recall answers")
+            .into();
+        assert!(
+            body_in(&first)["objects"][0]["progress"].is_object()
+                || body_in(&first)["objects"][0]["progress"].is_array(),
+            "{subject}: the read carries progress: {first:?}"
+        );
+        // The store stops answering for work between the render and the held pass.
+        down.store(true, Ordering::SeqCst);
+        mark_call(&mut first, "recall", false);
+        jojobot.add_held_changed(&mut first, Some(&reader)).await;
+        down.store(false, Ordering::SeqCst);
 
-            let mut second: CallToolResponse = jojobot
-                .recall(Parameters(read()))
-                .await
-                .expect("the second recall answers")
-                .into();
-            mark_call(&mut second, "recall", false);
-            jojobot.add_held_changed(&mut second, Some(&reader)).await;
-            assert!(
-                !body_in(&second)["objects"][0]["progress"].is_null(),
-                "{subject}: the second read ships the progress whole: {second:?}"
-            );
-        }
+        let mut second: CallToolResponse = jojobot
+            .recall(Parameters(read()))
+            .await
+            .expect("the second recall answers")
+            .into();
+        mark_call(&mut second, "recall", false);
+        jojobot.add_held_changed(&mut second, Some(&reader)).await;
+        assert!(
+            !body_in(&second)["objects"][0]["progress"].is_null(),
+            "{subject}: the second read ships the progress whole: {second:?}"
+        );
     }
 
     /// **What stands under a parent is read in one pass, not once for each thing
