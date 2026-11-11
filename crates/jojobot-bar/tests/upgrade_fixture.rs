@@ -500,9 +500,33 @@ fn bundle(body: &str) -> PathBuf {
 }
 
 /// The same, with the two numbers the report writes in MiB: the server's peak through
-/// the first boot and its resident memory at the end of the day. The lines are the
-/// shapes a run of the case wrote.
+/// the first boot and its resident memory at the end of the day, which is also the
+/// most it held in the day. The lines are the shapes a run of the case wrote.
 fn bundle_with(body: &str, boot_peak: &str, day_resident: &str) -> PathBuf {
+    bundle_report(body, &[boot_peak], day_resident, day_resident, day_resident)
+}
+
+/// The full report: one `memory-report boot:` line for each first boot the job made (the
+/// first-boot case's, then the day case's own), and a day that held `day_highest` at the
+/// most and settled at `day_resident`.
+fn bundle_report(
+    body: &str,
+    boot_peaks: &[&str],
+    day_resident: &str,
+    day_highest: &str,
+    day_peak: &str,
+) -> PathBuf {
+    let boot_lines: String = boot_peaks
+        .iter()
+        .map(|peak| {
+            format!(
+                "echo 'memory-report boot: the store needed the claims import at this boot; \
+                 server peak {peak} MiB (1267052 kB), store peak 1343.0 MiB (1375244 kB), server \
+                 resident after boot 1146.2 MiB, of which anonymous 1104.5 MiB' >> \
+                 \"$ROOT/target/bar/boot-measures.log\"\n"
+            )
+        })
+        .collect();
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-memory-day"));
     let deps = dir.join("cargo-target/debug/deps");
     fs::create_dir_all(&deps).unwrap();
@@ -516,13 +540,11 @@ fn bundle_with(body: &str, boot_peak: &str, day_resident: &str) -> PathBuf {
              echo \"$@\" > \"{root}/seen-args\"\n\
              echo \"$PWD\" > \"{root}/seen-dir\"\n\
              echo \"$CARGO_MANIFEST_DIR $JOJOBOT_BIN\" > \"{root}/seen-env\"\n\
-             echo 'memory-report boot: the store needed the claims import at this boot; server \
-             peak {boot_peak} MiB (1267052 kB), store peak 1343.0 MiB (1375244 kB), server \
-             resident after boot 1146.2 MiB, of which anonymous 1104.5 MiB' >> \
-             \"{root}/target/bar/boot-measures.log\"\n\
+             ROOT=\"{root}\"\n\
+             {boot_lines}\
              echo 'memory-report day: all 5300 entries of a day made, which is 6179 tool calls \
              before any retry, in 1682 s; server resident {day_resident} MiB at the end, \
-             {day_resident} MiB at the most; peak {day_resident} MiB' >> \
+             {day_highest} MiB at the most; peak {day_peak} MiB' >> \
              \"{root}/target/bar/boot-measures.log\"\n\
              echo 'memory-report wall: 7 s from the start of the case to its end' >> \
              \"{root}/target/bar/boot-measures.log\"\n\
@@ -665,6 +687,111 @@ fn memory_day_verdict_reads_over_when_the_day_or_the_boot_reaches_4_gib() {
         the_verdict_file_is_the_last_line(&dir, &said);
         fs::remove_dir_all(dir).unwrap();
     }
+}
+
+/// **Production is killed at its peak, not where it settles**, so the verdict also names
+/// the most the day held and reads OVER when that passed 4 GiB, even if the day settled
+/// under.
+#[test]
+fn memory_day_verdict_reads_over_for_a_day_that_peaked_over_and_settled_under() {
+    let dir = bundle_report(PASSED, &["1237.4"], "1625.9", "4300.0", "4300.0");
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: OVER"), "{verdict}");
+    assert_eq!(out.status.code(), Some(3), "{said}");
+    for number in ["1237.4", "1625.9", "4300.0"] {
+        assert!(
+            verdict.contains(number),
+            "the verdict lacks {number}: {verdict}"
+        );
+    }
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// The process's own peak is the kernel's high-water mark and can pass the highest of the
+/// samples, which are half a second apart; it counts as the most the day held too.
+#[test]
+fn memory_day_verdict_counts_the_process_peak_as_the_most_the_day_held() {
+    let dir = bundle_report(PASSED, &["1237.4"], "1625.9", "3000.0", "4200.0");
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: OVER"), "{verdict}");
+    assert!(verdict.contains("4200.0"), "{verdict}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// An `ok` names the most the day held beside where it settled.
+#[test]
+fn memory_day_verdict_names_the_most_the_day_held_when_it_reads_ok() {
+    let dir = bundle_report(PASSED, &["1237.4"], "1625.9", "2100.5", "2100.5");
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: ok"), "{verdict}");
+    assert!(verdict.contains("2100.5"), "{verdict}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// **The job makes two first boots, and the larger peak is the one compared.** The
+/// first-boot case's boot comes first in the report and the day case's own boot after it;
+/// a reader that kept the last line would never compare the first with 4 GiB.
+#[test]
+fn memory_day_verdict_takes_the_larger_of_the_two_first_boot_peaks() {
+    for peaks in [["4500.0", "1237.4"], ["1237.4", "4500.0"]] {
+        let dir = bundle_report(PASSED, &peaks, "1625.9", "1625.9", "1625.9");
+        let out = run(&dir, "60");
+        let said = String::from_utf8_lossy(&out.stdout);
+        let verdict = said.lines().last().unwrap();
+        assert!(
+            verdict.starts_with("memory-day: OVER"),
+            "{peaks:?}: {verdict}"
+        );
+        assert!(verdict.contains("4500.0"), "{peaks:?}: {verdict}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// **The deadline leaves room for both cases and stays under the job's own timeout.**
+/// The day took 1,756 s and a first boot up to 300 s in the runs so far; the memory job
+/// is stopped at 60 minutes. Nothing outside the script declares its default, so the
+/// value is pinned here.
+#[test]
+fn memory_day_default_deadline_is_3300_seconds_under_the_jobs_hour() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/memory-day");
+    let out = support::output_fenced(
+        Command::new("python3")
+            .args([
+                "-I",
+                "-c",
+                "import runpy, sys; print(runpy.run_path(sys.argv[1])['DEADLINE'])",
+            ])
+            .arg(script)
+            .env_remove("MEMORY_DAY_DEADLINE_SECONDS"),
+    )
+    .unwrap();
+    let deadline: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+    assert_eq!(deadline, 3300);
+    let workflow = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.forgejo/workflows/pull-request.yml"),
+    )
+    .unwrap();
+    let job = workflow
+        .split("\n  memory:\n")
+        .nth(1)
+        .expect("the memory job");
+    let minutes: u64 = job
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("timeout-minutes: "))
+        .expect("the memory job has a timeout")
+        .parse()
+        .unwrap();
+    assert!(
+        deadline < minutes * 60,
+        "the deadline passes the job's timeout"
+    );
 }
 
 /// A report that lost its lines is not a day under 4 GiB.

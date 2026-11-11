@@ -317,8 +317,9 @@ year: ## The year room's suite
 # makes every entry of a day through the running server, each reporting the
 # server's own memory. They take longer than the check lane allows one binary, so
 # no other target runs them. They have a deadline of their own
-# (`MEMORY_DAY_DEADLINE_SECONDS`) and report; no number gates. With `BAR_BUNDLE`
-# they run the check lane's bundled binary.
+# (`MEMORY_DAY_DEADLINE_SECONDS`) and report: the last line says ok, OVER (exit 3, a
+# number reached 4 GiB), FAILED or TIMED OUT, and the job stays informational. With
+# `BAR_BUNDLE` they run the check lane's bundled binary.
 memory: ## The memory job's cases, the first boot and the whole-day replay: needs BOOT_STORE_DIR, the grown store
 	$(AT_ROOT)python3 scripts/memory-day
 

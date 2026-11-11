@@ -8,7 +8,7 @@ the day makes every entry of a day through the running server too. They write th
 numbers to target/bar/boot-measures.log. They are measurements, not tests (rule
 810), and take longer than the check lane allows one test binary, so this runs them
 alone, one after the other, with a deadline of its own for both
-(MEMORY_DAY_DEADLINE_SECONDS, 2700 by default).
+(MEMORY_DAY_DEADLINE_SECONDS, 3300 by default).
 
 With BAR_BUNDLE the binary is the one the bundle holds for the check lane, run
 where the bar runs it: in its package's directory, with CARGO_MANIFEST_DIR and the
@@ -31,7 +31,9 @@ CASES = [
     "memory_report::the_servers_memory_across_a_first_boot",
     "memory_report::the_servers_memory_after_a_replayed_day",
 ]
-DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "2700"))
+# Room for both cases: the day took 1,756 s and a first boot up to 300 s in the runs so
+# far. The memory job is stopped at 60 minutes, which stays above it.
+DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "3300"))
 # Rule 800's bound on the server's own memory, 4 GiB. It is not the unit's memoryMax,
 # which a later rule moves.
 LIMIT_MIB = 4096.0
@@ -106,18 +108,31 @@ def stop_tree(pid):
     os.killpg(pid, signal.SIGKILL)
 
 
+def larger(a, b):
+    """The larger of two numbers written as text, kept as written; None is smaller."""
+    if a is None or (b is not None and float(b) > float(a)):
+        return b
+    return a
+
+
 def measured(measures):
-    """The two numbers rule 800 bounds, in MiB as the report writes them: the server's
-    peak through the first boot and its resident memory at the end of the day. None
-    for a number the report did not write."""
-    boot = day = None
+    """The numbers rule 800 bounds, in MiB as the report writes them: the server's peak
+    through a first boot (the larger of the two the job makes, the first-boot case's
+    and the day case's own), its resident memory at the end of the day, and the most it
+    held in the day. Production is killed at its peak and not where it settles, so the
+    last is the larger of the day's highest sample and the process's own peak. None for
+    a number the report did not write."""
+    boot = day = highest = None
     if measures.exists():
         for line in measures.read_text(errors="replace").splitlines():
             found = re.search(r"^memory-report boot: .*?server peak ([0-9.]+) MiB", line)
-            boot = found.group(1) if found else boot
+            boot = larger(boot, found.group(1) if found else None)
             found = re.search(r"^memory-report day: .*?server resident ([0-9.]+) MiB at the end", line)
             day = found.group(1) if found else day
-    return boot, day
+            for pattern in (r"([0-9.]+) MiB at the most", r"; peak ([0-9.]+) MiB"):
+                found = re.search(r"^memory-report day: .*?" + pattern, line)
+                highest = larger(highest, found.group(1) if found else None)
+    return boot, day, highest
 
 
 def main():
@@ -150,18 +165,21 @@ def main():
         verdict = f"memory-day: FAILED, not every case ran: {' and '.join(CASES)} were not all found in the binary"
         code = 1
     else:
-        boot, day = measured(measures)
-        if boot is None or day is None:
-            verdict = (f"memory-day: FAILED after {wall} s: the report holds no "
-                       f"{'first-boot peak' if boot is None else 'resident memory after the day'}")
+        boot, day, highest = measured(measures)
+        missing = [name for name, number in (("first-boot peak", boot),
+                                             ("resident memory after the day", day),
+                                             ("highest memory in the day", highest))
+                   if number is None]
+        numbers = (f"first-boot peak {boot} MiB, resident after the day {day} MiB, "
+                   f"highest in the day {highest} MiB")
+        if missing:
+            verdict = f"memory-day: FAILED after {wall} s: the report holds no {' and no '.join(missing)}"
             code = 1
-        elif float(boot) >= LIMIT_MIB or float(day) >= LIMIT_MIB:
-            verdict = (f"memory-day: OVER {LIMIT_MIB:.0f} MiB (4 GiB) after {wall} s: first-boot peak "
-                       f"{boot} MiB, resident after the day {day} MiB")
+        elif any(float(number) >= LIMIT_MIB for number in (boot, day, highest)):
+            verdict = f"memory-day: OVER {LIMIT_MIB:.0f} MiB (4 GiB) after {wall} s: {numbers}"
             code = 3
         else:
-            verdict = (f"memory-day: ok after {wall} s: first-boot peak {boot} MiB, resident "
-                       f"after the day {day} MiB, both under {LIMIT_MIB:.0f} MiB (4 GiB)")
+            verdict = f"memory-day: ok after {wall} s: {numbers}, all under {LIMIT_MIB:.0f} MiB (4 GiB)"
     print(verdict)
     # The job prints this file as its last line: the run step carries
     # continue-on-error, so the job's status cannot say how the day went.
