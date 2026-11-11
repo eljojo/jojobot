@@ -163,6 +163,38 @@ impl Jojobot {
         Ok(rows)
     }
 
+    /// **What a read of this list would say now in the blocks that move when the
+    /// work its entries link moves**: its `progress`, and for each entry the work
+    /// it links, under `linked_by_entry`. The held pass reads it after it samples
+    /// the list's version, to tell a body rendered before such a write from one
+    /// rendered after, as [`Jojobot::progress_rows`] does for a piece of work. Each
+    /// block is made by the call the read of the list makes. **A read that fails is
+    /// an error** (rule 130).
+    pub(crate) async fn list_blocks_now(
+        &self,
+        list: &EntityId,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, MemoryError> {
+        let held = self.memory.recall(list).await?;
+        let fields = self.memory.fields(list).await?;
+        let setting = jojobot_domain::memory::entries::Setting::of(&fields);
+        let counted = jojobot_domain::memory::entries::counted_links(&held, setting);
+        let linked = self.linked_state(&counted).await?;
+        let mut now = serde_json::Map::new();
+        if let Some(progress) = Progress::of(&counted, &linked) {
+            now.insert("progress".into(), progress.as_read());
+        }
+        let mut by_entry = serde_json::Map::new();
+        for entry in &jojobot_domain::memory::entries::view(&held, setting).entries {
+            if let Some(edge) = &entry.fact.edge
+                && let Some(work) = linked.get(&edge.object)
+            {
+                by_entry.insert(entry.fact.address().to_string(), work.as_read());
+            }
+        }
+        now.insert("linked_by_entry".into(), by_entry.into());
+        Ok(now)
+    }
+
     /// **The state of each piece of work among `handles`**, by handle. A handle
     /// that is not a piece of work or a project (a person, a place) has no state
     /// and is left out. **A read that fails is an error**, never a handle left

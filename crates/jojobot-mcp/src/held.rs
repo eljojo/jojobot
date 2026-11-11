@@ -733,19 +733,22 @@ impl Jojobot {
                 continue;
             };
             if let Held::Entity(handle) = &what
-                && let Some(received) = body["objects"].as_array().and_then(|objects| {
+                && let Some(object) = body["objects"].as_array().and_then(|objects| {
                     objects
                         .iter()
                         .find(|object| object["id"].as_str() == Some(handle.as_str()))
-                        .and_then(|object| object["progress"].as_array())
                 })
             {
-                // Sample after the version. If the rows changed since rendering,
-                // do not hold the stale body; a later write leaves this version
-                // old, so the next read also serves the rows again.
-                match self.progress_rows(&EntityId(handle.clone())).await {
-                    Ok(now) if now == *received => {}
-                    Ok(_) => continue,
+                // Sample after the version. If the blocks that move with other
+                // things changed since rendering, do not hold the stale body; a
+                // later write leaves this version old, so the next read also
+                // serves them again.
+                match self
+                    .rendered_blocks_still_hold(&EntityId(handle.clone()), object)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => continue,
                     Err(error) => {
                         unread(&what, &error);
                         continue;
@@ -804,6 +807,39 @@ impl Jojobot {
             body[HELD_CHANGED] = Value::Array(notices);
         }
         result.content[at] = ContentBlock::text(body.to_string());
+    }
+
+    /// **Whether the blocks an answer carries for a thing are still what a read of
+    /// it would say**, read after the version was sampled. A piece of work carries
+    /// its lists' progress rows; a list carries its own progress and what each
+    /// linked entry's work stands at. A thing with neither is whole by its version.
+    /// Each is made by the call the read itself makes.
+    async fn rendered_blocks_still_hold(
+        &self,
+        handle: &EntityId,
+        object: &Value,
+    ) -> Result<bool, jojobot_domain::memory::MemoryError> {
+        if let Some(received) = object["progress"].as_array() {
+            return Ok(self.progress_rows(handle).await? == *received);
+        }
+        if handle.kind() != Some(jojobot_domain::memory::EntityKind::LIST) {
+            return Ok(true);
+        }
+        let now = self.list_blocks_now(handle).await?;
+        // A progress block the answer left out, or unread, is not compared.
+        if !object["progress"].is_null()
+            && object["progress"] != now.get("progress").cloned().unwrap_or(Value::Null)
+        {
+            return Ok(false);
+        }
+        let by_entry = &now["linked_by_entry"];
+        for entry in object["entries"].as_array().into_iter().flatten() {
+            let address = entry["address"].as_str().unwrap_or_default();
+            if entry["linked"] != by_entry[address] {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// **The notice for a held message that has been quarantined since it was
@@ -1703,6 +1739,310 @@ mod tests {
             .await;
         assert_eq!(body_in(&recovered)["objects"][0]["progress"][0]["done"], 0);
         assert_eq!(body_in(&recovered)["objects"][0]["progress"][0]["of"], 1);
+    }
+
+    /// **A list that a read rendered before another session's write is not held at
+    /// the version that write made.** The list's own progress and the state of the
+    /// work an entry links both moved; the second read has to carry them.
+    #[tokio::test]
+    async fn a_list_read_is_not_held_at_a_newer_version_than_its_blocks() {
+        use rmcp::handler::server::wrapper::Parameters;
+
+        let jojobot = handler();
+        let reader = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+        let writer = crate::mailboxes::testing::owning(&jojobot, "delta").await;
+        ensure(&jojobot, "work:alpha").await;
+        ensure(&jojobot, "work:beta").await;
+        jojobot
+            .memory
+            .add_entity(NewEntity {
+                parent: Some(EntityId::person("work:alpha")),
+                ..NewEntity::new(EntityId::person("list:errands"), "Errands", "fixture")
+            })
+            .await
+            .expect("the list is created")
+            .written()
+            .expect("nothing blocks it");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("about".into()),
+                object: Some("work:beta".into()),
+                ..capture_args("list:errands", "finish beta")
+            },
+        )
+        .await;
+        let read = |sid: String| RecallArgs {
+            sid: Some(sid),
+            subject: Some("list:errands".into()),
+            ..Default::default()
+        };
+
+        let mut first: CallToolResponse = jojobot
+            .recall(Parameters(read(reader.clone())))
+            .await
+            .expect("the first recall answers")
+            .into();
+        let list = |answer: &CallToolResponse| body_in(answer)["objects"][0].clone();
+        assert_eq!(list(&first)["progress"]["done"], 0);
+        assert_eq!(list(&first)["progress"]["of"], 1);
+        assert_ne!(
+            list(&first)["entries"][0]["linked"]["status"],
+            "done",
+            "the linked work is open as rendered"
+        );
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(writer),
+                sets: Some([("status".to_string(), "done".to_string())].into()),
+                ..capture_args("work:beta", "is finished")
+            },
+        )
+        .await;
+        mark_call(&mut first, "recall", false);
+        jojobot.add_held_changed(&mut first, Some(&reader)).await;
+        assert_eq!(list(&first)["progress"]["done"], 0);
+
+        let mut second: CallToolResponse = jojobot
+            .recall(Parameters(read(reader.clone())))
+            .await
+            .expect("the second recall answers")
+            .into();
+        mark_call(&mut second, "recall", false);
+        jojobot.add_held_changed(&mut second, Some(&reader)).await;
+        assert_eq!(list(&second)["progress"]["done"], 1, "{second:?}");
+        assert_eq!(
+            list(&second)["entries"][0]["linked"]["status"],
+            "done",
+            "the entry carries the work as it stands now"
+        );
+    }
+
+    /// **A list over the work its entries link, and the writes another session
+    /// makes to that work between a read's render and its held pass.** `works`
+    /// are linked in order, each as an entry; `leave` makes a done tick take an
+    /// entry out of the open view, which still counts it in `progress`. Returns
+    /// each entry's address and the first reader's session.
+    async fn errands_over(jojobot: &Jojobot, works: &[&str], leave: bool) -> Vec<String> {
+        ensure(jojobot, "work:alpha").await;
+        jojobot
+            .memory
+            .add_entity(NewEntity {
+                parent: Some(EntityId::person("work:alpha")),
+                ..NewEntity::new(EntityId::person("list:errands"), "Errands", "fixture")
+            })
+            .await
+            .expect("the list is created")
+            .written()
+            .expect("nothing blocks it");
+        if leave {
+            capture_ok(
+                jojobot,
+                CaptureArgs {
+                    sets: Some([("tick".to_string(), "leave".to_string())].into()),
+                    ..capture_args("list:errands", "done entries leave the view")
+                },
+            )
+            .await;
+        }
+        let mut addresses = Vec::new();
+        for work in works {
+            ensure(jojobot, work).await;
+            let entry = capture_ok(
+                jojobot,
+                CaptureArgs {
+                    shape: Some("about".into()),
+                    object: Some((*work).into()),
+                    ..capture_args("list:errands", "finish it")
+                },
+            )
+            .await;
+            addresses.push(address_of(&entry));
+        }
+        addresses
+    }
+
+    /// **Render a read of the list for `reader`, let `write` happen, then run the
+    /// held pass on the first answer and read again**: the two answers.
+    async fn list_read_around(
+        jojobot: &Jojobot,
+        reader: &str,
+        write: impl std::future::Future<Output = ()>,
+    ) -> (Value, Value) {
+        use rmcp::handler::server::wrapper::Parameters;
+        let read = || RecallArgs {
+            sid: Some(reader.to_string()),
+            subject: Some("list:errands".into()),
+            ..Default::default()
+        };
+        let mut first: CallToolResponse = jojobot
+            .recall(Parameters(read()))
+            .await
+            .expect("the first recall answers")
+            .into();
+        let rendered = body_in(&first)["objects"][0].clone();
+        write.await;
+        mark_call(&mut first, "recall", false);
+        jojobot.add_held_changed(&mut first, Some(reader)).await;
+        let mut second: CallToolResponse = jojobot
+            .recall(Parameters(read()))
+            .await
+            .expect("the second recall answers")
+            .into();
+        mark_call(&mut second, "recall", false);
+        jojobot.add_held_changed(&mut second, Some(reader)).await;
+        (rendered, body_in(&second)["objects"][0].clone())
+    }
+
+    /// **An entry's own work moves and the list's progress does not**: the work
+    /// goes from one open status to another. The second read has to carry the
+    /// entry's new state, so the entry is compared as well as the count.
+    #[tokio::test]
+    async fn a_list_read_is_not_held_past_a_move_of_the_work_an_entry_links() {
+        let jojobot = handler();
+        let reader = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+        let writer = crate::mailboxes::testing::owning(&jojobot, "delta").await;
+        errands_over(&jojobot, &["work:beta"], false).await;
+        let (rendered, after) = list_read_around(&jojobot, &reader, async {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    sid: Some(writer.clone()),
+                    sets: Some([("status".to_string(), "now".to_string())].into()),
+                    ..capture_args("work:beta", "is started")
+                },
+            )
+            .await;
+        })
+        .await;
+        assert_ne!(rendered["entries"][0]["linked"]["status"], "now");
+        assert_eq!(
+            after["progress"], rendered["progress"],
+            "the count did not move"
+        );
+        assert_eq!(after["entries"][0]["linked"]["status"], "now", "{after}");
+    }
+
+    /// **A list's progress moves while every entry in view stands**: the entry for
+    /// the finished work left the open view when it was ticked, and the count still
+    /// holds it. The second read has to carry the new count, so the count is
+    /// compared as well as the entries.
+    #[tokio::test]
+    async fn a_list_read_is_not_held_past_a_move_of_work_no_entry_in_view_shows() {
+        use crate::memory::capture::TickArg;
+        let jojobot = handler();
+        let reader = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+        let writer = crate::mailboxes::testing::owning(&jojobot, "delta").await;
+        let entries = errands_over(&jojobot, &["work:beta", "work:sigma"], true).await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                tick: Some(TickArg {
+                    entry: entries[0].clone(),
+                    act: "done".into(),
+                }),
+                ..capture_args("list:errands", "ticked it")
+            },
+        )
+        .await;
+        let (rendered, after) = list_read_around(&jojobot, &reader, async {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    sid: Some(writer.clone()),
+                    sets: Some([("status".to_string(), "done".to_string())].into()),
+                    ..capture_args("work:beta", "is finished")
+                },
+            )
+            .await;
+        })
+        .await;
+        assert_eq!(rendered["progress"]["done"], 0, "{rendered}");
+        assert_eq!(
+            rendered["entries"].as_array().map(|all| all
+                .iter()
+                .filter(|entry| entry["link"]["object"] == "work:beta")
+                .count()),
+            Some(0),
+            "the ticked entry left the view: {rendered}"
+        );
+        assert_eq!(after["progress"]["done"], 1, "{after}");
+    }
+
+    /// **A body whose blocks cannot be read again after the version is sampled is
+    /// left unheld**, for a piece of work and for a list alike: the next read ships
+    /// it whole, where a body held at the sampled version would be collapsed.
+    #[tokio::test]
+    async fn a_body_whose_blocks_cannot_be_read_again_is_not_held() {
+        use crate::memory::testing::WorkFieldsDownFrom;
+        use rmcp::handler::server::wrapper::Parameters;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        for subject in ["work:alpha", "list:errands"] {
+            let down = Arc::new(AtomicBool::new(false));
+            let memory = Arc::new(InMemoryMemory::booted());
+            let jojobot = crate::harness::handler_over_mentions(Arc::new(WorkFieldsDownFrom {
+                inner: memory,
+                down: down.clone(),
+            }));
+            let reader = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+            ensure(&jojobot, "work:alpha").await;
+            ensure(&jojobot, "work:beta").await;
+            jojobot
+                .memory
+                .add_entity(NewEntity {
+                    parent: Some(EntityId::person("work:alpha")),
+                    ..NewEntity::new(EntityId::person("list:errands"), "Errands", "fixture")
+                })
+                .await
+                .expect("the list is created")
+                .written()
+                .expect("nothing blocks it");
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    shape: Some("about".into()),
+                    object: Some("work:beta".into()),
+                    ..capture_args("list:errands", "finish beta")
+                },
+            )
+            .await;
+            let read = || RecallArgs {
+                sid: Some(reader.clone()),
+                subject: Some(subject.into()),
+                ..Default::default()
+            };
+
+            let mut first: CallToolResponse = jojobot
+                .recall(Parameters(read()))
+                .await
+                .expect("the first recall answers")
+                .into();
+            assert!(
+                body_in(&first)["objects"][0]["progress"].is_object()
+                    || body_in(&first)["objects"][0]["progress"].is_array(),
+                "{subject}: the read carries progress: {first:?}"
+            );
+            // The store stops answering for work between the render and the held pass.
+            down.store(true, Ordering::SeqCst);
+            mark_call(&mut first, "recall", false);
+            jojobot.add_held_changed(&mut first, Some(&reader)).await;
+            down.store(false, Ordering::SeqCst);
+
+            let mut second: CallToolResponse = jojobot
+                .recall(Parameters(read()))
+                .await
+                .expect("the second recall answers")
+                .into();
+            mark_call(&mut second, "recall", false);
+            jojobot.add_held_changed(&mut second, Some(&reader)).await;
+            assert!(
+                !body_in(&second)["objects"][0]["progress"].is_null(),
+                "{subject}: the second read ships the progress whole: {second:?}"
+            );
+        }
     }
 
     /// **What stands under a parent is read in one pass, not once for each thing

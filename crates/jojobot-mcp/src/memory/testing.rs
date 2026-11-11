@@ -973,6 +973,29 @@ impl Memory for FailsOnCapture {
     }
 }
 
+/// **A store whose reads of a piece of work's fields fail from the moment a test
+/// sets the flag**, while every other read and every write answers. The stand-in
+/// for a read that fails between the render of an answer and the pass that holds it.
+pub(crate) struct WorkFieldsDownFrom {
+    pub(crate) inner: Arc<dyn Memory>,
+    pub(crate) down: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
+impl Memory for WorkFieldsDownFrom {
+    async fn fields(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        if self.down.load(std::sync::atomic::Ordering::SeqCst)
+            && entity.as_str().starts_with("work:")
+        {
+            return Err(MemoryError::Store("a work's fields cannot be read".into()));
+        }
+        self.inner.fields(entity).await
+    }
+}
+
 /// **A store that cannot say which claim holds a key**: every read of the backing
 /// fails with a store error, while every other read and every write answers.
 pub(crate) struct BackingDown(pub(crate) Arc<dyn Memory>);
