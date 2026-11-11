@@ -1294,6 +1294,62 @@ async fn deleting_a_renamed_thing_under_the_store_clears_the_prose_written_befor
     );
 }
 
+/// **A page written under a middle handle goes with the thing.** After two renames
+/// the thing was made as one handle, wrote its page as another and is deleted as a
+/// third: only the former-handle table names the middle one, so a delete that reads
+/// the made-as handle and the current one leaves the page behind.
+#[tokio::test]
+async fn deleting_a_twice_renamed_thing_clears_the_page_written_under_its_middle_handle() {
+    let store = InMemoryMemory::booted();
+    let doomed = thing(&store, "person:nelson", "Nelson").await;
+    let (middle, last) = (
+        EntityId("person:delta".into()),
+        EntityId("person:epsilon".into()),
+    );
+    store
+        .rename_entity(
+            &doomed,
+            &middle,
+            None,
+            date(2026, 6, 4),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the first rename is answered")
+        .written()
+        .expect("nothing collides with the middle handle");
+    store
+        .set_prose(&middle, "a page", None)
+        .await
+        .expect("prose lands under the middle handle");
+    store
+        .rename_entity(
+            &middle,
+            &last,
+            None,
+            date(2026, 6, 5),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the second rename is answered")
+        .written()
+        .expect("nothing collides with the last handle");
+    assert!(
+        store.prose.lock().unwrap().contains_key(&middle),
+        "the page sits under the handle it was written under"
+    );
+
+    store.delete_entity_past_the_guard(&last);
+
+    let held = store.prose.lock().unwrap();
+    assert!(
+        !held.contains_key(&middle),
+        "the page under the middle handle remains: {held:?}"
+    );
+}
+
 /// **A spelling a surviving thing holds now is not the deleted thing's page**:
 /// a thing renamed away from `person:nelson` still lists that spelling as a
 /// former handle, and a second thing made at the vacated spelling has written a
