@@ -1835,6 +1835,35 @@ fn an_entity_write_row_is_an_observation_with_its_own_moment_and_run() {
     );
 }
 
+/// **Rows of one moment arrive in the order of their thing's key and ordinal**, not
+/// in the order the store handed them over, so the same rows always give the same
+/// events. Every moment here is equal and the rows come in the reverse order.
+#[test]
+fn entity_writes_of_one_moment_arrive_by_their_thing_and_ordinal() {
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer"), entity("k2", "person:marge")],
+        entity_writes: vec![
+            entity_write("k2", 1, Some(10), None, Some(snapshot_of("Marge"))),
+            entity_write("k1", 2, Some(10), None, Some(snapshot_of("Homer"))),
+            entity_write("k1", 1, Some(10), None, Some(snapshot_of("Homer"))),
+        ],
+        ..Rows::default()
+    };
+    let order: Vec<(String, u64)> = observations(&imported(&rows))
+        .iter()
+        .map(|one| (one.object.0.clone(), one.ordinal))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            ("k1".to_string(), 1),
+            ("k1".to_string(), 2),
+            ("k2".to_string(), 1)
+        ],
+        "equal moments fall in the order of thing and ordinal"
+    );
+}
+
 /// **The current state at the cut is the baseline and never a version.** No
 /// `ObjectCreated` is made for an entity, each entity has one baseline, the state
 /// still serves the object, and the observed writes number the rows and no more.
