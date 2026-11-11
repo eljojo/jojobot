@@ -271,6 +271,12 @@ fn a_new_claim_is_refused_by_the_first_clause_it_breaks() {
         .insert(RETRACTS.into(), "person:milhouse#f1".into());
     let mut beside_then_content = claim("   ");
     beside_then_content.also_written = vec![claim("another")];
+    // The adjacent pair the table lacked: a bad edge before an orphan span end. They
+    // refuse as different variants, so the table tells them apart. Content before
+    // the span follows from content before the edge and the edge before the span.
+    let mut edge_then_span = claim("keeps the ledger");
+    edge_then_span.edge = Some(Edge::new(EdgeShape::Location, who("person:homer")));
+    edge_then_span.happened_through = Some(day(2));
     // The two adjacent pairs of different variants no other row holds: records
     // written beside the claim before the subject, and bad fields before the
     // source an observation owes.
@@ -314,6 +320,7 @@ fn a_new_claim_is_refused_by_the_first_clause_it_breaks() {
         (span_then_fields, Refused::Fact),
         (beside_then_subject, Refused::Fact),
         (fields_then_source, Refused::Fact),
+        (edge_then_span, Refused::Edge),
     ];
     for (fact, refused) in table {
         let outcome = validate_new_fact(&fact);
