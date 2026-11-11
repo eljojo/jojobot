@@ -543,13 +543,6 @@ const BOOT_PATIENCE: Duration = Duration::from_secs(600);
 /// Clients that make the day's calls at once. The grow step writes through eight.
 const CLIENTS: usize = 8;
 
-/// **How long the replay may run in all.** The lane's test binary is killed at 1,200
-/// seconds, and every other case in it takes under six minutes; a day of calls
-/// through the tools is slower than that (the first run of this case, with four
-/// clients and no limit, was still on its first day when the binary was killed). The
-/// replay makes as much of the days as the budget allows and reports how much.
-const REPLAY_BUDGET: Duration = Duration::from_secs(420);
-
 /// What a replay of one day made, and the server's memory while it did.
 struct Replayed {
     /// `(elapsed, calls made, memory)`, about every half second.
@@ -685,18 +678,31 @@ fn mib(kib: u64) -> String {
     format!("{:.1} MiB", kib as f64 / 1024.0)
 }
 
-/// **The report.** A first boot over the production-sized store, then days of calls
-/// through the running server, each read as the server's own memory.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
+/// What a first boot over a replayed dump left: the running server and what the
+/// boot's log and memory showed.
+struct FirstBoot {
+    run: Running,
+    /// The claims the store held before the boot read them.
+    claims: i64,
+    server_peak: u64,
+    store_peak: u64,
+    steps: Vec<Growth>,
+    things: Option<u64>,
+    runs: Option<u64>,
+    messages: Option<u64>,
+    events: Option<u64>,
+}
+
+/// **A first boot, as production's is on a new build**: the dump the last deployed
+/// build recorded and the case grew to the instance's counts, with no binary
+/// booted over it yet, so the boot imports the claims and takes the first
+/// snapshot. The server's memory is recorded at every line the boot logs.
+async fn first_boot() -> FirstBoot {
     let fixture = std::env::var("BOOT_STORE_DIR")
         .expect("CI supplies BOOT_STORE_DIR, the store this case starts from");
-    // **A first boot, as production's is on a new build**: the dump the last deployed
-    // build recorded and the case grew to the instance's counts, with no binary
-    // booted over it yet, so the boot imports the claims and takes the first snapshot.
     let state = replay_dump("jojobot-memory-report", &fixture).await;
     // **The claims the boot reads are counted before it**, so a growth at boot is
-    // divided by what the boot held and not by what the replay made of it.
+    // divided by what the boot held and not by what a replay made of it.
     let claims = claims_in(&state).await;
     let mut run = spawn(state);
     let boot = watch_boot(&mut run);
@@ -722,10 +728,6 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
         mib(after_boot.resident),
         mib(after_boot.anonymous),
     ));
-    let things = field_of(&seen, "things");
-    let runs = field_of(&seen, "runs");
-    let messages = field_of(&seen, "messages");
-    let events = field_of(&seen, "events");
     for step in &steps {
         record(&format!(
             "memory-report step: {} ended at {} ms and grew the server by {} kB ({}{}), to {} \
@@ -738,55 +740,24 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
             mib(step.resident_after),
         ));
     }
-
-    // **A replay of up to three days**, in the time the budget allows, so the climb
-    // of a process that keeps what it freed is a series and not one reading.
-    let (pid, port) = (run.pid, run.http_port);
-    let mut after_day = Vec::new();
-    let mut first_call = 0;
-    let replay_started = Instant::now();
-    for day_number in 1..=3 {
-        let left = REPLAY_BUDGET.saturating_sub(replay_started.elapsed());
-        if left < Duration::from_secs(10) {
-            break;
-        }
-        let replayed = replay_day(pid, port, first_call, left).await;
-        first_call += replayed.made;
-        let samples = replayed.samples;
-        let last = samples.last().expect("a replay has samples").2;
-        let top = samples.iter().map(|s| s.2.resident).max().unwrap_or(0);
-        record(&format!(
-            "memory-report day {day_number}: {} of the {} entries of a day made, which is {} of \
-             its {} tool calls before any retry, in {} s; server resident {} at the end, {} at \
-             the most; peak so far {}",
-            replayed.made,
-            day().len(),
-            replayed.made * day_tool_calls() / day().len(),
-            day_tool_calls(),
-            samples.last().map_or(0, |s| s.0.as_secs()),
-            mib(last.resident),
-            mib(top),
-            mib(run.peaks_kib().0),
-        ));
-        after_day.push(last);
+    FirstBoot {
+        things: field_of(&seen, "things"),
+        runs: field_of(&seen, "runs"),
+        messages: field_of(&seen, "messages"),
+        events: field_of(&seen, "events"),
+        run,
+        claims,
+        server_peak,
+        store_peak,
+        steps,
     }
-    assert!(
-        first_call > 0,
-        "the replay made no call in its budget of {REPLAY_BUDGET:?}"
-    );
-    let (server_peak_after, store_peak_after) = run.peaks_kib();
-    let finally = *after_day.last().expect("the days ran");
-    let store_resident: u64 = descendants_of(run.pid)
-        .into_iter()
-        .filter_map(memory_of_pid)
-        .map(|memory| memory.resident)
-        .sum();
-    let (state, _) = run.stopped();
+}
 
-    // **What the store held after the replay**, counted after the stop.
-    let claims_after = claims_in(&state).await;
+/// **What each projection held at the first boot**, divided by the claims, runs
+/// or messages it holds.
+fn record_per_thing(boot: &FirstBoot) {
     let held = |kind: Projection| {
-        steps
+        boot.steps
             .iter()
             .find(|step| step.projection == kind)
             .map_or(0, |step| step.kib)
@@ -795,44 +766,120 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
         Some(count) if count > 0 => format!("{} bytes each", kib * 1024 / count as i64),
         _ => "no count".to_string(),
     };
+    let claims = boot.claims as u64;
     record(&format!(
-        "memory-report per thing held at the first boot (claims {claims}, and {claims_after} \
-         after the replay; things {things:?}, runs {runs:?}, messages {messages:?}, import \
-         events {events:?}): the start-up and the image of memory {} per claim; memory search \
-         {} per claim; run image {} per run; mail image {} per message; claims import {} per \
-         claim",
-        per(held(Projection::MemoryImage), Some(claims as u64)),
-        per(held(Projection::MemorySearch), Some(claims as u64)),
-        per(held(Projection::RunImage), runs),
-        per(held(Projection::MailImage), messages),
-        per(held(Projection::ClaimsImport), Some(claims as u64)),
+        "memory-report per thing held at the first boot (claims {claims}; things {:?}, runs \
+         {:?}, messages {:?}, import events {:?}): the start-up and the image of memory {} per \
+         claim; memory search {} per claim; run image {} per run; mail image {} per message; \
+         claims import {} per claim",
+        boot.things,
+        boot.runs,
+        boot.messages,
+        boot.events,
+        per(held(Projection::MemoryImage), Some(claims)),
+        per(held(Projection::MemorySearch), Some(claims)),
+        per(held(Projection::RunImage), boot.runs),
+        per(held(Projection::MailImage), boot.messages),
+        per(held(Projection::ClaimsImport), Some(claims)),
     ));
-    // **The unit's own bound**, read from the module as the boot cases read it.
-    let bound = super::memory_bound_kib();
-    let verdict = |kib: u64| {
-        if kib < bound { "under" } else { "OVER" }
-    };
-    let beside = finally.resident + store_resident;
+}
+
+/// **Under or over the unit's own bound**, read from the module as the boot cases
+/// read it.
+fn verdict(kib: u64) -> &'static str {
+    if kib < super::memory_bound_kib() {
+        "under"
+    } else {
+        "OVER"
+    }
+}
+
+/// **The first-boot half of the report.** A first boot over the production-sized
+/// store, read as the server's own memory through each projection it builds. The
+/// replay of a day is its own case, which the lane's deadline does not bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_servers_memory_across_a_first_boot() {
+    let boot = first_boot().await;
+    record_per_thing(&boot);
     record(&format!(
-        "memory-report summary: the server's peak through the first boot {} ({} {}); its \
-         peak after the replay {} ({} {}); its resident memory after them {} ({} \
-         {}), anonymous {}; the store beside it {} resident and {} at its peak; the unit's \
-         cgroup holds both, so {} resident against its memoryMax of {} ({})",
+        "memory-report summary: the server's peak through the first boot {} ({} {}); the store \
+         beside it peaked at {}",
+        mib(boot.server_peak),
+        verdict(boot.server_peak),
+        mib(super::memory_bound_kib()),
+        mib(boot.store_peak),
+    ));
+    boot.run.stopped();
+}
+
+/// **The replay half of the report: a whole day of calls through the server
+/// that has just booted.** The day is the kinds of call the live instance makes in
+/// the proportions its metrics show, made with no time budget, so the server's
+/// resident memory afterward is the memory of a server that has served a day. It
+/// takes longer than the lane's test binary is allowed, so it never runs there:
+/// the memory lane runs it, with a deadline of its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "runs in the memory lane, which has its own deadline, never in `make check`"]
+async fn the_servers_memory_after_a_replayed_day() {
+    let began = Instant::now();
+    let boot = first_boot().await;
+    record_per_thing(&boot);
+    let (pid, port) = (boot.run.pid, boot.run.http_port);
+    let replayed = replay_day(pid, port, 0, Duration::MAX).await;
+    let samples = replayed.samples;
+    let last = samples.last().expect("a replay has samples").2;
+    let top = samples.iter().map(|s| s.2.resident).max().unwrap_or(0);
+    assert_eq!(
+        replayed.made,
+        day().len(),
+        "the replay stopped before it made the whole day"
+    );
+    let (server_peak_after, store_peak_after) = boot.run.peaks_kib();
+    record(&format!(
+        "memory-report day: all {} entries of a day made, which is {} tool calls before any \
+         retry, in {} s; server resident {} at the end, {} at the most; peak {}",
+        replayed.made,
+        day_tool_calls(),
+        samples.last().map_or(0, |s| s.0.as_secs()),
+        mib(last.resident),
+        mib(top),
+        mib(server_peak_after),
+    ));
+    let store_resident: u64 = descendants_of(boot.run.pid)
+        .into_iter()
+        .filter_map(memory_of_pid)
+        .map(|memory| memory.resident)
+        .sum();
+    let (server_peak, store_peak) = (boot.server_peak, boot.store_peak);
+    let (state, _) = boot.run.stopped();
+    let claims_after = claims_in(&state).await;
+    let bound = super::memory_bound_kib();
+    let beside = last.resident + store_resident;
+    record(&format!(
+        "memory-report summary: the server's peak through the first boot {} ({} {}); its peak \
+         after the day {} ({} {}); its resident memory after the day {} ({} {}), anonymous {}; \
+         the store beside it {} resident and {} at its peak; the unit's cgroup holds both, so \
+         {} resident against its memoryMax of {} ({}); the store held {claims_after} claims \
+         after the day",
         mib(server_peak),
         verdict(server_peak),
         mib(bound),
         mib(server_peak_after),
         verdict(server_peak_after),
         mib(bound),
-        mib(finally.resident),
-        verdict(finally.resident),
+        mib(last.resident),
+        verdict(last.resident),
         mib(bound),
-        mib(finally.anonymous),
+        mib(last.anonymous),
         mib(store_resident),
         mib(store_peak_after.max(store_peak)),
         mib(beside),
         mib(bound),
         verdict(beside),
+    ));
+    record(&format!(
+        "memory-report wall: {} s from the start of the case to its end",
+        began.elapsed().as_secs()
     ));
 }
 
