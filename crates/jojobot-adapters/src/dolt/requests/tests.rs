@@ -107,3 +107,97 @@ async fn a_calls_fill_does_not_fill_a_newer_attempt() {
     );
     store.stop().await;
 }
+
+/// A resumed call cannot spend an expired generation after its last part has
+/// left the keep window.
+#[tokio::test]
+async fn a_late_finish_does_not_complete_an_expired_part() {
+    use jojobot_domain::clock::Clock;
+    use jojobot_domain::request::armed_part;
+
+    let scratch = Scratch::new("expired-part-finish");
+    let mut store = start_unhurried(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&store, "expired_part_finish")
+        .await
+        .unwrap();
+    let written_on = jiff::civil::date(2026, 11, 5);
+    let clock = |days| {
+        Clock::stating(
+            written_on
+                .checked_add(jiff::Span::new().days(days))
+                .unwrap(),
+        )
+    };
+    let memory = DoltMemory::open(pool.clone()).on_clock(clock(0));
+    jojobot_domain::memory::kinds::seed(&memory).await.unwrap();
+    let bot = EntityId("bot:alpha".into());
+    let subject = EntityId("thing:beta".into());
+    for (id, name) in [(&bot, "Alpha"), (&subject, "Beta")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "fixture"))
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+    }
+    let memory = Folded::new(Arc::new(memory));
+    let ledger = DoltRequests::new(pool.clone())
+        .with_writer(memory.writer())
+        .on_clock(clock(0));
+    let request = Request {
+        bot,
+        id: RequestId::parse("expired-part").unwrap(),
+        verb: "capture".into(),
+        digest: "one-part".into(),
+    };
+    let first = Scope::new(request.clone());
+    within(
+        first,
+        armed_part(
+            "one",
+            None,
+            memory.capture(NewFact::about(subject, "one part", written_on)),
+        ),
+    )
+    .await
+    .unwrap()
+    .written()
+    .unwrap();
+    let parts = ledger.parts(&request.bot, &request.id).await.unwrap();
+    assert_eq!(parts.len(), 1, "the real write produced one part");
+    let resumed = Scope::resuming(
+        request.clone(),
+        parts[0].key.clone(),
+        parts
+            .into_iter()
+            .map(|part| (part.part, part.recorded))
+            .collect(),
+    );
+    let late = DoltRequests::new(pool.clone())
+        .with_writer(memory.writer())
+        .on_clock(clock(4));
+    assert!(
+        late.parts(&request.bot, &request.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    late.finish(&resumed.receipt(), "late-receipt")
+        .await
+        .unwrap();
+    assert!(
+        late.lookup(&request.bot, &request.id)
+            .await
+            .unwrap()
+            .is_none(),
+        "an expired part cannot become a fresh whole receipt"
+    );
+    assert!(
+        !crate::testing::ledger_events(&pool)
+            .await
+            .iter()
+            .any(|event| matches!(event, LedgerEvent::RequestCompleted { .. })),
+        "finish must not write a completion for an expired part"
+    );
+    store.stop().await;
+}

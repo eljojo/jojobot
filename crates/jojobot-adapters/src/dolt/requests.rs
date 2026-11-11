@@ -290,6 +290,9 @@ impl Requests for DoltRequests {
         }) else {
             return Ok(());
         };
+        if !spent && parts.is_empty() {
+            return Ok(());
+        }
         // **One row for one id**: a second finish keeps the row and takes the
         // newer receipt.
         if spent {
