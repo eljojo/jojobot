@@ -202,10 +202,17 @@ fn delete_without_a_token_deletes_nothing_and_fails() {
         &["--run", "7", "--delete"],
         None,
     );
-    // The refusal is the usage code and names the variable that was missing, so
-    // a crash of the script does not pass for it.
+    // The refusal is the usage code and says the words only the refusal writes.
+    // The usage text exits 2 and holds the name TOKEN too, so neither of those
+    // tells the refusal from a fall to usage.
     assert_eq!(swept.code, 2, "{}", swept.said);
-    assert!(swept.said.contains("TOKEN"), "{}", swept.said);
+    assert!(
+        swept
+            .said
+            .contains("--delete needs the job's token in TOKEN"),
+        "{}",
+        swept.said
+    );
     assert!(swept.asked.is_empty(), "{}", swept.said);
 }
 
