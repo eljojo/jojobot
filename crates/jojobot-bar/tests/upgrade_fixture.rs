@@ -546,6 +546,8 @@ fn run(dir: &Path, deadline: &str) -> Output {
             .arg(script)
             .current_dir(dir)
             .env("BAR_BUNDLE", "target/bundle/manifest.json")
+            // The bar sets it for the binaries it runs, and this case runs inside one.
+            .env_remove("JOJOBOT_BIN")
             .env("MEMORY_DAY_DEADLINE_SECONDS", deadline),
     )
     .unwrap()
