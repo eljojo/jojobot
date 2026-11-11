@@ -427,6 +427,48 @@ async fn a_measure_sees_the_state_the_earlier_write_left() {
     server.stop().await;
 }
 
+/// **The request a measure is taken on already carries the moment of the write**:
+/// the claim is prepared at the moment of the write that keeps it, so the rule that
+/// decides it never sees a claim a record from before stamps would be taken for.
+#[tokio::test]
+async fn the_request_a_measure_sees_carries_the_moment_of_the_write() {
+    let (_scratch, mut server, _store, pool, writer) = world("capture-job-moment").await;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (recorded, store) = (seen.clone(), pool.clone());
+    writer
+        .run(async move {
+            let tx = store.begin().await.unwrap();
+            let seam = crate::writer::Writer::current()
+                .and_then(|writer| writer.seam())
+                .expect("begin opened the seam");
+            admit(
+                &seam,
+                Box::new(move |_, _| Ok(request("person:homer", "r1"))),
+                Box::new(move |_, request| {
+                    recorded.lock().unwrap().push(request.draft.moment);
+                    fits()
+                }),
+                None,
+                None,
+                at(),
+            )
+            .await
+            .unwrap()
+            .expect("the capture is admitted");
+            requests::commit(tx, &Clock::default(), || "{}".into())
+                .await
+                .unwrap();
+        })
+        .await;
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [Some(at())],
+        "the measure saw a request with no moment"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
 fn job() -> CaptureJob {
     job_as(Actor::Operator)
 }
