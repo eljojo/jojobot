@@ -496,6 +496,13 @@ echo deployed > "$BOOT_STORE_DIR/recorded"
 /// directory `crates/jojobot`. The binary is a script that writes down what it was
 /// given and prints `body`.
 fn bundle(body: &str) -> PathBuf {
+    bundle_with(body, "1237.4", "1625.9")
+}
+
+/// The same, with the two numbers the report writes in MiB: the server's peak through
+/// the first boot and its resident memory at the end of the day. The lines are the
+/// shapes a run of the case wrote.
+fn bundle_with(body: &str, boot_peak: &str, day_resident: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-memory-day"));
     let deps = dir.join("cargo-target/debug/deps");
     fs::create_dir_all(&deps).unwrap();
@@ -509,6 +516,14 @@ fn bundle(body: &str) -> PathBuf {
              echo \"$@\" > \"{root}/seen-args\"\n\
              echo \"$PWD\" > \"{root}/seen-dir\"\n\
              echo \"$CARGO_MANIFEST_DIR $JOJOBOT_BIN\" > \"{root}/seen-env\"\n\
+             echo 'memory-report boot: the store needed the claims import at this boot; server \
+             peak {boot_peak} MiB (1267052 kB), store peak 1343.0 MiB (1375244 kB), server \
+             resident after boot 1146.2 MiB, of which anonymous 1104.5 MiB' >> \
+             \"{root}/target/bar/boot-measures.log\"\n\
+             echo 'memory-report day: all 5300 entries of a day made, which is 6179 tool calls \
+             before any retry, in 1682 s; server resident {day_resident} MiB at the end, \
+             {day_resident} MiB at the most; peak {day_resident} MiB' >> \
+             \"{root}/target/bar/boot-measures.log\"\n\
              echo 'memory-report wall: 7 s from the start of the case to its end' >> \
              \"{root}/target/bar/boot-measures.log\"\n\
              {body}\n",
@@ -597,6 +612,75 @@ fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
         "the numbers reach the job log: {said}"
     );
     assert!(said.contains("memory-day: ok after "), "{said}");
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+const PASSED: &str =
+    "echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'";
+
+/// **The verdict states both of rule 800's numbers against its 4 GiB, and reads OVER
+/// when either reaches it.** The first-boot peak and the resident memory after the
+/// day are in MiB in the report, and 4 GiB is 4,096 MiB. `ok` means both are under.
+/// The two numbers are in the line, so a reader of the job's last line needs nothing else.
+#[test]
+fn memory_day_verdict_states_both_numbers_and_reads_ok_when_both_are_under_4_gib() {
+    let dir = bundle_with(PASSED, "4095.9", "1625.9");
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(out.status.success(), "{said}");
+    assert!(verdict.starts_with("memory-day: ok"), "{verdict}");
+    for number in ["4095.9", "1625.9", "4096"] {
+        assert!(
+            verdict.contains(number),
+            "the verdict lacks {number}: {verdict}"
+        );
+    }
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn memory_day_verdict_reads_over_when_the_day_or_the_boot_reaches_4_gib() {
+    for (boot, day) in [
+        ("1237.4", "5120.0"),
+        ("4500.0", "1625.9"),
+        ("1237.4", "4096.0"),
+    ] {
+        let dir = bundle_with(PASSED, boot, day);
+        let out = run(&dir, "60");
+        let said = String::from_utf8_lossy(&out.stdout);
+        let verdict = said.lines().last().unwrap();
+        assert!(
+            verdict.starts_with("memory-day: OVER"),
+            "boot {boot}, day {day}: {verdict}"
+        );
+        assert_eq!(out.status.code(), Some(3), "{said}");
+        assert!(
+            verdict.contains(boot) && verdict.contains(day),
+            "both numbers are named: {verdict}"
+        );
+        the_verdict_file_is_the_last_line(&dir, &said);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// A report that lost its lines is not a day under 4 GiB.
+#[test]
+fn memory_day_verdict_is_red_when_the_report_has_no_numbers() {
+    // The fake binary writes its report lines first, so the body empties the file after.
+    let dir = bundle(&format!("{PASSED}; : > ../../target/bar/boot-measures.log"));
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{said}");
+    assert!(
+        said.lines()
+            .last()
+            .unwrap()
+            .starts_with("memory-day: FAILED"),
+        "{said}"
+    );
     the_verdict_file_is_the_last_line(&dir, &said);
     fs::remove_dir_all(dir).unwrap();
 }

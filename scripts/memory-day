@@ -26,6 +26,9 @@ import time
 
 CASE = "memory_report::the_servers_memory_after_a_replayed_day"
 DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "2700"))
+# Rule 800's bound on the server's own memory, 4 GiB. It is not the unit's memoryMax,
+# which a later rule moves.
+LIMIT_MIB = 4096.0
 BAR = Path("target/bar")
 
 
@@ -96,6 +99,20 @@ def stop_tree(pid):
     os.killpg(pid, signal.SIGKILL)
 
 
+def measured(measures):
+    """The two numbers rule 800 bounds, in MiB as the report writes them: the server's
+    peak through the first boot and its resident memory at the end of the day. None
+    for a number the report did not write."""
+    boot = day = None
+    if measures.exists():
+        for line in measures.read_text(errors="replace").splitlines():
+            found = re.search(r"^memory-report boot: .*?server peak ([0-9.]+) MiB", line)
+            boot = found.group(1) if found else boot
+            found = re.search(r"^memory-report day: .*?server resident ([0-9.]+) MiB at the end", line)
+            day = found.group(1) if found else day
+    return boot, day
+
+
 def main():
     BAR.mkdir(parents=True, exist_ok=True)
     log = BAR / "memory.log"
@@ -126,7 +143,18 @@ def main():
         verdict = f"memory-day: FAILED, no test ran: the case {CASE} was not found in the binary"
         code = 1
     else:
-        verdict = f"memory-day: ok after {wall} s"
+        boot, day = measured(measures)
+        if boot is None or day is None:
+            verdict = (f"memory-day: FAILED after {wall} s: the report holds no "
+                       f"{'first-boot peak' if boot is None else 'resident memory after the day'}")
+            code = 1
+        elif float(boot) >= LIMIT_MIB or float(day) >= LIMIT_MIB:
+            verdict = (f"memory-day: OVER {LIMIT_MIB:.0f} MiB (4 GiB) after {wall} s: first-boot peak "
+                       f"{boot} MiB, resident after the day {day} MiB")
+            code = 3
+        else:
+            verdict = (f"memory-day: ok after {wall} s: first-boot peak {boot} MiB, resident "
+                       f"after the day {day} MiB, both under {LIMIT_MIB:.0f} MiB (4 GiB)")
     print(verdict)
     # The job prints this file as its last line: the run step carries
     # continue-on-error, so the job's status cannot say how the day went.
