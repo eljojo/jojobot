@@ -211,11 +211,26 @@ async fn batches(pool: &sqlx::MySqlPool) -> i64 {
 /// position and the load of a snapshot) meets a store that says it has no such
 /// table. Each answers a store error, never the indeterminate write; the writer
 /// attempts no recovery and marks nothing uncertain, so the first write after
-/// the table is back lands at once. A write whose commit is lost still marks the
-/// log: see `a_commit_whose_answer_is_lost_recovers_exactly_once`.
+/// the table is back lands at once. **A read whose connection is lost in the
+/// middle is the same**: it is told a connection was lost and not what became of
+/// the read, which is the answer a lost commit gets, yet it sent no write, so it is
+/// a store error and the log stays certain. A write whose commit is lost still
+/// marks the log: see `a_commit_whose_answer_is_lost_recovers_exactly_once`.
 #[tokio::test]
 async fn a_failed_read_of_the_log_is_a_store_error_and_leaves_the_log_certain() {
-    let (_scratch, mut server, pool, log, writer) = fixture().await;
+    let scratch = Scratch::new("writer-log-read-fails");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let armed = Arc::new(AtomicBool::new(false));
+    let (port, dropped, proxy) = crate::dolt_log::tests::dropped_read_proxy(
+        pool.connect_options().get_port(),
+        armed.clone(),
+    )
+    .await;
+    let source =
+        MySqlPoolOptions::new().connect_lazy_with((*pool.connect_options()).clone().port(port));
+    let writer = Writer::default();
+    let log = WriterLog::open(source, writer.clone()).await.unwrap();
     let first = batch("read-fails-1", 0, &[b"a"]);
     assert_eq!(
         log.append(Position(0), &first).await.unwrap(),
@@ -245,6 +260,31 @@ async fn a_failed_read_of_the_log_is_a_store_error_and_leaves_the_log_certain() 
         "a read that failed wrote nothing, so nothing is uncertain"
     );
     assert_eq!(writer.recovery_counts().attempted, 0, "no recovery ran");
+    // The same, with a connection lost in the middle of each read of the log.
+    for read in ["validity", "read_from", "load_snapshot"] {
+        armed.store(true, Ordering::SeqCst);
+        let lost = match read {
+            "validity" => log.validity().await.err(),
+            "read_from" => log.read_from(Position(0), 10).await.err(),
+            _ => log.load_snapshot().await.err(),
+        };
+        tokio::time::timeout(Duration::from_secs(5), dropped.notified())
+            .await
+            .unwrap();
+        assert!(
+            matches!(lost, Some(LogError::Store(_))),
+            "{read} with a lost connection answers a store error: {lost:?}"
+        );
+        assert!(
+            !writer.rail_uncertain(RAIL),
+            "{read}: a read that lost its connection wrote nothing, so nothing is uncertain"
+        );
+        assert_eq!(
+            writer.recovery_counts().attempted,
+            0,
+            "{read}: no recovery ran"
+        );
+    }
     let second = batch("read-fails-2", 1, &[b"b"]);
     assert_eq!(
         log.append(Position(1), &second).await.unwrap(),
@@ -253,6 +293,7 @@ async fn a_failed_read_of_the_log_is_a_store_error_and_leaves_the_log_certain() 
     );
     drop(log);
     writer.drain().await;
+    proxy.abort();
     server.stop().await;
 }
 

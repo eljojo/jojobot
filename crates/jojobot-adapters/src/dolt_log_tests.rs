@@ -114,6 +114,60 @@ pub(crate) async fn lost_commit_reply_proxy_when(
     (port, dropped, proxy)
 }
 
+/// **A proxy that loses the connection in the middle of a read of the log.** While
+/// `armed` is set, the first statement that names the log's table is dropped with
+/// its connection, before the server sees it, so the caller is told a connection
+/// was lost and not what became of the read. A write is not told apart here: the
+/// caller arms it only around reads. Returns the proxy's port, a signal that the
+/// connection was dropped, and the proxy task.
+pub(crate) async fn dropped_read_proxy(
+    upstream: u16,
+    armed: Arc<std::sync::atomic::AtomicBool>,
+) -> (u16, Arc<tokio::sync::Notify>, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let dropped = Arc::new(tokio::sync::Notify::new());
+    let signal = dropped.clone();
+    let proxy = tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let armed = armed.clone();
+            let signal = signal.clone();
+            tokio::spawn(async move {
+                let upstream = tokio::net::TcpStream::connect(("127.0.0.1", upstream)).await?;
+                let (mut from_client, mut to_client) = client.into_split();
+                let (mut from_server, mut to_server) = upstream.into_split();
+                let requests = async {
+                    loop {
+                        let bytes = packet(&mut from_client).await?;
+                        let statement = matches!(bytes.get(4), Some(0x03 | 0x16));
+                        if statement
+                            && bytes.windows(9).any(|part| part == b"event_log")
+                            && armed.swap(false, std::sync::atomic::Ordering::SeqCst)
+                        {
+                            signal.notify_one();
+                            return Err::<(), _>(std::io::Error::other("drop the read"));
+                        }
+                        to_server.write_all(&bytes).await?;
+                    }
+                };
+                let replies = async {
+                    loop {
+                        let bytes = packet(&mut from_server).await?;
+                        to_client.write_all(&bytes).await?;
+                    }
+                    #[allow(unreachable_code)]
+                    Ok::<_, std::io::Error>(())
+                };
+                let _ = tokio::try_join!(requests, replies);
+                Ok::<_, std::io::Error>(())
+            });
+        }
+    });
+    (port, dropped, proxy)
+}
+
 /// **A proxy that holds the server's answer to the tail read.** The read runs at
 /// the store, and its answer waits until `release` is signalled; `reached` is
 /// signalled when it has run. The tail read is recognised by its statement text.
