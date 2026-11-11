@@ -635,3 +635,80 @@ async fn the_snapshot_a_build_is_handed_is_the_one_a_publication_keeps() {
     );
     server.stop().await;
 }
+
+/// A log whose store accepts a connection and never answers it, so a connection
+/// that is opened waits for the whole of its time.
+async fn a_log_over_a_store_that_never_answers() -> (DoltLog, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let holding = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((client, _)) = listener.accept().await {
+            held.push(client);
+        }
+    });
+    let pool = MySqlPool::connect_lazy_with(
+        sqlx::mysql::MySqlConnectOptions::new()
+            .host("127.0.0.1")
+            .port(port),
+    );
+    (DoltLog::unread(pool), holding)
+}
+
+/// A proxy that forwards every connection to the store until `stalled` is set, and
+/// from then on accepts a connection and holds it without a word, so a connection
+/// opened after that waits for the whole of its time. Connections already open keep
+/// working.
+pub(crate) async fn stalling_proxy(
+    upstream: u16,
+) -> (
+    u16,
+    Arc<std::sync::atomic::AtomicBool>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stalled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = stalled.clone();
+    let proxy = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((mut client, _)) = listener.accept().await {
+            if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                held.push(client);
+                continue;
+            }
+            tokio::spawn(async move {
+                let Ok(mut store) = tokio::net::TcpStream::connect(("127.0.0.1", upstream)).await
+                else {
+                    return;
+                };
+                let _ = tokio::io::copy_bidirectional(&mut client, &mut store).await;
+            });
+        }
+    });
+    (port, stalled, proxy)
+}
+
+/// **A connection that times out answers a store error, never the outcome of a
+/// write.** The wait wraps the opening of a connection, before any statement is
+/// sent, so nothing is unknown about what the caller wrote: the caller tries
+/// again. Both callers of that wait, a read and the creation of the log's table,
+/// answer it.
+#[tokio::test]
+async fn a_connection_that_times_out_answers_a_store_error_to_a_read_and_to_the_creation() {
+    let (log, _holding) = a_log_over_a_store_that_never_answers().await;
+    let read = log.read_from(Position(0), 10).await;
+    assert!(
+        matches!(read, Err(LogError::Store(_))),
+        "a read that times out is a store error: {read:?}"
+    );
+    let creation = log.create_validity().await;
+    assert!(
+        matches!(creation, Err(LogError::Store(_))),
+        "the creation that times out is a store error: {creation:?}"
+    );
+}

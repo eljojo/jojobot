@@ -45,12 +45,15 @@ impl Reader {
 fn failed(error: impl std::fmt::Display) -> LogError {
     LogError::Store(error.to_string())
 }
+/// **A wait that ran out is a store error.** The wait wraps the opening of a
+/// connection, before any statement is sent, so nothing is unknown about what it
+/// wrote: the caller tries again.
 async fn within<T>(
     work: impl std::future::Future<Output = Result<T, sqlx::Error>>,
 ) -> Result<T, LogError> {
     tokio::time::timeout(Duration::from_secs(5), work)
         .await
-        .map_err(|_| LogError::Indeterminate)?
+        .map_err(|_| failed("the store did not answer within 5 seconds"))?
         .map_err(failed)
 }
 

@@ -143,6 +143,53 @@ async fn a_commit_whose_answer_is_lost_recovers_exactly_once() {
     server.stop().await;
 }
 
+/// **A read of the log whose connection times out is a store error and leaves the
+/// log certain, as seen through the writer.** The store stops answering new
+/// connections, so a read that opens one waits out its time. It answers a store
+/// error, never the indeterminate write; the writer attempts no recovery and marks
+/// nothing uncertain, so the write after the store answers again lands at once.
+/// This is the case that holds the timeout and the read job together: either alone
+/// leaves a served caller told a write may have landed.
+#[tokio::test]
+async fn a_read_that_times_out_through_the_writer_is_a_store_error_and_leaves_the_log_certain() {
+    let scratch = Scratch::new("writer-log-read-times-out");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let (port, stalled, proxy) =
+        crate::dolt_log::tests::stalling_proxy(pool.connect_options().get_port()).await;
+    let source =
+        MySqlPoolOptions::new().connect_lazy_with((*pool.connect_options()).clone().port(port));
+    let writer = Writer::default();
+    let log = WriterLog::open(source, writer.clone()).await.unwrap();
+    let first = batch("read-times-out-1", 0, &[b"a"]);
+    assert_eq!(
+        log.append(Position(0), &first).await.unwrap(),
+        Append::Committed(first.range())
+    );
+    stalled.store(true, Ordering::SeqCst);
+    let read = log.read_from(Position(0), 10).await;
+    assert!(
+        matches!(read, Err(LogError::Store(_))),
+        "a read that times out is a store error: {read:?}"
+    );
+    assert!(
+        !writer.rail_uncertain(RAIL),
+        "a read that timed out wrote nothing, so nothing is uncertain"
+    );
+    assert_eq!(writer.recovery_counts().attempted, 0, "no recovery ran");
+    stalled.store(false, Ordering::SeqCst);
+    let second = batch("read-times-out-2", 1, &[b"b"]);
+    assert_eq!(
+        log.append(Position(1), &second).await.unwrap(),
+        Append::Committed(second.range()),
+        "the write after the store answers again lands"
+    );
+    drop(log);
+    writer.drain().await;
+    proxy.abort();
+    server.stop().await;
+}
+
 async fn fixture() -> (Scratch, Dolt, sqlx::MySqlPool, WriterLog, Writer) {
     let scratch = Scratch::new("writer-log-race");
     let server = Dolt::start(&scratch.0, free_port()).await.unwrap();
