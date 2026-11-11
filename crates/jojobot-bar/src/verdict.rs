@@ -812,7 +812,9 @@ mod tests {
     /// **Test lines before any `Running` line are no crashed binary.** The text
     /// is the killed capture with its `Running` line taken off, so its tests stand
     /// in a suite that has no name and no result; naming that suite crashed would
-    /// put a binary nobody ran on the red list.
+    /// put a binary nobody ran on the red list. **`KILLED` is built from known
+    /// wording and not captured from a run**, so this case pins how the bar reads
+    /// that wording, not that a killed binary prints it.
     #[test]
     fn a_suite_with_no_header_and_no_result_is_not_named_as_a_crashed_binary() {
         let (_, headless) = KILLED.split_once('\n').expect("the capture has a header");
@@ -826,7 +828,9 @@ mod tests {
 
     /// **A binary the deadline killed is named twice, on purpose**: once as timed
     /// out, by the line the deadline wrote, and once as crashed, because it printed
-    /// no result. Each list says what it saw; neither takes the other's entry.
+    /// no result. Each list says what it saw; neither takes the other's entry. The
+    /// timed-out line is the deadline's own (`timed_out_line`); `KILLED` is built
+    /// from known wording and not captured from a run.
     #[test]
     fn a_binary_killed_at_its_deadline_is_both_timed_out_and_crashed() {
         let text = format!(
