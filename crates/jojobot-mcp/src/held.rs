@@ -814,6 +814,9 @@ impl Jojobot {
     /// its lists' progress rows; a list carries its own progress and what each
     /// linked entry's work stands at. A thing with neither is whole by its version.
     /// Each is made by the call the read itself makes.
+    // TEMPORARY(9.3.8): the re-read goes when the read path answers a thing and its
+    // held version at one State position; the plan block and the ticks it does not
+    // compare go with it.
     async fn rendered_blocks_still_hold(
         &self,
         handle: &EntityId,
