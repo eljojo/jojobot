@@ -102,6 +102,10 @@ struct Written {
     pool: sqlx::MySqlPool,
     state: State,
     standing: Vec<EntityId>,
+    /// The directory the store runs in, held until the cases are done with the
+    /// store: it is removed when this is dropped, and a store whose directory is
+    /// gone fails its answers at random. Declared last, so it goes after the rest.
+    scratch: Scratch,
 }
 
 async fn written(label: &str) -> Written {
@@ -241,7 +245,21 @@ async fn written(label: &str) -> Written {
         pool,
         state,
         standing: [homer, marge, bart, renamed, krusty].into(),
+        scratch,
     }
+}
+
+/// **The directory the store runs in is there for as long as the store runs.** The
+/// cases ask the store after `written` returns, and a directory removed under a
+/// running database makes its answers fail at random ("database not found").
+#[tokio::test]
+async fn the_directory_of_the_store_outlives_the_cases_that_ask_it() {
+    let mut world = written("parity_scratch").await;
+    assert!(
+        world.scratch.0.exists(),
+        "the store's directory is gone while the store runs"
+    );
+    world.server.stop().await;
 }
 
 /// The key the State files a thing under: its badge when it has one.
