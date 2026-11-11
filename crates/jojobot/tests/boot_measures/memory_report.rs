@@ -735,32 +735,15 @@ async fn first_boot() -> FirstBoot {
     let (server_peak, store_peak) = boot.peak;
     let seen = run.seen.clone();
     let steps = growth(&boot.readings);
-    let built = projections_a_boot_builds(&seen);
-    let imported = built.contains(&Projection::ClaimsImport);
-    let missing: Vec<&str> = built
-        .iter()
-        .filter(|projection| !steps.iter().any(|step| step.projection == **projection))
-        .map(|projection| projection.label())
-        .collect();
+    let imported = boot_imported(&seen);
+    let missing = missing_projections(&seen, &steps);
     assert!(
         missing.is_empty(),
         "the boot never said it had built: {missing:?}. What it said:\n{}",
         seen.join("\n")
     );
     let after_boot = memory_of_pid(run.pid).expect("the server runs");
-    record(&format!(
-        "memory-report boot: the store {}; server peak {} ({server_peak} kB), store peak {} \
-         ({store_peak} kB), server resident after boot {}, of which anonymous {}",
-        if imported {
-            "needed the claims import at this boot"
-        } else {
-            "already held the claims import"
-        },
-        mib(server_peak),
-        mib(store_peak),
-        mib(after_boot.resident),
-        mib(after_boot.anonymous),
-    ));
+    record(&boot_line(imported, server_peak, store_peak, after_boot));
     for step in &steps {
         record(&format!(
             "memory-report step: {} ended at {} ms and grew the server by {} kB ({}{}), to {} \
@@ -787,11 +770,53 @@ async fn first_boot() -> FirstBoot {
     }
 }
 
+/// Whether the boot ran the claims import: it did unless it said the import was
+/// already done.
+fn boot_imported(seen: &[String]) -> bool {
+    projections_a_boot_builds(seen).contains(&Projection::ClaimsImport)
+}
+
+/// **The projections the boot was asked to build and never said it had.** The case
+/// fails on any, so a log line the server stops writing, or one it never wrote for
+/// this kind of store, is named and not skipped.
+fn missing_projections(seen: &[String], steps: &[Growth]) -> Vec<&'static str> {
+    projections_a_boot_builds(seen)
+        .iter()
+        .filter(|projection| !steps.iter().any(|step| step.projection == **projection))
+        .map(|projection| projection.label())
+        .collect()
+}
+
+/// The line that says what the first boot peaked at, and which kind of store it was.
+fn boot_line(imported: bool, server_peak: u64, store_peak: u64, after_boot: Memory) -> String {
+    format!(
+        "memory-report boot: the store {}; server peak {} ({server_peak} kB), store peak {} \
+         ({store_peak} kB), server resident after boot {}, of which anonymous {}",
+        if imported {
+            "needed the claims import at this boot"
+        } else {
+            "already held the claims import"
+        },
+        mib(server_peak),
+        mib(store_peak),
+        mib(after_boot.resident),
+        mib(after_boot.anonymous),
+    )
+}
+
+/// What the boot's log said it held, for the per-thing division.
+struct Counts {
+    things: Option<u64>,
+    runs: Option<u64>,
+    messages: Option<u64>,
+    events: Option<u64>,
+}
+
 /// **What each projection held at the first boot**, divided by the claims, runs
-/// or messages it holds.
-fn record_per_thing(boot: &FirstBoot) {
+/// or messages it holds. An import that did not run has no figure.
+fn per_thing_line(steps: &[Growth], claims: i64, counts: &Counts, imported: bool) -> String {
     let held = |kind: Projection| {
-        boot.steps
+        steps
             .iter()
             .find(|step| step.projection == kind)
             .map_or(0, |step| step.kib)
@@ -800,25 +825,40 @@ fn record_per_thing(boot: &FirstBoot) {
         Some(count) if count > 0 => format!("{} bytes each", kib * 1024 / count as i64),
         _ => "no count".to_string(),
     };
-    let claims = boot.claims as u64;
-    record(&format!(
+    let claims = claims as u64;
+    format!(
         "memory-report per thing held at the first boot (claims {claims}; things {:?}, runs \
          {:?}, messages {:?}, import events {:?}): the start-up and the image of memory {} per \
          claim; memory search {} per claim; run image {} per run; mail image {} per message; \
          claims import {}",
-        boot.things,
-        boot.runs,
-        boot.messages,
-        boot.events,
+        counts.things,
+        counts.runs,
+        counts.messages,
+        counts.events,
         per(held(Projection::MemoryImage), Some(claims)),
         per(held(Projection::MemorySearch), Some(claims)),
-        per(held(Projection::RunImage), boot.runs),
-        per(held(Projection::MailImage), boot.messages),
-        if boot.imported {
+        per(held(Projection::RunImage), counts.runs),
+        per(held(Projection::MailImage), counts.messages),
+        if imported {
             per(held(Projection::ClaimsImport), Some(claims))
         } else {
             "no bytes: the import did not run at this boot".to_string()
         },
+    )
+}
+
+fn record_per_thing(boot: &FirstBoot) {
+    let counts = Counts {
+        things: boot.things,
+        runs: boot.runs,
+        messages: boot.messages,
+        events: boot.events,
+    };
+    record(&per_thing_line(
+        &boot.steps,
+        boot.claims,
+        &counts,
+        boot.imported,
     ));
 }
 
@@ -1059,6 +1099,106 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
             [Projection::ClaimsImport, Projection::FirstSnapshot],
             "the import and the snapshot after it are what an imported store lacks"
         );
+    }
+
+    fn grown(projection: Projection, kib: i64) -> Growth {
+        Growth {
+            projection,
+            kib,
+            resident_after: 2000,
+            at: Duration::from_secs(1),
+        }
+    }
+
+    fn said(line: &str) -> String {
+        format!("2026-11-10T20:00:00.100Z  INFO jojobot::wiring: {line}")
+    }
+
+    /// **The case's use of the detection**: a boot is asked for the projections its own
+    /// words call for, and is failed for each it never said it built. A boot that said
+    /// the import was done is not failed for the two it skips; a boot that said nothing
+    /// is failed for them.
+    #[test]
+    fn memory_report_names_each_projection_the_boot_was_asked_for_and_never_built() {
+        let without_import: Vec<Growth> = Projection::ALL
+            .into_iter()
+            .filter(|p| !matches!(p, Projection::ClaimsImport | Projection::FirstSnapshot))
+            .map(|p| grown(p, 1000))
+            .collect();
+        let with_import: Vec<Growth> = Projection::ALL
+            .into_iter()
+            .map(|p| grown(p, 1000))
+            .collect();
+        let already = vec![said("claims import: already done")];
+        let silent = vec![said("teaching ledger: open over the event log")];
+        let imported = vec![said(
+            "imported today's claims into the event log events=190000",
+        )];
+
+        assert!(missing_projections(&already, &without_import).is_empty());
+        assert!(!boot_imported(&already));
+        assert_eq!(
+            missing_projections(&silent, &without_import),
+            [
+                Projection::ClaimsImport.label(),
+                Projection::FirstSnapshot.label()
+            ],
+            "a boot that said nothing of the import is failed for the two it skipped"
+        );
+        assert!(boot_imported(&silent));
+        assert!(missing_projections(&imported, &with_import).is_empty());
+        assert!(boot_imported(&imported));
+        assert_eq!(
+            missing_projections(&already, &without_import[1..]),
+            [Projection::MemoryImage.label()],
+            "a projection every boot builds is still named when it is missing"
+        );
+    }
+
+    /// **The boot line says which kind of store booted and keeps the peaks it was
+    /// given**, in kB as the log gives them.
+    #[test]
+    fn memory_report_says_in_its_boot_line_whether_the_store_needed_the_import() {
+        let after = Memory {
+            resident: 1_100_000,
+            anonymous: 1_000_000,
+            peak: 0,
+        };
+        let imported = boot_line(true, 1_201_580, 1_521_188, after);
+        let already = boot_line(false, 1_201_580, 1_521_188, after);
+        assert_ne!(imported, already, "the two kinds of store read alike");
+        for line in [&imported, &already] {
+            assert!(line.starts_with("memory-report boot: "), "{line}");
+            assert!(line.contains("(1201580 kB)"), "{line}");
+            assert!(line.contains("(1521188 kB)"), "{line}");
+        }
+    }
+
+    /// **The per-thing line divides each projection's growth by what it holds, and
+    /// gives the import no figure when it did not run.**
+    #[test]
+    fn memory_report_gives_an_import_that_did_not_run_no_bytes_per_claim() {
+        let steps = vec![
+            grown(Projection::MemoryImage, 1000),
+            grown(Projection::ClaimsImport, 2500),
+        ];
+        let counts = Counts {
+            things: Some(7),
+            runs: Some(5),
+            messages: Some(11),
+            events: Some(30),
+        };
+        let ran = per_thing_line(&steps, 25, &counts, true);
+        let skipped = per_thing_line(&steps, 25, &counts, false);
+        // 1000 kB over 25 claims is 40,960 bytes; 2,500 kB over 25 claims is 102,400.
+        assert!(ran.contains("40960 bytes each per claim"), "{ran}");
+        assert!(ran.contains("102400 bytes each"), "{ran}");
+        assert!(skipped.contains("40960 bytes each per claim"), "{skipped}");
+        assert!(
+            !skipped.contains("102400"),
+            "an import that did not run was given a figure: {skipped}"
+        );
+        assert!(ran.contains("Some(7)") && ran.contains("Some(30)"), "{ran}");
     }
 
     #[test]
