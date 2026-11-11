@@ -309,6 +309,7 @@ exit 7
                 format!("{}:{}", dir.display(), std::env::var("PATH").unwrap()),
             )
             .env("METRICS_TEST_DIR", &dir)
+            .env("JOJOBOT_BUILD_HOSTS", HOSTS)
             .env_remove("JOJOBOT_CI_METRICS_URL")
             .env_remove("JOJOBOT_BUILD_METRICS_FILE")
             .env_remove("JOJOBOT_DEV_METRICS_URL");
