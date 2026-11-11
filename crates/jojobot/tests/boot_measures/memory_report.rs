@@ -191,6 +191,30 @@ const ENDINGS: [(&str, Projection); 9] = [
     ("snapshot taken after import", Projection::FirstSnapshot),
 ];
 
+/// What the server logs when the log it boots over already holds the import
+/// (`crates/jojobot/src/wiring.rs`); the real-binary suite pins that spelling against
+/// the server, so a change there fails there.
+const ALREADY_IMPORTED: &str = "claims import: already done";
+
+/// **The projections a boot builds, read from what it said.** The import and the
+/// snapshot after it happen only when the log holds no claims event, and the store
+/// the report boots over is recorded by a build, so a later recording can hold one.
+/// A boot that says the import is already done is not asked for them; a boot that
+/// says nothing of the import still is.
+fn projections_a_boot_builds(seen: &[String]) -> Vec<Projection> {
+    let imported_before = seen.iter().any(|line| line.contains(ALREADY_IMPORTED));
+    Projection::ALL
+        .into_iter()
+        .filter(|projection| {
+            !imported_before
+                || !matches!(
+                    projection,
+                    Projection::ClaimsImport | Projection::FirstSnapshot
+                )
+        })
+        .collect()
+}
+
 /// The projection a server log line says it has finished building, if it does.
 fn projection_ended_by(line: &str) -> Option<Projection> {
     ENDINGS
@@ -687,6 +711,8 @@ struct FirstBoot {
     server_peak: u64,
     store_peak: u64,
     steps: Vec<Growth>,
+    /// Whether this boot ran the claims import, which a store already holding it skips.
+    imported: bool,
     things: Option<u64>,
     runs: Option<u64>,
     messages: Option<u64>,
@@ -709,7 +735,9 @@ async fn first_boot() -> FirstBoot {
     let (server_peak, store_peak) = boot.peak;
     let seen = run.seen.clone();
     let steps = growth(&boot.readings);
-    let missing: Vec<&str> = Projection::ALL
+    let built = projections_a_boot_builds(&seen);
+    let imported = built.contains(&Projection::ClaimsImport);
+    let missing: Vec<&str> = built
         .iter()
         .filter(|projection| !steps.iter().any(|step| step.projection == **projection))
         .map(|projection| projection.label())
@@ -721,8 +749,13 @@ async fn first_boot() -> FirstBoot {
     );
     let after_boot = memory_of_pid(run.pid).expect("the server runs");
     record(&format!(
-        "memory-report boot: server peak {} ({server_peak} kB), store peak {} ({store_peak} kB), \
-         server resident after boot {}, of which anonymous {}",
+        "memory-report boot: the store {}; server peak {} ({server_peak} kB), store peak {} \
+         ({store_peak} kB), server resident after boot {}, of which anonymous {}",
+        if imported {
+            "needed the claims import at this boot"
+        } else {
+            "already held the claims import"
+        },
         mib(server_peak),
         mib(store_peak),
         mib(after_boot.resident),
@@ -750,6 +783,7 @@ async fn first_boot() -> FirstBoot {
         server_peak,
         store_peak,
         steps,
+        imported,
     }
 }
 
@@ -771,7 +805,7 @@ fn record_per_thing(boot: &FirstBoot) {
         "memory-report per thing held at the first boot (claims {claims}; things {:?}, runs \
          {:?}, messages {:?}, import events {:?}): the start-up and the image of memory {} per \
          claim; memory search {} per claim; run image {} per run; mail image {} per message; \
-         claims import {} per claim",
+         claims import {}",
         boot.things,
         boot.runs,
         boot.messages,
@@ -780,7 +814,11 @@ fn record_per_thing(boot: &FirstBoot) {
         per(held(Projection::MemorySearch), Some(claims)),
         per(held(Projection::RunImage), boot.runs),
         per(held(Projection::MailImage), boot.messages),
-        per(held(Projection::ClaimsImport), Some(claims)),
+        if boot.imported {
+            per(held(Projection::ClaimsImport), Some(claims))
+        } else {
+            "no bytes: the import did not run at this boot".to_string()
+        },
     ));
 }
 
@@ -989,6 +1027,38 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
             },
             ended,
         }
+    }
+
+    /// **A boot over a store that holds the import builds seven projections, and the
+    /// report does not ask for the other two.** The server logs the import and the
+    /// snapshot after it only when the log holds no claims event; the next recording
+    /// of the boot store is made by a build that has the import, so its boot says
+    /// `already done` instead. A boot that imported, and a boot that said nothing of
+    /// the import, are still asked for all nine.
+    #[test]
+    fn memory_report_asks_for_the_import_only_when_the_boot_imported() {
+        let said = |line: &str| format!("2026-11-10T20:00:00.100Z  INFO jojobot::wiring: {line}");
+        let imported = vec![
+            said("teaching ledger: open over the event log"),
+            said("imported today's claims into the event log events=190000"),
+        ];
+        let already = vec![
+            said("teaching ledger: open over the event log"),
+            said("claims import: already done"),
+        ];
+        let silent = vec![said("teaching ledger: open over the event log")];
+        let asked = |seen: &[String]| projections_a_boot_builds(seen).len();
+        assert_eq!(asked(&imported), 9, "a boot that imported builds all nine");
+        assert_eq!(asked(&silent), 9, "no word of the import is no excuse");
+        let skipped: Vec<Projection> = Projection::ALL
+            .into_iter()
+            .filter(|projection| !projections_a_boot_builds(&already).contains(projection))
+            .collect();
+        assert_eq!(
+            skipped,
+            [Projection::ClaimsImport, Projection::FirstSnapshot],
+            "the import and the snapshot after it are what an imported store lacks"
+        );
     }
 
     #[test]
