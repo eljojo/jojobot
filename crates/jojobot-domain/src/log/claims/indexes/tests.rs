@@ -1082,7 +1082,21 @@ impl Dice {
 }
 
 const OBJECTS: [&str; 6] = ["o0", "o1", "o2", "o3", "o4", "o5"];
-const KEYS: [&str; 3] = [NUMBERS_BY, "num", "mood"];
+const KEYS: [&str; 4] = [NUMBERS_BY, "num", "rank", "mood"];
+/// The keys a container may number its members by. A run picks either, so no
+/// index can hold one of them as a fixed word.
+const NUMBER_KEYS: [&str; 2] = ["num", "rank"];
+
+/// **Whether a value is a whole number a member may hold**, decided here by hand
+/// and not by the production reader the index calls: digits only, no leading
+/// zero, above zero, and below the largest machine number.
+fn by_hand_whole_number(raw: &str) -> Option<u64> {
+    let raw = raw.trim();
+    let digits = !raw.is_empty() && raw.chars().all(|c| c.is_ascii_digit());
+    let no_leading_zero = !raw.starts_with('0');
+    let n = raw.parse::<u64>().ok()?;
+    (digits && no_leading_zero && n != 0 && n != u64::MAX).then_some(n)
+}
 const SPELLINGS: [&str; 4] = ["s0", "work:eta", "work:iota", "work:kappa"];
 
 /// The next event of a run, read off the state the earlier ones made so that a
@@ -1184,7 +1198,7 @@ fn next_event(
         6..=9 if !existing.is_empty() => {
             let key_name = dice.pick(&KEYS);
             let value = if key_name == NUMBERS_BY {
-                "num".to_string()
+                dice.pick(&NUMBER_KEYS).to_string()
             } else {
                 ["1", "2", "3", "x", "007"][dice.roll(5)].to_string()
             };
@@ -1557,11 +1571,13 @@ fn assert_indexes_equal_a_recomputation(
             .filter(|v| !v.is_empty())
         else {
             for number in 0..=8 {
-                assert_eq!(
-                    state.numbered_member(&container, "num", number),
-                    None,
-                    "{context}: {container:?} numbers nothing, yet holds {number}"
-                );
+                for key in NUMBER_KEYS {
+                    assert_eq!(
+                        state.numbered_member(&container, key, number),
+                        None,
+                        "{context}: {container:?} numbers nothing, yet holds {number} by {key}"
+                    );
+                }
             }
             continue;
         };
@@ -1600,7 +1616,7 @@ fn assert_indexes_equal_a_recomputation(
                 written == &key(&by)
                     && stream.iter().any(|write| {
                         matches!(&write.write, FieldValue::Set(v)
-                            if crate::memory::numbered::whole_number(v) == Some(number))
+                            if by_hand_whole_number(v) == Some(number))
                     })
             });
             if state.number_issued(&container, &by, number) {
@@ -1612,7 +1628,7 @@ fn assert_indexes_equal_a_recomputation(
             if under.iter().any(|member| {
                 state
                     .held_value(member, &by)
-                    .and_then(|v| crate::memory::numbered::whole_number(&v))
+                    .and_then(|v| by_hand_whole_number(&v))
                     == Some(number)
             }) {
                 assert!(
@@ -1625,7 +1641,7 @@ fn assert_indexes_equal_a_recomputation(
                 .filter(|member| {
                     state
                         .held_value(member, &by)
-                        .and_then(|v| crate::memory::numbered::whole_number(&v))
+                        .and_then(|v| by_hand_whole_number(&v))
                         == Some(number)
                 })
                 .cloned()
@@ -1790,7 +1806,7 @@ fn the_indexes_equal_a_recomputation_after_any_run_of_events() {
         let mut merges = 0;
         // Every number seen issued under a container, by the name it was asked
         // by: a number issued once is issued under its survivor for good.
-        let mut issued_seen: BTreeSet<(&str, u64)> = BTreeSet::new();
+        let mut issued_seen: BTreeSet<(&str, &str, u64)> = BTreeSet::new();
         for step in 0..160 {
             let event = next_event(&mut dice, &state, &bindings, &mut made);
             match &event {
@@ -1808,16 +1824,18 @@ fn the_indexes_equal_a_recomputation_after_any_run_of_events() {
                 merges += 1;
             }
             apply(&mut state, &event);
-            for (name, number) in &issued_seen {
+            for (name, key, number) in &issued_seen {
                 assert!(
-                    state.number_issued(&object(name), "num", *number),
-                    "seed {seed} step {step} after {event:?}: {name} num {number}: issued once, lost"
+                    state.number_issued(&object(name), key, *number),
+                    "seed {seed} step {step} after {event:?}: {name} {key} {number}: issued once, lost"
                 );
             }
             for name in OBJECTS {
-                for number in 0..=8 {
-                    if state.number_issued(&object(name), "num", number) {
-                        issued_seen.insert((name, number));
+                for key in NUMBER_KEYS {
+                    for number in 0..=8 {
+                        if state.number_issued(&object(name), key, number) {
+                            issued_seen.insert((name, key, number));
+                        }
                     }
                 }
             }
