@@ -29,6 +29,7 @@ async fn scrape(metrics: Arc<Metrics>, ports: Ports) -> String {
     text
 }
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[tokio::test]
 async fn process_memory_is_on_each_metrics_scrape() {
     let metrics = Arc::new(Metrics::new());
@@ -50,8 +51,7 @@ async fn process_memory_is_on_each_metrics_scrape() {
             "heap bytes on every scrape: {text}"
         );
         assert!(
-            sample(&text, "process_allocator_retained_bytes", &[])
-                .is_some_and(|bytes| bytes >= 0.0),
+            sample(&text, "process_allocator_retained_bytes", &[]).is_some_and(|bytes| bytes > 0.0),
             "retained allocator bytes on every scrape: {text}"
         );
     }
