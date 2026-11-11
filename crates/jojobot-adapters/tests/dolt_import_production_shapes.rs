@@ -51,6 +51,12 @@ fn at() -> Timestamp {
     Timestamp::from_second(1_800_000_000).expect("a moment")
 }
 
+/// **The days the old-claim cases date their rows by**, the fixture's own: a claim is
+/// early when its first write is before the day key writes began to be dated, and a
+/// claim written late is after it. No count reads the clock.
+const KEY_WRITES_DATED_FROM: &str = "2026-10-01T00:00:00Z";
+const WRITTEN_LATE: &str = "2026-11-01T00:00:00Z";
+
 /// **The claims each of ten merges moved**, in merge-number order. A merge writes one
 /// row of its own and one for each claim it moves, so a merge that moved no claim is
 /// one row and one that moved five is six.
@@ -399,7 +405,7 @@ async fn claims_import_takes_a_claim_older_than_its_key_writes_and_one_with_no_f
         .expect("capture")
         .written()
         .expect("not blocked");
-    say_with_key(&memory, &homer, "written today", "mood_e").await;
+    say_with_key(&memory, &homer, "written late", "mood_e").await;
 
     let fact_id = |content: &'static str| {
         let pool = pool.clone();
@@ -423,6 +429,9 @@ async fn claims_import_takes_a_claim_older_than_its_key_writes_and_one_with_no_f
         ("dated early, key unstamped", Some("2026-09-06T10:00:00Z")),
         ("undated, key unstamped", None),
         ("undated, no key", None),
+        // **Every claim is dated by the fixture, the late one too**, so no count below
+        // depends on what day the clock reads.
+        ("written late", Some(WRITTEN_LATE)),
     ] {
         sqlx::query("UPDATE fact_write SET written_at = ? WHERE entity = ? AND fact_id = ?")
             .bind(first_write)
@@ -453,13 +462,13 @@ async fn claims_import_takes_a_claim_older_than_its_key_writes_and_one_with_no_f
         .expect("a key write older than the stamp and the claim-write number");
     }
 
-    let older: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND written_at < '2026-10-08'",
-    )
-    .bind(&badge)
-    .fetch_one(&pool)
-    .await
-    .expect("the early claims count");
+    let older: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE entity = ? AND written_at < ?")
+            .bind(&badge)
+            .bind(KEY_WRITES_DATED_FROM)
+            .fetch_one(&pool)
+            .await
+            .expect("the early claims count");
     let undated: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND written_at IS NULL",
     )
@@ -519,7 +528,7 @@ async fn claims_import_takes_a_claim_older_than_its_key_writes_and_one_with_no_f
             "dated early, key unstamped",
             "undated, key unstamped",
             "undated, no key",
-            "written today",
+            "written late",
         ],
         "the import serves each claim, the undated ones included"
     );
@@ -563,12 +572,20 @@ async fn homer_with_a_claim(
 async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
     let (_scratch, mut server, pool, memory, homer, badge) =
         homer_with_a_claim("claims-import-old-no-key-write", "an old claim", None).await;
-    say_with_key(&memory, &homer, "written today", "mood_e").await;
-    sqlx::query("UPDATE fact_write SET written_at = '2026-09-01T00:00:00Z' WHERE entity = ? AND content = 'an old claim'")
-        .bind(&badge)
-        .execute(&pool)
-        .await
-        .expect("the first write is dated early");
+    say_with_key(&memory, &homer, "written late", "mood_e").await;
+    // **Both claims are dated by the fixture**, so the count below does not read the clock.
+    for (content, written_at) in [
+        ("an old claim", "2026-09-01T00:00:00Z"),
+        ("written late", WRITTEN_LATE),
+    ] {
+        sqlx::query("UPDATE fact_write SET written_at = ? WHERE entity = ? AND content = ?")
+            .bind(written_at)
+            .bind(&badge)
+            .bind(content)
+            .execute(&pool)
+            .await
+            .expect("the first write is dated by the fixture");
+    }
     let key_writes_of_old: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM field_write w JOIN fact_write f \
          ON f.entity = w.entity AND f.fact_id = w.fact_id \
@@ -578,13 +595,13 @@ async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
     .fetch_one(&pool)
     .await
     .expect("the key writes count");
-    let early: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND written_at < '2026-10-08'",
-    )
-    .bind(&badge)
-    .fetch_one(&pool)
-    .await
-    .expect("the early claims count");
+    let early: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE entity = ? AND written_at < ?")
+            .bind(&badge)
+            .bind(KEY_WRITES_DATED_FROM)
+            .fetch_one(&pool)
+            .await
+            .expect("the early claims count");
     assert_eq!(
         (early, key_writes_of_old),
         (1, 0),
@@ -615,7 +632,7 @@ async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
         .map(|record| record.claim.content.clone())
         .collect();
     served.sort();
-    assert_eq!(served, ["an old claim", "written today"]);
+    assert_eq!(served, ["an old claim", "written late"]);
     assert_eq!(state.fields(&object, &[]), old, "the one key is served");
     server.stop().await;
 }
