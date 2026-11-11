@@ -729,9 +729,30 @@ impl Jojobot {
         }
         let mut served_now: Vec<(Held, Version)> = Vec::new();
         for what in served {
-            if let Some(version) = self.version_of(&what, &messages).await {
-                served_now.push((what, version));
+            let Some(version) = self.version_of(&what, &messages).await else {
+                continue;
+            };
+            if let Held::Entity(handle) = &what
+                && let Some(received) = body["objects"].as_array().and_then(|objects| {
+                    objects
+                        .iter()
+                        .find(|object| object["id"].as_str() == Some(handle.as_str()))
+                        .and_then(|object| object["progress"].as_array())
+                })
+            {
+                // Sample after the version. If the rows changed since rendering,
+                // do not hold the stale body; a later write leaves this version
+                // old, so the next read also serves the rows again.
+                match self.progress_rows(&EntityId(handle.clone())).await {
+                    Ok(now) if now == *received => {}
+                    Ok(_) => continue,
+                    Err(error) => {
+                        unread(&what, &error);
+                        continue;
+                    }
+                }
             }
+            served_now.push((what, version));
         }
         // **Decided before the answer is held in turn**: what the session held
         // before this call, at the version it stands at now, is not shipped again.
@@ -1553,6 +1574,78 @@ mod tests {
             before,
             "the work a list directly under the bundle links moves its rows"
         );
+    }
+
+    /// A read rendered before another session's write must not be held at the
+    /// version that write made. The second read has to carry the changed row.
+    #[tokio::test]
+    async fn a_bundle_progress_read_is_not_held_at_a_newer_version_than_its_rows() {
+        use rmcp::handler::server::wrapper::Parameters;
+
+        let jojobot = handler();
+        let reader = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+        let writer = crate::mailboxes::testing::owning(&jojobot, "delta").await;
+        ensure(&jojobot, "work:alpha").await;
+        ensure(&jojobot, "work:beta").await;
+        jojobot
+            .memory
+            .add_entity(NewEntity {
+                parent: Some(EntityId::person("work:alpha")),
+                ..NewEntity::new(EntityId::person("list:errands"), "Errands", "fixture")
+            })
+            .await
+            .expect("the list is created")
+            .written()
+            .expect("nothing blocks it");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("about".into()),
+                object: Some("work:beta".into()),
+                ..capture_args("list:errands", "finish beta")
+            },
+        )
+        .await;
+
+        // The router renders the read before its shared held pass runs.
+        let mut first: CallToolResponse = jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(reader.clone()),
+                subject: Some("work:alpha".into()),
+                ..Default::default()
+            }))
+            .await
+            .expect("the first recall answers")
+            .into();
+        assert_eq!(body_in(&first)["objects"][0]["progress"][0]["done"], 0);
+        assert_eq!(body_in(&first)["objects"][0]["progress"][0]["of"], 1);
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(writer),
+                sets: Some([("status".to_string(), "done".to_string())].into()),
+                ..capture_args("work:beta", "is finished")
+            },
+        )
+        .await;
+        mark_call(&mut first, "recall", false);
+        jojobot.add_held_changed(&mut first, Some(&reader)).await;
+        assert_eq!(body_in(&first)["objects"][0]["progress"][0]["done"], 0);
+
+        let mut second: CallToolResponse = jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(reader.clone()),
+                subject: Some("work:alpha".into()),
+                ..Default::default()
+            }))
+            .await
+            .expect("the second recall answers")
+            .into();
+        mark_call(&mut second, "recall", false);
+        jojobot.add_held_changed(&mut second, Some(&reader)).await;
+        assert_eq!(body_in(&second)["objects"][0]["progress"][0]["done"], 1);
+        assert_eq!(body_in(&second)["objects"][0]["progress"][0]["of"], 1);
     }
 
     /// **What stands under a parent is read in one pass, not once for each thing
