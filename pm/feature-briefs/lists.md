@@ -22,7 +22,7 @@
 
 **Many entries, or many ticks, go in one call**, capped at fifty and all or nothing: one item that fails refuses the batch and names its position, and a retried batch lands once, so a rotation never turns twice.
 
-**The list's read returns its entries with their computed state, and how far along the list is by its own ticks (`ticked`):** done out of the whole on a checklist, done and open on a queue, turns taken on a rotation, and nothing for a list with no live entry, because "0 of 0" reads as finished or broken. **`last_ticked` is the day of the newest tick that stands**, whatever its act. **The entries page by the read's `offset`, as every read does; the ticks are their own read, paged by `ticks_offset`**, never the default dump: a daily rotation writes a year of ticks, and the list's own read stays bounded however many accumulate.
+**The list's read returns its entries with their computed state, and how far along the list is by its own ticks (`ticked`):** done out of the whole on a checklist, done and open on a queue, turns taken on a rotation, and nothing for a list with no live entry, because "0 of 0" reads as finished or broken. **`last_ticked` is the day of the newest tick that stands**, whatever its act. **The entries page by the read's `offset`, as every read does; the ticks are their own read, paged by `ticks_offset`**, never the default dump: a daily rotation writes a year of ticks, and the list's own read stays bounded however many accumulate. **A read that names its `keys` carries a list's blocks (entries, plan, `progress`, `ticked`, `last_ticked`, ticks) only when it names them**, as it carries any key.
 
 ## Order is minted by the server, and a move wins until the next tick
 

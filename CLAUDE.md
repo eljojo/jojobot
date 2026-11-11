@@ -350,7 +350,9 @@ A session here starts at jojobot, not at these files. The whole protocol:
   a room's own files, `make rooms`, so a defect where two cards meet shows at
   the dev's report only if a room file changed, and a pull request to
   `main` runs `static` and `build`, then `check`, `rooms` and `year` side by
-  side — the three checks `main` requires, so renaming a job drops a requirement. Every run keeps
+  side — the three checks `main` requires, so renaming a job drops a requirement; a `boot-store` job
+  beside them feeds `check`, and every run ends with `artifact-cleanup`, which holds no check and deletes
+  the run's large artifacts (`scripts/wait-run` reads the verdict without waiting for it). Every run keeps
   `target/bar/*.log`. Release QA is `pull-request.yml` dispatched on the exact head with `release`
   set, never on a dev host: the pull request's jobs plus `make nix-build` and
   `make flake-check`, reporting every step. **A slice that

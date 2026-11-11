@@ -24,7 +24,7 @@
 
 **Some conventions have to be known before a caller writes, and telling it to fetch a procedure first does not work** — a session that does not know a convention exists does not know to go and read about it.
 
-**So the teaching rides the call where the subject is first touched, once, and jojobot knows whether that session has had it.** Not a footer on every read, which teaches a caller to skip it. Not at the door either, where it arrives before the session has anything to attach it to.
+**So the teaching rides the call where the subject is first touched, once, and jojobot knows whether that session has had it**: a note counts as given only when an answer served it, so one the budget left out is offered again. Not a footer on every read, which teaches a caller to skip it. Not at the door either, where it arrives before the session has anything to attach it to.
 
 ⭐ **It states the convention rather than listing key names**, so a shape added later is already covered by the sentence that is there.
 
@@ -40,9 +40,9 @@
 
 ## An answer says what it left out
 
-**A small answer names what it held back, and the call that returns it.** That is what separates a small answer from a lossy one, and it is why nothing has to be shipped by default just in case.
+**A small answer names what it held back, and the call that returns it.** A write's receipt carries at most one suggestion, and names the others under `left_out` with the call for each. That is what separates a small answer from a lossy one, and it is why nothing has to be shipped by default just in case.
 
-**Anything already delivered comes back marked**, with its size in place of its body, so a caller can tell a leftover from something new without paying twice.
+**Anything already delivered is not shipped again, and the answer says so**: mail still owed is counted as leftovers, and a thing the session holds unchanged comes back as its handle alone, with `reship: true` to have it whole, so a caller can tell a leftover from something new without paying twice.
 
 ## Knowledge is fronted rather than waited for
 

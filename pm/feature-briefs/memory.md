@@ -94,4 +94,4 @@ This prevents one failure: a claim put on the parent because that was easier. A 
 
 **Not the reader's question.** A reader asks for some of the keys or for all of them, and that decides what comes back. It never decides what a write may do. These are two questions, and collapsing them makes the design toothless.
 
-**Not a place anything is created by accident.** Everything a write names must already exist. jojobot brings nothing into being as a side effect. **Before a write brings a new name in, the write guard checks it against the entities jojobot already knows, the way a phone's autocomplete checks the contacts book.** The one exception is the operator's mailbox, which opens inside the first post to them.
+**Not a place anything is created by accident.** Everything a write names must already exist. jojobot brings nothing into being as a side effect. **Before a write brings a new name in, the write guard checks it against the entities jojobot already knows, the way a phone's autocomplete checks the contacts book.** The one exception is the operator's mailbox, which opens inside the first post to them or the first code request made for them.

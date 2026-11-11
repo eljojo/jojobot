@@ -9,7 +9,7 @@
 * `**recall**` **is the precise lookup.** You know the subject. You say the shape you want, and you get that shape back.
 * `**search**` **is the breadth.** You do not know where to look. It ranks free text, it takes filters, and every hit arrives with its surroundings rather than as a bare match. **Matching is deliberately loose and an answer says a miss is possible**, because a singular typed against a stored plural returns nothing, and nothing is indistinguishable from never having been told. **It reaches the earlier wordings of a claim when a caller asks for them**, so a record that has since been corrected is still findable by what it used to say.
 
-**One reads like a declarative configuration. The other reads like a web search.** They are not two ways to do one job. They answer different questions. Collapse them, and the precise side starts to guess while the broad side turns rigid.
+**One reads like a declarative configuration. The other reads like a web search.** They are not two ways to do one job. They answer different questions. Collapse them, and the precise side starts to guess while the broad side turns rigid. **On either door, a thing the session already holds unchanged comes back as its handle alone**, marked `held: "unchanged since served"` and counted once, with `reship: true` to have it whole: a bare handle there is a thing already read, never an empty answer.
 
 **Neither door grows a sibling.** To reach more, add axes to the verbs that exist. A surface that adds a verb whenever a question comes up becomes a catalogue of the questions somebody thought of.
 

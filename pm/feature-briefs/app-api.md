@@ -12,7 +12,7 @@
 
 **An app's identity is a token, and the server keeps only its hash.** The operator mints a token and its hash with a command that touches no store, puts the hash where the server's configuration reads it, and gives the token to the app. A token has a fixed prefix, so it is told from a bot's key or a login token without a lookup.
 
-**Over anything that already exists, an app does what the operator granted in its entry in the server's configuration, and no live call widens it**: which operations it may call; for writes, which kinds and keys; for reads, whether it reads beyond its own. An operation outside the grant is refused, naming it.
+**Over anything that already exists, an app does what the operator granted in its entry in the server's configuration, and no live call widens it**: which operations it may call; for writes, which kinds and keys; for reads, whether it reads beyond its own. An operation outside the grant is refused, naming it. **A `post_message` grant also names the boxes it may reach**: with no list it reaches the operator's box only, and with a list exactly those boxes, the operator no default beside it; each name is a bot or the operator.
 
 **A configuration with anything wrong in it does not start the server**: a repeated name, two apps sharing one hash, an app with no hash, a key no app may be granted. A grant nobody checked is never served.
 
@@ -43,7 +43,7 @@ Both tiers pass through the same check, so a guard written once binds both.
 
 **Operation grants and ownership rows are two things, built at two times.** Operation grants (which operations, kinds and keys an app may use, judged by `permit()`) are built in 9.3.1.3. Ownership rows (only the owning app writes its keys) come at 9.3.3 to 9.3.5 (rule 748).
 
-**A retry is safe.** The app names each attempt. The same attempt with the same body answers the first receipt and writes nothing; the same attempt with a different body is a conflict. The unstable tier does not yet dedupe a retried app write; that lands with the ledgers on the log at 9.3.3.
+**A retry is safe.** The app names each attempt. The same attempt with the same body answers the first receipt and writes nothing; the same attempt with a different body is a conflict. A write on the unstable tier names no attempt, so a retry there can land twice: an app that can read checks before it sends again.
 
 ## The app stays connected
 

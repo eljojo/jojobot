@@ -16,7 +16,7 @@
 
 ## One writer, and the fold in memory
 
-**The store appends what jojobot knows. What is true now is a fold over those writes, and jojobot holds that fold in memory.** **A runtime count is an exception** — what a run was served, how often a verb was called: it is added to in place, and each add takes a lock the store holds itself, so a count is right whoever calls, through the fold or not. **Until request identity moves into the fold, a request-id check also reads the store to resolve its bot.** Ordinary memory reads answer from the fold instead of scanning, and the fold is rebuilt when the server starts.
+**The store appends what jojobot knows. What is true now is a fold over those writes, and jojobot holds that fold in memory.** **A runtime count is an exception** — what a run was served, how often a verb was called: it is added to in place, and each add takes a lock the store holds itself, so a count is right whoever calls, through the fold or not. **Until request identity moves into the fold, a request-id check also reads the store to resolve its bot.** Ordinary memory reads answer from the fold instead of scanning, and the fold is rebuilt when the server starts: from the newest snapshot of this build's shape and the writes after it, or, when the shape has changed, by replaying the log at that build's own first boot and saving a snapshot at once. Nothing runs at deploy for it, and a boot that cannot use a snapshot says which reason it had.
 
 **jojobot is one server with one application worker, so every write passes through a single process.** That is what makes an in-memory fold authoritative rather than a cache: nothing reaches the store without the same process folding it in.
 

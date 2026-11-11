@@ -4,7 +4,7 @@
 
 **A bot is an entity, and bots are colleagues in an organisation.** A public directory, mail readable down the org chart and never up or sideways, work status carried on a board, and no impersonation ever.
 
-The metaphor does real work: it says which things about a colleague you may look up and which you may not, without anybody having to enumerate them.
+The metaphor does real work: it says which things about a colleague you may look up and which you may not, without anybody having to enumerate them. It also says where a bot's own work sits: a thing a bot makes without naming a parent sits under that bot, and the receipt says so; `root: true` puts it at the top on purpose.
 
 ## What ships and what is data
 

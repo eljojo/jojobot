@@ -8,7 +8,7 @@
 
 **"Did my write land as I intended?"** is answered by a **receipt of the difference**: what changed as a result of this call. The server holds both sides at the moment of the write, so nothing has to be remembered to produce it. This is the small half and it is the one that removes blindness.
 
-**"Am I working from stale context?"** is answered by a **ledger of what this session has seen**: it last saw one version, the record has moved on, here is the gap. This needs storage and it is the larger half.
+**"Am I working from stale context?"** is answered by a **ledger of what this session has seen**: it last saw one version, the record has moved on, here is the gap. The ledger is held in the process, and the gap is read from the stores' histories; it is the larger half.
 
 **Keeping them apart is the point.** They look like one feature in a sentence and they are different sizes, and a design that treats them as one ships the expensive half to solve the cheap problem.
 
@@ -20,11 +20,11 @@
 
 ## The ledger is keyed to the session
 
-**A session outlives the connection that made it**, so what has been shown is remembered against the session rather than the socket. A run that resumes inherits what its predecessor saw, which is what makes resumption honest rather than a fresh start wearing an old name.
+**A session outlives the connection that made it**, so what has been shown is remembered against the session handle rather than the socket, and a reconnect keeps it. A restart of the server empties it, and the next answers ship whole: forgetting costs tokens, never correctness.
 
-**The same ledger carries the one-time teachings**, so a convention a caller has to know before it writes arrives on the call that first touches the subject, and never again. ⭐ **That it took a second and a third consumer without changing is the evidence the ledger was the right shape** — a consumer that needed its own mechanism would have meant the first one was a special case wearing a general name.
+**The one-time teachings keep their own ledger**, an event log of which run was told which subject, so a convention a caller has to know before it writes arrives on the call that first touches the subject. A note counts as given only when an answer actually served it: one the answer's budget left out is offered again on a later write.
 
-**Anything already delivered comes back marked**, with its body left out and its size in place of it, so a caller can tell a leftover from something new without being charged twice for the same content.
+**Anything the session already holds, unchanged, comes back as its handle or address alone**, marked `held: "unchanged since served"`, and the answer says once how many it collapsed; `reship: true` returns them whole. A thing the session was served that another writer has since changed is named under `held_changed`, so a caller can tell a leftover from something new without being charged twice for the same content.
 
 ## The limits that keep this honest
 
