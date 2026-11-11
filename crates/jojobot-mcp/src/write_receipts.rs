@@ -401,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn parentless_placement_is_said_once_in_each_receipt_mode() {
-        for lean in [true, false] {
+        for lean in [false, true] {
             let handler = crate::harness::handler();
             ensure(&handler, "bot:otto").await;
             served(
@@ -433,7 +433,18 @@ mod tests {
             )
             .await;
             assert_eq!(rooted["id"], "thing:epsilon", "{rooted}");
-            assert!(rooted["derived"].get("parent").is_none(), "{rooted}");
+            // **A thing created at the root has no parent in either receipt mode.** The
+            // lean receipt names a chosen parent under `derived` and the full one under
+            // `parent_defaulted`, so each mode's own place is asked, as the first thing
+            // is: asking only `derived` passes in the full mode whatever was chosen.
+            assert!(
+                rooted["derived"].get("parent").is_none(),
+                "lean {lean}: {rooted}"
+            );
+            assert!(
+                rooted.get("parent_defaulted").is_none(),
+                "lean {lean}: {rooted}"
+            );
         }
     }
 
