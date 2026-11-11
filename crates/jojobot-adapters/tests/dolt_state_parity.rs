@@ -255,7 +255,7 @@ async fn object_of(pool: &sqlx::MySqlPool, handle: &EntityId) -> ObjectId {
 /// kind, are the store's `field_ages`.**
 #[tokio::test]
 async fn the_state_gives_the_ages_the_store_gives() {
-    let mut world = written("parity-ages").await;
+    let mut world = written("parity_ages").await;
     let declared = world.memory.declared_types().await.expect("declarations");
     for handle in &world.standing {
         let at = object_of(&world.pool, handle).await;
@@ -277,7 +277,7 @@ async fn the_state_gives_the_ages_the_store_gives() {
 /// **Who backs each value is the store's `backing`.**
 #[tokio::test]
 async fn the_state_gives_the_backing_the_store_gives() {
-    let mut world = written("parity-backing").await;
+    let mut world = written("parity_backing").await;
     let declared = world.memory.declared_types().await.expect("declarations");
     for handle in &world.standing {
         let at = object_of(&world.pool, handle).await;
@@ -295,7 +295,7 @@ async fn the_state_gives_the_backing_the_store_gives() {
 /// their record are the store's `key_trails`.**
 #[tokio::test]
 async fn the_state_gives_the_key_trails_the_store_gives() {
-    let mut world = written("parity-trails").await;
+    let mut world = written("parity_trails").await;
     // **The State names the home of an address by the thing's permanent key**, as
     // its doc says, and the store by the handle; the shell supplies the handle.
     let mut handles = std::collections::BTreeMap::new();
