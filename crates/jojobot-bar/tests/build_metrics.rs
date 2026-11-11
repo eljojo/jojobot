@@ -11,6 +11,10 @@ fn script() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-metrics")
 }
 
+/// **The runner hosts a case declares**, in the environment as an instance would
+/// declare its own. The names are fixtures; the script holds none.
+const HOSTS: &str = "homer,marge,lenny,carl,milhouse,nelson,ralph,edna";
+
 fn render(payload: &serde_json::Value) -> String {
     render_on(payload, None)
 }
@@ -19,11 +23,21 @@ fn render(payload: &serde_json::Value) -> String {
 /// forge's API root in `GITHUB_API_URL`, and a case that does not name one runs
 /// without it, whatever the environment of the test run holds.
 fn render_on(payload: &serde_json::Value, api: Option<&str>) -> String {
+    render_declaring(payload, api, Some(HOSTS))
+}
+
+/// **Render with the runner hosts the job declares**, or with none declared, whatever
+/// the environment of the test run holds.
+fn render_declaring(payload: &serde_json::Value, api: Option<&str>, hosts: Option<&str>) -> String {
     let mut command = Command::new("python3");
     command
         .arg(script())
         .arg("render")
+        .env_remove("JOJOBOT_BUILD_HOSTS")
         .env_remove("GITHUB_API_URL");
+    if let Some(hosts) = hosts {
+        command.env("JOJOBOT_BUILD_HOSTS", hosts);
+    }
     if let Some(api) = api {
         command.env("GITHUB_API_URL", api);
     }
@@ -130,7 +144,7 @@ fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
                 (
                     "runner_host",
                     &[
-                        "bart", "lisa", "willie", "moe", "wiggum", "frink", "maggie", "cloudy",
+                        "homer", "marge", "lenny", "carl", "milhouse", "nelson", "ralph", "edna",
                         "local", "other",
                     ][..],
                 ),
@@ -160,7 +174,7 @@ fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
 fn build_metrics_exposition_is_parseable_and_every_label_is_from_a_closed_set() {
     let text = render(&serde_json::json!({
         "workflow": "branch", "job": "report", "ref": "refs/heads/dev-sol3-slos-923-work",
-        "runner": "lisa.example.invalid",
+        "runner": "homer.example.invalid",
         "samples": [
             {"metric": "duration", "step": "job", "outcome": "success", "seconds": 12.5},
             {"metric": "first_failure", "step": "test", "outcome": "failure", "seconds": 23.25}
@@ -174,7 +188,7 @@ fn build_metrics_exposition_is_parseable_and_every_label_is_from_a_closed_set() 
     );
     assert_eq!(parsed[0].0, "jojobot_build_duration_seconds");
     assert_eq!(parsed[0].1["branch_class"], "dev");
-    assert_eq!(parsed[0].1["runner_host"], "lisa");
+    assert_eq!(parsed[0].1["runner_host"], "homer");
     assert_eq!(parsed[0].2, 12.5);
     assert_eq!(parsed[1].0, "jojobot_build_first_failure_seconds");
     assert_eq!(parsed[1].2, 23.25);
@@ -200,9 +214,7 @@ fn build_metrics_exposition_is_parseable_and_every_label_is_from_a_closed_set() 
 /// hid the three hosts that ran about half of all branch runs.
 #[test]
 fn build_metrics_names_each_host_that_runs_a_ci_slot() {
-    for host in [
-        "bart", "lisa", "moe", "wiggum", "frink", "maggie", "cloudy", "willie",
-    ] {
+    for host in HOSTS.split(',') {
         let text = render(&serde_json::json!({
             "workflow": "branch", "job": "report", "ref": "refs/heads/dev-work",
             "runner": format!("{host}.example.invalid"),
@@ -212,6 +224,30 @@ fn build_metrics_names_each_host_that_runs_a_ci_slot() {
         }));
         assert_eq!(samples(&text)[0].1["runner_host"], host, "{text}");
     }
+}
+
+/// **A runner host is named only when the job declares it.** The set is closed by
+/// the environment, so a host the job does not declare reads `other`, and a job
+/// that declares none names no host at all. Paired: the same payload, declared and not.
+#[test]
+fn build_metrics_names_a_runner_host_only_when_the_job_declares_it() {
+    let payload = serde_json::json!({
+        "workflow": "branch", "job": "report", "ref": "refs/heads/dev-work",
+        "runner": "marge.example.invalid",
+        "samples": [
+            {"metric": "duration", "step": "job", "outcome": "success", "seconds": 1}
+        ]
+    });
+    let labelled = |text: &str, host: &str| text.contains(&format!("runner_host=\"{host}\""));
+    assert!(labelled(
+        &render_declaring(&payload, None, Some("homer, marge")),
+        "marge"
+    ));
+    assert!(labelled(
+        &render_declaring(&payload, None, Some("homer,lenny")),
+        "other"
+    ));
+    assert!(labelled(&render_declaring(&payload, None, None), "other"));
 }
 
 /// **The host the forge runs on is named from the forge's own API root**, so its
@@ -243,7 +279,7 @@ fn build_metrics_names_the_host_the_forge_answers_on_from_the_api_root() {
 fn build_metrics_names_the_own_crates_job() {
     let text = render(&serde_json::json!({
         "workflow": "branch", "job": "own-crates", "ref": "refs/heads/dev-work",
-        "runner": "lisa.example.invalid",
+        "runner": "homer.example.invalid",
         "samples": [
             {"metric": "duration", "step": "workflow", "outcome": "success", "seconds": 1}
         ]
@@ -596,13 +632,14 @@ print(m.render(m.ci_payload(context)), end='')
 "#,
             ])
             .arg(script())
+            .env("JOJOBOT_BUILD_HOSTS", HOSTS)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped()),
     )
     .unwrap();
     child.stdin.take().unwrap().write_all(serde_json::json!({
-        "workflow":"branch", "job":"report", "ref":"dev-sol3-slos-923-work", "runner":"lisa",
+        "workflow":"branch", "job":"report", "ref":"dev-sol3-slos-923-work", "runner":"homer",
         "created": 1_000_000_000.0, "started":1_000_000_050.0, "now":1_000_000_150.0,
         "outcome":"failure", "records":[
             {"kind":"step", "step":"build", "outcome":"success", "seconds":10.0, "ended":999_999_999.0},
@@ -660,13 +697,14 @@ print(m.render(m.ci_payload(context)), end='')
 "#,
             ])
             .arg(script())
+            .env("JOJOBOT_BUILD_HOSTS", HOSTS)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped()),
     )
     .unwrap();
     child.stdin.take().unwrap().write_all(serde_json::json!({
-        "workflow":"branch", "job":"report", "ref":"dev-sol3-slos-923-work", "runner":"lisa",
+        "workflow":"branch", "job":"report", "ref":"dev-sol3-slos-923-work", "runner":"homer",
         "created":1_000_000_000.0, "started":1_000_000_050.0, "now":1_000_000_150.0,
         "outcome":"failure", "records":[
             {"kind":"step", "step":"test", "outcome":"failure", "seconds":10.0, "ended":999_999_999.0},
@@ -736,7 +774,7 @@ def read(url, timeout):
     return io.BytesIO(responses[url].encode())
 m.urllib.request.urlopen = read
 m.time.time = lambda: 1_700_000_150
-m.socket.gethostname = lambda: 'lisa'
+m.socket.gethostname = lambda: 'homer'
 os.environ.update(GITHUB_API_URL='http://forge.invalid/api/v1', GITHUB_REPOSITORY='jojo/jojobot',
     GITHUB_RUN_ID='1481', JOJOBOT_METRICS_WORKFLOW='branch', JOJOBOT_METRICS_JOB='report',
     JOJOBOT_BUILD_METRICS_FILE='rows.jsonl', JOJOBOT_METRICS_OUTCOME='failure')
@@ -750,6 +788,7 @@ assert (root / 'argv').read_text().endswith('--data-binary\n@-\nhttp://metrics.i
 "#,
             ])
             .arg(script())
+            .env("JOJOBOT_BUILD_HOSTS", HOSTS)
             .current_dir(&dir)
             .env("METRICS_TEST_DIR", &dir)
             .env(
@@ -770,7 +809,7 @@ assert (root / 'argv').read_text().endswith('--data-binary\n@-\nhttp://metrics.i
             ("workflow", "branch"),
             ("job", "report"),
             ("branch_class", "dev"),
-            ("runner_host", "lisa"),
+            ("runner_host", "homer"),
             ("outcome", "failure"),
         ] {
             assert_eq!(labels[key], value);
@@ -836,7 +875,7 @@ fn build_metrics_unlisted_binaries_are_counted_and_the_twenty_slowest_tests_are_
     }
     let text = render(
         &serde_json::json!({"workflow":"branch", "job":"report", "ref":"dev-alpha-work",
-        "runner":"lisa", "samples":samples_in}),
+        "runner":"homer", "samples":samples_in}),
     );
     assert!(
         !text.contains("private"),

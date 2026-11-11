@@ -48,7 +48,7 @@ LABELS = {
              "doc", "dev", "narrow", "unmeasured"} | {f"test-rank-{rank:02}" for rank in range(1, 21)},
     "outcome": {"success", "failure", "cancelled", "skipped", "unknown"},
     "branch_class": {"main", "release", "dev"},
-    "runner_host": {"bart", "lisa", "willie", "moe", "wiggum", "frink", "maggie", "cloudy", "local"},
+    "runner_host": {"local"},
 }
 METRICS = {"duration", "first_failure", "test_binary", "test"}
 BINARY_FILE = Path(__file__).resolve().parent.parent / "crates/jojobot-bar/build-metrics-binaries.txt"
@@ -72,8 +72,16 @@ def forge_host():
     return (urllib.parse.urlparse(os.environ.get("GITHUB_API_URL", "")).hostname or "").split(".")[0]
 
 
+def declared_hosts():
+    """The runner hosts an instance declares, as a comma list in JOJOBOT_BUILD_HOSTS.
+    The list is in the environment of the job and in no file of the repository,
+    so the label set stays closed and the software names no host. A host outside
+    it reads `other`."""
+    return {host.strip() for host in os.environ.get("JOJOBOT_BUILD_HOSTS", "").split(",")} - {""}
+
+
 def bounded(key, value):
-    allowed = LABELS[key] | ({forge_host()} - {""} if key == "runner_host" else set())
+    allowed = LABELS[key] | (({forge_host()} - {""}) | declared_hosts() if key == "runner_host" else set())
     return value if value in allowed else ("unknown" if key == "outcome" else "other")
 
 
