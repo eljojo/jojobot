@@ -70,20 +70,30 @@ async fn legacy_claim_readers_use_the_imports_run_selector() {
         .expect("resolve")
         .expect("bot")
         .0;
-    for (state, alpha_time, beta_time, expected) in [
+    for (beta_run, state, alpha_time, beta_time, expected) in [
         (
+            None,
+            "wrapped",
+            "2026-10-01T00:00:00Z",
+            "2026-10-01T00:00:00Z",
+            "bot:bart",
+        ),
+        (
+            Some("run-alpha"),
             "active",
             "2026-10-02T00:00:00Z",
             "2026-10-01T00:00:00Z",
             "bot:marge",
         ),
         (
+            Some("run-alpha"),
             "wrapped",
             "2026-10-01T00:00:00Z",
             "2026-10-02T00:00:00Z",
             "bot:marge",
         ),
         (
+            Some("run-alpha"),
             "wrapped",
             "2026-10-01T00:00:00Z",
             "2026-10-01T00:00:00Z",
@@ -95,7 +105,8 @@ async fn legacy_claim_readers_use_the_imports_run_selector() {
             .execute(&pool)
             .await
             .expect("alpha time");
-        sqlx::query("UPDATE session SET state = ?, started_at = ? WHERE id = 'beta'")
+        sqlx::query("UPDATE session SET sid = ?, state = ?, started_at = ? WHERE id = 'beta'")
+            .bind(beta_run)
             .bind(state)
             .bind(beta_time)
             .execute(&pool)
