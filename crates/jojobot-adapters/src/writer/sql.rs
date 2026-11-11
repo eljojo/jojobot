@@ -90,8 +90,14 @@ fn set_phase(phase: Phase) {
 /// **Say that this job has sent no write.** A job that only reads calls it first: an
 /// error it ends with is then a failed read, and the rail is not marked uncertain
 /// for it, as it is for a write whose commit may have landed.
+///
+/// **It says so only of a job that has sent nothing yet.** A phase past the start
+/// (a commit sent and not answered, one answered, a statement in flight) is a write
+/// the job did send, and no later call turns it back into one that was not.
 pub(crate) fn nothing_sent() {
-    set_phase(Phase::BeforeCommit);
+    if phase() == Phase::InProcess {
+        set_phase(Phase::BeforeCommit);
+    }
 }
 
 pub(super) fn handled() {
@@ -380,5 +386,38 @@ impl<'p> Executor<'p> for &Pool {
     {
         let pool = self.reader();
         Box::pin(async move { pool.describe(sql).await })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **A job that has sent a write is never told it has sent nothing.** The
+    /// phases past the start are a commit whose answer is lost, one that was
+    /// answered and a statement still running: each stays as it was when a read's
+    /// call says nothing was sent, while a job that has sent nothing yet is told so.
+    #[tokio::test]
+    async fn nothing_sent_leaves_a_phase_past_the_start_as_it_was() {
+        for sent in [Phase::Unknown, Phase::Committed, Phase::InFlight] {
+            let after = NATIVE
+                .scope(RefCell::new(Native::default()), async move {
+                    set_phase(sent);
+                    nothing_sent();
+                    phase()
+                })
+                .await;
+            assert!(after == sent, "a phase past the start was moved");
+        }
+        let fresh = NATIVE
+            .scope(RefCell::new(Native::default()), async {
+                nothing_sent();
+                phase()
+            })
+            .await;
+        assert!(
+            fresh == Phase::BeforeCommit,
+            "a job that has sent nothing was not told so"
+        );
     }
 }
