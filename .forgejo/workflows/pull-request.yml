@@ -461,6 +461,11 @@ jobs:
             target/bar/*.log
           retention-days: 7
           if-no-files-found: ignore
+      # **The job's last line says how the day went**: the run step cannot fail the
+      # job, so a failed or timed-out day would otherwise read green.
+      - name: Memory day verdict
+        if: ${{ steps.plan.outputs.fast != 'true' && !cancelled() }}
+        run: cat target/bar/memory-day.log || echo "memory-day: NO RESULT, the script wrote no verdict"
 
   # **The last job of every run: it deletes the run's large artifacts.** The
   # bundle is 1.2 GB and the forge shares its disk with production, so nothing

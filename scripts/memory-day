@@ -77,14 +77,18 @@ def main():
             if line.startswith("memory-report "):
                 print(line)
     if code == 124:
-        print(f"memory-day: TIMED OUT after {wall} s; the deadline is {DEADLINE} s and the run was killed")
+        verdict = f"memory-day: TIMED OUT after {wall} s; the deadline is {DEADLINE} s and the run was killed"
     elif code != 0:
-        print(f"memory-day: FAILED with exit {code} after {wall} s; the output is in {log}")
+        verdict = f"memory-day: FAILED with exit {code} after {wall} s; the output is in {log}"
     elif not re.search(r"test result: ok\. 1 passed", text):
-        print(f"memory-day: FAILED, no test ran: the case {CASE} was not found in the binary")
+        verdict = f"memory-day: FAILED, no test ran: the case {CASE} was not found in the binary"
         code = 1
     else:
-        print(f"memory-day: ok after {wall} s")
+        verdict = f"memory-day: ok after {wall} s"
+    print(verdict)
+    # The job prints this file as its last line: the run step carries
+    # continue-on-error, so the job's status cannot say how the day went.
+    (BAR / "memory-day.log").write_text(verdict + "\n")
     return code
 
 

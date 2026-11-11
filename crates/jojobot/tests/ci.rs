@@ -889,6 +889,12 @@ fn the_memory_replay_has_a_job_that_cannot_stop_the_check() {
         block.contains("name: bar-logs-memory"),
         "its logs are kept:\n{block}"
     );
+    // The step cannot fail the job, so the job's last line is what says how the day went.
+    let last = block.rsplit("      - ").next().unwrap();
+    assert!(
+        last.contains("run: cat target/bar/memory-day.log"),
+        "the job does not end on the day's verdict:\n{last}"
+    );
     let target = dry_run(&["memory", "CI_ROOT=/tmp/jojobot-ci/1"]);
     assert!(
         target.contains("scripts/ci-root /tmp/jojobot-ci/1 python3 scripts/memory-day"),

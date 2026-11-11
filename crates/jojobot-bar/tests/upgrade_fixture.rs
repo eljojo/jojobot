@@ -553,6 +553,13 @@ fn run(dir: &Path, deadline: &str) -> Output {
     .unwrap()
 }
 
+/// **The job prints `target/bar/memory-day.log` as its last line**, so the file has
+/// to hold the one line the script ended on, ok, FAILED or TIMED OUT.
+fn the_verdict_file_is_the_last_line(dir: &Path, said: &str) {
+    let file = fs::read_to_string(dir.join("target/bar/memory-day.log")).unwrap();
+    assert_eq!(file.trim_end(), said.lines().last().unwrap(), "{said}");
+}
+
 #[test]
 fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
     let dir =
@@ -590,6 +597,7 @@ fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
         "the numbers reach the job log: {said}"
     );
     assert!(said.contains("memory-day: ok after "), "{said}");
+    the_verdict_file_is_the_last_line(&dir, &said);
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -600,6 +608,7 @@ fn memory_day_is_red_when_the_case_fails() {
     let said = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(101), "{said}");
     assert!(said.contains("memory-day: FAILED with exit 101"), "{said}");
+    the_verdict_file_is_the_last_line(&dir, &said);
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -613,6 +622,7 @@ fn memory_day_is_red_when_no_test_ran() {
     let said = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{said}");
     assert!(said.contains("no test ran"), "{said}");
+    the_verdict_file_is_the_last_line(&dir, &said);
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -628,5 +638,6 @@ fn memory_day_kills_a_run_past_its_deadline_and_says_so() {
         began.elapsed() < std::time::Duration::from_secs(20),
         "the sleeping binary was waited for"
     );
+    the_verdict_file_is_the_last_line(&dir, &said);
     fs::remove_dir_all(dir).unwrap();
 }
