@@ -794,6 +794,67 @@ fn memory_day_default_deadline_is_3300_seconds_under_the_jobs_hour() {
     );
 }
 
+/// What an earlier invocation left in the append-only report: a boot and a day that
+/// passed 4 GiB, in the shapes a run wrote.
+const STALE_REPORT: &str = "memory-report boot: the store needed the claims import at this boot; \
+server peak 4500.0 MiB (4608000 kB), store peak 1343.0 MiB (1375244 kB), server resident \
+after boot 1146.2 MiB, of which anonymous 1104.5 MiB\n\
+memory-report day: all 5300 entries of a day made, which is 6179 tool calls before any \
+retry, in 1682 s; server resident 5000.0 MiB at the end, 5000.0 MiB at the most; peak 5000.0 MiB\n";
+
+fn seed_the_report(dir: &Path) {
+    fs::write(dir.join("target/bar/boot-measures.log"), STALE_REPORT).unwrap();
+}
+
+/// **A verdict is about the invocation that made it.** The report is appended to by
+/// every run in the checkout, so an earlier run's 4,500 MiB boot must not make a later
+/// run that stays under 4 GiB read OVER, nor be printed in this run's lines. The old
+/// lines stay in the file: the history is the report's, the verdict is the run's.
+#[test]
+fn memory_day_verdict_ignores_what_an_earlier_invocation_wrote() {
+    let dir = bundle_with(PASSED, "1237.4", "1625.9");
+    seed_the_report(&dir);
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: ok"), "{verdict}");
+    assert_eq!(out.status.code(), Some(0), "{said}");
+    assert!(
+        !said.contains("4500.0") && !said.contains("5000.0"),
+        "an earlier run's numbers reached this run's output: {said}"
+    );
+    let kept = fs::read_to_string(dir.join("target/bar/boot-measures.log")).unwrap();
+    assert!(
+        kept.starts_with(STALE_REPORT),
+        "the earlier lines were not kept"
+    );
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// **An old line does not fill a number this run did not measure.** The run writes a
+/// boot and no day, after an earlier run wrote both.
+#[test]
+fn memory_day_verdict_is_red_when_this_run_lacks_a_number_an_old_run_had() {
+    let dir = bundle(&format!(
+        "{PASSED}; head -n -2 ../../target/bar/boot-measures.log > ../../target/bar/t && \
+         mv ../../target/bar/t ../../target/bar/boot-measures.log"
+    ));
+    seed_the_report(&dir);
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{said}");
+    assert!(
+        said.lines()
+            .last()
+            .unwrap()
+            .starts_with("memory-day: FAILED"),
+        "{said}"
+    );
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 /// A report that lost its lines is not a day under 4 GiB.
 #[test]
 fn memory_day_verdict_is_red_when_the_report_has_no_numbers() {

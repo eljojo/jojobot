@@ -115,23 +115,35 @@ def larger(a, b):
     return a
 
 
-def measured(measures):
+def report_lines(measures, start):
+    """The report lines this invocation wrote. The cases append to the report and every
+    invocation in a checkout adds to it, so the verdict reads from where the file stood
+    when this one began; the earlier lines stay in the file as its history."""
+    if not measures.exists():
+        return []
+    data = measures.read_bytes()
+    # A file shorter than it was has been replaced: all of it is this run's.
+    text = data[start:] if start <= len(data) else data
+    return [line for line in text.decode(errors="replace").splitlines()
+            if line.startswith("memory-report ")]
+
+
+def measured(lines):
     """The numbers rule 800 bounds, in MiB as the report writes them: the server's peak
     through a first boot (the larger of the two the job makes, the first-boot case's
     and the day case's own), its resident memory at the end of the day, and the most it
     held in the day. Production is killed at its peak and not where it settles, so the
     last is the larger of the day's highest sample and the process's own peak. None for
-    a number the report did not write."""
+    a number these lines do not hold."""
     boot = day = highest = None
-    if measures.exists():
-        for line in measures.read_text(errors="replace").splitlines():
-            found = re.search(r"^memory-report boot: .*?server peak ([0-9.]+) MiB", line)
-            boot = larger(boot, found.group(1) if found else None)
-            found = re.search(r"^memory-report day: .*?server resident ([0-9.]+) MiB at the end", line)
-            day = found.group(1) if found else day
-            for pattern in (r"([0-9.]+) MiB at the most", r"; peak ([0-9.]+) MiB"):
-                found = re.search(r"^memory-report day: .*?" + pattern, line)
-                highest = larger(highest, found.group(1) if found else None)
+    for line in lines:
+        found = re.search(r"^memory-report boot: .*?server peak ([0-9.]+) MiB", line)
+        boot = larger(boot, found.group(1) if found else None)
+        found = re.search(r"^memory-report day: .*?server resident ([0-9.]+) MiB at the end", line)
+        day = found.group(1) if found else day
+        for pattern in (r"([0-9.]+) MiB at the most", r"; peak ([0-9.]+) MiB"):
+            found = re.search(r"^memory-report day: .*?" + pattern, line)
+            highest = larger(highest, found.group(1) if found else None)
     return boot, day, highest
 
 
@@ -139,6 +151,8 @@ def main():
     BAR.mkdir(parents=True, exist_ok=True)
     log = BAR / "memory.log"
     argv, directory, environment = command()
+    measures = BAR / "boot-measures.log"
+    start = measures.stat().st_size if measures.exists() else 0
     began = time.monotonic()
     with log.open("w") as out:
         child = subprocess.Popen(argv, cwd=directory, env=environment, stdout=out,
@@ -152,11 +166,9 @@ def main():
     wall = round(time.monotonic() - began)
     text = log.read_text(errors="replace")
     # What the case measured, in the job's own log: the rest is in memory.log.
-    measures = BAR / "boot-measures.log"
-    if measures.exists():
-        for line in measures.read_text(errors="replace").splitlines():
-            if line.startswith("memory-report "):
-                print(line)
+    lines = report_lines(measures, start)
+    for line in lines:
+        print(line)
     if code == 124:
         verdict = f"memory-day: TIMED OUT after {wall} s; the deadline is {DEADLINE} s and the run was killed"
     elif code != 0:
@@ -165,7 +177,7 @@ def main():
         verdict = f"memory-day: FAILED, not every case ran: {' and '.join(CASES)} were not all found in the binary"
         code = 1
     else:
-        boot, day, highest = measured(measures)
+        boot, day, highest = measured(lines)
         missing = [name for name, number in (("first-boot peak", boot),
                                              ("resident memory after the day", day),
                                              ("highest memory in the day", highest))
