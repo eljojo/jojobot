@@ -956,6 +956,10 @@ const NO_SNAPSHOT_WARNING: &str = "SNAPSHOT NOT USED";
 /// recorded holds none, so its first boot may log that warning (a log with history
 /// does, a log with none logs at info); a boot over a store that holds one may not,
 /// and the warning is then a degradation like any other.
+///
+/// TEMPORARY(9.3.4): this allowance holds only while the gate's recording predates
+/// snapshots. Once the recording is 9.3.3's, whose first boot writes a snapshot,
+/// it never applies, and it goes with `check_the_no_snapshot_warning`'s `none_held` arm.
 fn warnings_a_boot_may_log<'a>(
     tolerated_warnings: &[&'a str],
     snapshot_held_before: bool,
