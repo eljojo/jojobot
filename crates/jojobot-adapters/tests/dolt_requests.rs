@@ -253,7 +253,18 @@ async fn every_covered_write_spends_its_id_with_its_own_commit() {
             expected += 1;
             assert_eq!(rows(&pool).await, expected, "{} stored one row", $verb);
             let (refused, spent) = spending($verb, $id, $again).await;
-            assert!(refused.is_err(), "{} under a spent id is refused", $verb);
+            // **The refusal is the ledger's**: the store answers a commit under a spent
+            // id as a write that collided with another, which both ports name
+            // `Conflict`. Any other error is a refusal on the target's own state.
+            let error = refused
+                .err()
+                .unwrap_or_else(|| panic!("{} under a spent id is refused", $verb));
+            assert_eq!(
+                format!("{error:?}"),
+                "Conflict",
+                "{} under a spent id is refused by the ledger",
+                $verb
+            );
             assert!(!spent, "{} does not spend a spent id", $verb);
             assert_eq!(rows(&pool).await, expected, "{} stored nothing more", $verb);
         }};
@@ -380,14 +391,31 @@ async fn every_covered_write_spends_its_id_with_its_own_commit() {
         memory.archive_entity(&marge, "filed twice", None),
         memory.archive_entity(&homer, "filed twice", None)
     );
+    // **The call under a spent id is made on a target the write would accept**, so
+    // that the ledger is what refuses it: a second restore of the same thing, a
+    // second merge of the same duplicate or a second retract of the same claim is
+    // refused on the state the first call left, before the ledger is consulted.
+    // The targets are made outside a scope, which spends nothing.
+    let nelson = thing(&memory, "person:nelson", "Nelson").await;
+    memory
+        .archive_entity(&nelson, "filed twice", None)
+        .await
+        .expect("archived");
     covered!(
         "archive_entity",
         "k-restore",
         memory.restore_entity(&marge, None),
-        memory.restore_entity(&marge, None)
+        memory.restore_entity(&nelson, None)
     );
     let claim = memory
         .capture(claim_about(&marge, "makes pie"))
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked")
+        .address();
+    let other_claim = memory
+        .capture(claim_about(&marge, "bakes bread"))
         .await
         .expect("capture")
         .written()
@@ -397,15 +425,17 @@ async fn every_covered_write_spends_its_id_with_its_own_commit() {
         "retract",
         "k-retract",
         memory.retract(&claim, Some("mistaken"), day, &me, None),
-        memory.retract(&claim, Some("mistaken"), day, &me, None)
+        memory.retract(&other_claim, Some("mistaken"), day, &me, None)
     );
     thing(&memory, "person:krusty", "Krusty").await;
+    thing(&memory, "person:ralph", "Ralph").await;
     let krusty = EntityId("person:krusty".into());
+    let ralph = EntityId("person:ralph".into());
     covered!(
         "merge_entities",
         "k-merge",
         memory.merge(&krusty, &homer, Some("filed twice"), day, &me, None),
-        memory.merge(&krusty, &homer, Some("filed twice"), day, &me, None)
+        memory.merge(&ralph, &homer, Some("filed twice"), day, &me, None)
     );
 
     // The mail rail: post, retire, set aside.
@@ -451,11 +481,19 @@ async fn every_covered_write_spends_its_id_with_its_own_commit() {
         mail.mark_processed(&first.id, &first.mailbox, Some("done"), acting),
         mail.mark_processed(&second.id, &second.mailbox, Some("done"), acting)
     );
+    // The message the call under a spent id sets aside is one still waiting, so the
+    // ledger and not the message's state refuses it (`first` is already processed).
+    let third = mail
+        .post_message(note("to set aside as well"))
+        .await
+        .expect("post")
+        .written()
+        .expect("not blocked");
     covered!(
         "mark_processed",
         "k-aside",
         mail.quarantine(&second.id, &inbox, "not for me", acting),
-        mail.quarantine(&first.id, &inbox, "not for me", acting)
+        mail.quarantine(&third.id, &inbox, "not for me", acting)
     );
 
     server.stop().await;
