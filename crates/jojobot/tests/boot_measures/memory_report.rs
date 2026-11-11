@@ -534,12 +534,28 @@ async fn make(
     }
 }
 
-/// Clients that make the day's calls at once.
-const CLIENTS: usize = 4;
+/// Clients that make the day's calls at once. The grow step writes through eight.
+const CLIENTS: usize = 8;
 
-/// **Replay one day through a running server**, sampling the server's memory about
-/// every half second, and return the samples as `(elapsed, calls made, memory)`.
-async fn replay_day(pid: u32, port: u16, first_call: usize) -> Vec<(Duration, usize, Memory)> {
+/// **How long the replay may run in all.** The lane's test binary is killed at 1,200
+/// seconds, and every other case in it takes under six minutes; a day of calls
+/// through the tools is slower than that (the first run of this case, with four
+/// clients and no limit, was still on its first day when the binary was killed). The
+/// replay makes as much of the days as the budget allows and reports how much.
+const REPLAY_BUDGET: Duration = Duration::from_secs(420);
+
+/// What a replay of one day made, and the server's memory while it did.
+struct Replayed {
+    /// `(elapsed, calls made, memory)`, about every half second.
+    samples: Vec<(Duration, usize, Memory)>,
+    /// The entries of the day it made before the budget ended it.
+    made: usize,
+}
+
+/// **Replay one day through a running server**, for no longer than `budget`,
+/// sampling the server's memory about every half second and writing a line of
+/// progress about every ten, so a run that is stopped still leaves its numbers.
+async fn replay_day(pid: u32, port: u16, first_call: usize, budget: Duration) -> Replayed {
     use rmcp::ServiceExt;
     use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
     use rmcp::transport::StreamableHttpClientTransport;
@@ -571,24 +587,39 @@ async fn replay_day(pid: u32, port: u16, first_call: usize) -> Vec<(Duration, us
         let (made, finished, samples) = (made.clone(), finished.clone(), samples.clone());
         tokio::spawn(async move {
             let started = Instant::now();
+            let mut taken = 0_usize;
             while !finished.load(Ordering::SeqCst) {
                 if let Some(memory) = memory_of_pid(pid) {
+                    let calls_made = made.load(Ordering::SeqCst);
                     samples.lock().expect("the samples").push((
                         started.elapsed(),
-                        made.load(Ordering::SeqCst),
+                        calls_made,
                         memory,
                     ));
+                    if taken.is_multiple_of(20) {
+                        record(&format!(
+                            "memory-report day-sample: {} s into the replay, {calls_made} entries \
+                             made, server resident {}",
+                            started.elapsed().as_secs(),
+                            mib(memory.resident),
+                        ));
+                    }
+                    taken += 1;
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
         })
     };
+    let started = Instant::now();
     let mut shards = tokio::task::JoinSet::new();
     for shard in 0..CLIENTS {
         let (peer, sid, calls, made) = (peer.clone(), sid.clone(), calls.clone(), made.clone());
         shards.spawn(async move {
             let mut mine = Vec::new();
             for at in (shard..calls.len()).step_by(CLIENTS) {
+                if started.elapsed() >= budget {
+                    break;
+                }
                 make(&peer, &sid, calls[at], first_call + at, &mut mine).await;
                 made.fetch_add(1, Ordering::SeqCst);
             }
@@ -599,18 +630,20 @@ async fn replay_day(pid: u32, port: u16, first_call: usize) -> Vec<(Duration, us
     }
     let mut mine = Vec::new();
     for (at, call) in sessions.iter().enumerate() {
+        if started.elapsed() >= budget {
+            break;
+        }
         make(&peer, &sid, *call, first_call + calls.len() + at, &mut mine).await;
         made.fetch_add(1, Ordering::SeqCst);
     }
     finished.store(true, Ordering::SeqCst);
     sampler.await.expect("the sampler stopped");
-    assert_eq!(
-        made.load(Ordering::SeqCst),
-        calls.len() + sessions.len(),
-        "every call of the day was made"
-    );
     client.cancel().await.expect("the client closes");
-    samples.lock().expect("the samples").clone()
+    let samples = samples.lock().expect("the samples").clone();
+    Replayed {
+        samples,
+        made: made.load(Ordering::SeqCst),
+    }
 }
 
 /// How many claims a stopped store holds, counted by a store of its own that the
@@ -657,7 +690,7 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
     // booted over it yet, so the boot imports the claims and takes the first snapshot.
     let state = replay_dump("jojobot-memory-report", &fixture).await;
     // **The claims the boot reads are counted before it**, so a growth at boot is
-    // divided by what the boot held and not by what three days of calls made of it.
+    // divided by what the boot held and not by what the replay made of it.
     let claims = claims_in(&state).await;
     let mut run = spawn(state);
     let boot = watch_boot(&mut run);
@@ -700,20 +733,29 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
         ));
     }
 
-    // **A replayed day, then two more**, so the climb of a process that keeps what it
-    // freed is a series and not one reading.
+    // **A replay of up to three days**, in the time the budget allows, so the climb
+    // of a process that keeps what it freed is a series and not one reading.
     let (pid, port) = (run.pid, run.http_port);
     let mut after_day = Vec::new();
     let mut first_call = 0;
+    let replay_started = Instant::now();
     for day_number in 1..=3 {
-        let samples = replay_day(pid, port, first_call).await;
-        first_call += day().len();
-        let last = samples.last().expect("a day has samples").2;
+        let left = REPLAY_BUDGET.saturating_sub(replay_started.elapsed());
+        if left < Duration::from_secs(10) {
+            break;
+        }
+        let replayed = replay_day(pid, port, first_call, left).await;
+        first_call += replayed.made;
+        let samples = replayed.samples;
+        let last = samples.last().expect("a replay has samples").2;
         let top = samples.iter().map(|s| s.2.resident).max().unwrap_or(0);
         record(&format!(
-            "memory-report day {day_number}: {} entries of the day, {} tool calls before any \
-             retry, in {} s; server resident {} at the end, {} at the most; peak so far {}",
+            "memory-report day {day_number}: {} of the {} entries of a day made, which is {} of \
+             its {} tool calls before any retry, in {} s; server resident {} at the end, {} at \
+             the most; peak so far {}",
+            replayed.made,
             day().len(),
+            replayed.made * day_tool_calls() / day().len(),
             day_tool_calls(),
             samples.last().map_or(0, |s| s.0.as_secs()),
             mib(last.resident),
@@ -722,6 +764,10 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
         ));
         after_day.push(last);
     }
+    assert!(
+        first_call > 0,
+        "the replay made no call in its budget of {REPLAY_BUDGET:?}"
+    );
     let (server_peak_after, store_peak_after) = run.peaks_kib();
     let finally = *after_day.last().expect("the days ran");
     let store_resident: u64 = descendants_of(run.pid)
@@ -731,7 +777,7 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
         .sum();
     let (state, _) = run.stopped();
 
-    // **What the store held after the days**, counted after the stop.
+    // **What the store held after the replay**, counted after the stop.
     let claims_after = claims_in(&state).await;
     let held = |kind: Projection| {
         steps
@@ -745,7 +791,7 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
     };
     record(&format!(
         "memory-report per thing held at the first boot (claims {claims}, and {claims_after} \
-         after the days; things {things:?}, runs {runs:?}, messages {messages:?}, import \
+         after the replay; things {things:?}, runs {runs:?}, messages {messages:?}, import \
          events {events:?}): the start-up and the image of memory {} per claim; memory search \
          {} per claim; run image {} per run; mail image {} per message; claims import {} per \
          claim",
@@ -763,7 +809,7 @@ async fn the_servers_memory_across_a_first_boot_and_a_replayed_day() {
     let beside = finally.resident + store_resident;
     record(&format!(
         "memory-report summary: the server's peak through the first boot {} ({} {}); its \
-         peak after three days of calls {} ({} {}); its resident memory after them {} ({} \
+         peak after the replay {} ({} {}); its resident memory after them {} ({} \
          {}), anonymous {}; the store beside it {} resident and {} at its peak; the unit's \
          cgroup holds both, so {} resident against its memoryMax of {} ({})",
         mib(server_peak),
