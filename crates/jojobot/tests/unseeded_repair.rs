@@ -74,9 +74,23 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
     // store's own, which is what admission asks.
     use jojobot_domain::memory::Memory;
     let declared = store.declared_kinds().await.expect("the store reads");
+    let every_kind = jojobot_domain::memory::kinds::all();
     store.set_kinds(Vec::new());
     jojobot_domain::memory::kinds::load::<[&str; 0], &str>([]);
     let never_loaded = advice(&ask(&http, &url, &session, &capture(&sid, "a claim")).await);
+    // **A claim whose name is well spelled, on a set that holds every kind but
+    // `role`.** The store refuses the role handle for its kind, and no spelling of
+    // the name mends that.
+    let without_role: Vec<_> = declared
+        .iter()
+        .filter(|(name, _)| name != "role")
+        .cloned()
+        .collect();
+    store.set_kinds(without_role);
+    jojobot_domain::memory::kinds::load(every_kind.iter().filter(|kind| *kind != "role"));
+    let unheld_claim = claim_outcome(&ask(&http, &url, &session, &claim(&sid, "reader")).await);
+    store.set_kinds(Vec::new());
+    jojobot_domain::memory::kinds::load::<[&str; 0], &str>([]);
 
     // **The control, taken from the same verb on the same server.** With the
     // set loaded, the same call carrying an empty claim is refused for a
@@ -84,8 +98,12 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
     // because it is telling the caller to send it again. Without this half,
     // the assertion below passes on a build where no answer ever names a verb.
     jojobot_domain::memory::kinds::load_shipped();
-    store.set_kinds(declared);
+    store.set_kinds(declared.clone());
     let ordinary = advice(&ask(&http, &url, &session, &capture(&sid, "   ")).await);
+    // **The control of the claim: a name that is the fault.** With the set loaded, a
+    // name that builds no role handle is refused for the caller to change.
+    let malformed_claim =
+        claim_outcome(&ask(&http, &url, &session, &claim(&sid, "Not A Role!")).await);
 
     assert!(
         never_loaded.contains("never loaded"),
@@ -102,7 +120,37 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
          reach the fault: {never_loaded}",
     );
 
+    assert_eq!(
+        (
+            malformed_claim["status"].as_str(),
+            malformed_claim["fix_by"].as_str()
+        ),
+        (Some("refused"), Some("change")),
+        "a claim whose name builds no role handle is the caller's to change: {malformed_claim}"
+    );
+    assert!(
+        unheld_claim["status"] != "refused" && unheld_claim["fix_by"] != "change",
+        "a well-spelled claim the store cannot hold for want of the kind is not the \
+         caller's to change: {unheld_claim}"
+    );
+
     ct.cancel();
+}
+
+/// The outcome of the claim a `start_here` answer carries.
+fn claim_outcome(answered: &str) -> serde_json::Value {
+    let body: serde_json::Value = serde_json::from_str(answered).expect("a JSON-RPC message");
+    let text = body["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("an answer with a body: {answered}"));
+    let inner: serde_json::Value = serde_json::from_str(text).expect("the answer is JSON");
+    inner["session"]["claim"].clone()
+}
+
+fn claim(sid: &str, role: &str) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{{"name":"start_here","arguments":{{"bot":"assistant","brief":true,"claim":"{role}","sid":"{sid}"}}}}}}"#
+    )
 }
 
 /// The `how_to_proceed` line of a blocked answer.
