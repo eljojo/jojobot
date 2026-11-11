@@ -406,6 +406,71 @@ fn lines_under<'a>(yaml: &'a str, header: &str, indent: usize) -> Vec<&'a str> {
     found
 }
 
+/// **No workflow holds a plain value with a colon and a space in it.** YAML reads
+/// that pair inside an unquoted value as the start of a mapping and refuses the file:
+/// `run: echo "done: ok"` is such a line. The forge then starts a run that names the
+/// commit, never starts and shows failure, beside the run the push should have made.
+/// The cases here read the files line by line and would not see it. A value in a
+/// block (`run: |`), in quotes or in a flow is read as text and is left alone.
+/// **The positive is in the same case**: the files are found, and a line that does
+/// hold the pair is refused by the same rule.
+#[test]
+fn no_workflow_holds_a_plain_value_with_a_colon_and_a_space() {
+    fn refused(yaml: &str) -> Vec<String> {
+        let mut block_of: Option<usize> = None;
+        let mut found = Vec::new();
+        for line in yaml.lines() {
+            let trimmed = line.trim_start();
+            let depth = line.len() - trimmed.len();
+            if let Some(key_depth) = block_of {
+                if trimmed.is_empty() || depth > key_depth {
+                    continue;
+                }
+                block_of = None;
+            }
+            let item = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = item.split_once(": ") else {
+                continue;
+            };
+            if key.contains(' ') || key.starts_with(['"', '\'']) {
+                continue;
+            }
+            let value = value.trim();
+            let key_depth = depth + (trimmed.len() - item.len());
+            if value.starts_with(['|', '>']) {
+                block_of = Some(key_depth);
+            } else if !value.starts_with(['"', '\'', '{', '[']) && value.contains(": ") {
+                found.push(line.to_string());
+            }
+        }
+        found
+    }
+    assert_eq!(
+        refused("    steps:\n      - run: echo \"done: ok\"\n"),
+        ["      - run: echo \"done: ok\""],
+        "the rule does not see the line it exists for"
+    );
+    assert!(refused("      - run: |\n          echo \"done: ok\"\n").is_empty());
+    assert!(refused("      - run: 'echo done: ok'\n").is_empty());
+    let dir = root().join(".forgejo/workflows");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(&dir).expect("the workflows") {
+        let path = entry.expect("an entry").path();
+        let yaml = std::fs::read_to_string(&path).expect("a workflow");
+        assert_eq!(
+            refused(&yaml),
+            Vec::<String>::new(),
+            "{} holds a plain value the forge cannot parse",
+            path.display()
+        );
+        seen += 1;
+    }
+    assert!(seen >= 6, "only {seen} workflows were read");
+}
+
 /// A full runner slot must be cleared before checkout or any build can fail.
 #[test]
 fn every_job_runs_the_runner_pre_job_first() {
@@ -892,7 +957,7 @@ fn the_memory_replay_has_a_job_that_cannot_stop_the_check() {
     // The step cannot fail the job, so the job's last line is what says how the day went.
     let last = block.rsplit("      - ").next().unwrap();
     assert!(
-        last.contains("run: cat target/bar/memory-day.log"),
+        last.contains("cat target/bar/memory-day.log"),
         "the job does not end on the day's verdict:\n{last}"
     );
     let target = dry_run(&["memory", "CI_ROOT=/tmp/jojobot-ci/1"]);
