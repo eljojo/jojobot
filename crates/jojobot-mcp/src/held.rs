@@ -1648,6 +1648,63 @@ mod tests {
         assert_eq!(body_in(&second)["objects"][0]["progress"][0]["of"], 1);
     }
 
+    /// A failed progress check leaves the rendered bundle unheld, so a later
+    /// healthy read still serves its progress in full.
+    #[tokio::test]
+    async fn a_bundle_progress_check_failure_leaves_the_rows_unheld() {
+        use rmcp::handler::server::wrapper::Parameters;
+
+        let (healthy, blind) = healthy_and_down(Down::ListingKind("list"));
+        let reader = crate::mailboxes::testing::owning(&healthy, "gamma").await;
+        ensure(&healthy, "work:alpha").await;
+        ensure(&healthy, "work:beta").await;
+        healthy
+            .memory
+            .add_entity(NewEntity {
+                parent: Some(EntityId::person("work:alpha")),
+                ..NewEntity::new(EntityId::person("list:errands"), "Errands", "fixture")
+            })
+            .await
+            .expect("the list is created")
+            .written()
+            .expect("nothing blocks it");
+        capture_ok(
+            &healthy,
+            CaptureArgs {
+                shape: Some("about".into()),
+                object: Some("work:beta".into()),
+                ..capture_args("list:errands", "finish beta")
+            },
+        )
+        .await;
+
+        let recall = || RecallArgs {
+            sid: Some(reader.clone()),
+            subject: Some("work:alpha".into()),
+            ..Default::default()
+        };
+        let mut first: CallToolResponse = healthy
+            .recall(Parameters(recall()))
+            .await
+            .expect("the first recall answers")
+            .into();
+        assert_eq!(body_in(&first)["objects"][0]["progress"][0]["of"], 1);
+        mark_call(&mut first, "recall", false);
+        blind.add_held_changed(&mut first, Some(&reader)).await;
+
+        let mut recovered: CallToolResponse = healthy
+            .recall(Parameters(recall()))
+            .await
+            .expect("the recovery recall answers")
+            .into();
+        mark_call(&mut recovered, "recall", false);
+        healthy
+            .add_held_changed(&mut recovered, Some(&reader))
+            .await;
+        assert_eq!(body_in(&recovered)["objects"][0]["progress"][0]["done"], 0);
+        assert_eq!(body_in(&recovered)["objects"][0]["progress"][0]["of"], 1);
+    }
+
     /// **What stands under a parent is read in one pass, not once for each thing
     /// under it.** The default `children` lists every entity, so a walk that asks
     /// it for each descendant reads the whole inventory that many times on every
