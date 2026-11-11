@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use super::{PartRow, Receipt, Recorded, RequestError, RequestId, Requests, Reservation, Stored};
+use crate::log::{ObjectId, RequestId as LogRequestId};
 use crate::memory::EntityId;
 
 /// A fake ledger, keyed by the bot's handle. A real store keys on the bot's
@@ -12,7 +13,9 @@ use crate::memory::EntityId;
 #[derive(Debug, Default)]
 pub struct InMemoryRequests {
     /// TEMPORARY(9.3.8): retires with the last fake write method that spends a request id.
-    rows: Mutex<HashMap<(String, String), Stored>>,
+    rows: Mutex<HashMap<(String, String), (u64, Stored)>>,
+    generations: Mutex<HashMap<(String, String), u64>>,
+    last_fill: Mutex<Option<Receipt>>,
     /// The parts of writes that commit in several, in the order written.
     /// TEMPORARY(9.3.8): retires with the last fake write method that spends a request id.
     parts: Mutex<Vec<(String, String, PartRow)>>,
@@ -29,6 +32,30 @@ pub struct InMemoryRequests {
 impl InMemoryRequests {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// Model a whole request leaving the keep window. The next write under
+    /// this id gets a new generation, as the real log does.
+    pub fn expire_whole_for_test(&self, bot: &EntityId, id: &RequestId) {
+        let slot = (bot.0.clone(), id.as_str().to_string());
+        self.rows
+            .lock()
+            .expect("the ledger is poisoned")
+            .remove(&slot);
+        *self
+            .generations
+            .lock()
+            .expect("the ledger is poisoned")
+            .entry(slot)
+            .or_insert(1) += 1;
+    }
+
+    /// The key the MCP receipt path passed to the ledger's last fill.
+    pub fn last_fill(&self) -> Option<Receipt> {
+        self.last_fill
+            .lock()
+            .expect("the ledger is poisoned")
+            .clone()
     }
 
     /// **What a store's commit does with the claim it took**: spend the id with
@@ -96,17 +123,34 @@ impl InMemoryRequests {
             reservation.failed();
             return false;
         }
+        let generation = *self
+            .generations
+            .lock()
+            .expect("the ledger is poisoned")
+            .entry(key.clone())
+            .or_insert(1);
+        let landed = landed.into();
         rows.insert(
             key,
-            Stored {
-                verb: request.verb,
-                digest: request.digest,
-                landed: landed.into(),
-                receipt: None,
-            },
+            (
+                generation,
+                Stored {
+                    verb: request.verb,
+                    digest: request.digest,
+                    landed: landed.clone(),
+                    receipt: None,
+                },
+            ),
         );
         drop(rows);
-        reservation.spent();
+        reservation.spent_as(
+            super::events::RequestKey {
+                actor: ObjectId(request.bot.0),
+                id: LogRequestId(request.id.as_str().to_string()),
+                generation,
+            },
+            landed,
+        );
         true
     }
 
@@ -178,16 +222,23 @@ impl Requests for InMemoryRequests {
             .collect::<Vec<_>>()
             .join(",");
         let landed = format!("{{\"parts\":[{names}]}}");
+        let generation = call.key.as_ref().map(|key| key.generation).unwrap_or(1);
         self.rows
             .lock()
             .expect("the ledger is poisoned")
             .entry((request.bot.0.clone(), request.id.as_str().to_string()))
-            .or_insert_with(|| Stored {
-                verb: request.verb.clone(),
-                digest: request.digest.clone(),
-                landed,
-                receipt: None,
+            .or_insert_with(|| {
+                (
+                    generation,
+                    Stored {
+                        verb: request.verb.clone(),
+                        digest: request.digest.clone(),
+                        landed,
+                        receipt: None,
+                    },
+                )
             })
+            .1
             .receipt = Some(receipt.to_string());
         Ok(())
     }
@@ -198,16 +249,21 @@ impl Requests for InMemoryRequests {
             .lock()
             .expect("the ledger is poisoned")
             .get(&(bot.0.clone(), id.as_str().to_string()))
-            .cloned())
+            .map(|(_, stored)| stored.clone()))
     }
 
     async fn fill(&self, call: &Receipt, receipt: &str) -> Result<(), RequestError> {
         let request = &call.request;
-        if let Some(row) = self
+        *self.last_fill.lock().expect("the ledger is poisoned") = Some(call.clone());
+        if let Some((generation, row)) = self
             .rows
             .lock()
             .expect("the ledger is poisoned")
             .get_mut(&(request.bot.0.clone(), request.id.as_str().to_string()))
+            && call
+                .key
+                .as_ref()
+                .is_some_and(|key| key.generation == *generation)
         {
             row.receipt = Some(receipt.to_string());
         }
@@ -271,7 +327,19 @@ mod tests {
             ledger.lookup(&me.bot, &me.id).await.unwrap().is_none(),
             "nothing is spent yet"
         );
-        write(&ledger, me.clone()).await;
+        let scope = Scope::new(me.clone());
+        assert!(
+            within(
+                scope.clone(),
+                armed(async {
+                    ledger.spend(
+                        take().expect("the claim"),
+                        "{\"address\":\"person:alpha#f1\"}",
+                    )
+                }),
+            )
+            .await
+        );
         let held = ledger
             .lookup(&me.bot, &me.id)
             .await
@@ -281,7 +349,7 @@ mod tests {
         assert_eq!(held.landed, "{\"address\":\"person:alpha#f1\"}");
         assert_eq!(held.receipt, None, "the receipt comes after the commit");
         ledger
-            .fill(&Scope::new(me.clone()).receipt(), "{\"ok\":true}")
+            .fill(&scope.receipt(), "{\"ok\":true}")
             .await
             .unwrap();
         let filled = ledger

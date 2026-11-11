@@ -153,6 +153,60 @@ async fn a_restart_between_the_two_calls_still_recognises_the_repeat() {
     restarted.finish().await;
 }
 
+/// A late receipt from the first use of an id cannot replace the receipt of
+/// its new generation after the keep window.
+#[tokio::test]
+async fn a_reused_id_replays_its_own_receipt_after_a_late_old_fill() {
+    use jojobot_domain::memory::EntityId;
+    use jojobot_domain::request::{RequestId, Requests};
+
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await.asking_whole();
+    s.add("person:milhouse", "Milhouse").await;
+    let first = s
+        .call("capture", capture("wears glasses", "r1"))
+        .await
+        .json();
+    assert_eq!(claims(&s).await, 1);
+    let ledger = story.requests();
+    let old = ledger
+        .last_fill()
+        .expect("MCP passed the first scope to fill");
+    assert!(old.key.is_some(), "the first scope holds its generation");
+
+    let bot = EntityId("bot:otto".into());
+    let id = RequestId::parse("r1").unwrap();
+    ledger.expire_whole_for_test(&bot, &id);
+    let second = s
+        .call("capture", capture("owns a radio", "r1"))
+        .await
+        .json();
+    assert!(
+        second.get("repeat").is_none(),
+        "a new generation wrote: {second}"
+    );
+    assert_eq!(claims(&s).await, 2);
+    let new = ledger
+        .last_fill()
+        .expect("MCP passed the new scope to fill");
+    assert_ne!(old.key, new.key, "reuse has a separate generation");
+    assert_ne!(first, second, "the two writes have separate receipts");
+
+    ledger.fill(&old, "late-first-receipt").await.unwrap();
+    let replay = s
+        .call("capture", capture("owns a radio", "r1"))
+        .await
+        .json();
+    assert_eq!(replay["repeat"], true, "{replay}");
+    assert_eq!(
+        without_repeat_marks(replay),
+        without_repeat_marks(second),
+        "the late first receipt did not replace the second"
+    );
+    assert_eq!(claims(&s).await, 2);
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_write_that_stored_nothing_spends_no_id() {
     let story = Story::begin("bot:otto").await;
