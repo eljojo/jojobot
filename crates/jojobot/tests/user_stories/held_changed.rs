@@ -418,11 +418,11 @@ async fn a_message_another_run_quarantined_is_named_once_without_its_words() {
 }
 
 /// **A claim held on its own is told when another session wrote it before this
-/// one did.** Otto reads one claim of Homer by its address, so he holds the
+/// one did.** Otto reads one claim of Homer by its address, so Otto holds the
 /// claim and not Homer. The other session edits it, and Otto edits it too
 /// without reading it again. The newest write is Otto's own, and the answer to
-/// his edit still names the claim, because the other session wrote after the
-/// version he held. The paired negative is the same read when only Otto wrote after it.
+/// Otto's edit still names the claim, because the other session wrote after the
+/// version Otto held. The paired negative is the same read when only Otto wrote after it.
 #[tokio::test]
 async fn a_claim_another_session_wrote_before_this_one_did_is_named() {
     let story = Story::begin("bot:otto").await;
@@ -444,7 +444,7 @@ async fn a_claim_another_session_wrote_before_this_one_did_is_named() {
         .to_string();
     let edit = |content: &'static str| json!({"address": claim, "content": content, "provenance": "inference"});
 
-    // Otto holds the claim and not Homer, and he alone writes after it.
+    // Otto holds the claim and not Homer, and Otto alone writes after it.
     otto.call("recall", json!({"records": [claim.clone()]}))
         .await;
     otto.call("update_fact", edit("likes donuts and beer"))
@@ -630,7 +630,7 @@ async fn a_listing_the_session_holds_unchanged_collapses_and_reship_lists_it_who
 /// **A notice names a change and serves none of the new words.** Otto holds
 /// Homer, another session edits a claim on him, and Otto reads Lisa, which
 /// brings the notice. Reading Homer next serves the edited claim in full: the
-/// notice did not give Otto the new text, so it is not text he already holds.
+/// notice did not give Otto the new text, so it is not text Otto already holds.
 #[tokio::test]
 async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
     let (story, otto, other, claim) = otto_holds_homer().await;
