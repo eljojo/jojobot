@@ -2314,7 +2314,7 @@ Other mail above or beside you is refused in every state, processed included; po
 THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a message in it, in any state, whoever wrote it.
 Same envelope a delivery hands over, seen_before and all: true means somebody had already taken this message, so it is a leftover rather than fresh mail.
 A message its sender replaced before anyone read it is superseded, a final state: reading it by id takes nothing, and its envelope says state superseded and names what replaced it.
-Taking delivery is NOT handling: after completing work, close your mail with mark_processed or a reply with `in_reply_to`.
+Taking delivery is NOT handling: after completing work, close your mail with mark_processed or post_message with in_reply_to naming that mail.
 Progress reports must leave the original open.
 Reading your own mail renews your role claim.
 WITH `history: true` THIS VERB TAKES NO DELIVERY: it answers the message's changes of state in order, with the run that made each, and leaves the message where it is.
