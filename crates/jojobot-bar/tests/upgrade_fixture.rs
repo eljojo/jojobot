@@ -626,6 +626,37 @@ fn memory_day_is_red_when_no_test_ran() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+/// **The deadline stops the server and its store too.** The case starts them in
+/// process groups of their own, which a kill of the binary's group does not reach, so a
+/// day that timed out would leave both running on the runner. The fake binary starts a
+/// child in a session of its own, as the case does, and the case waits for the child to
+/// be gone. **The positive is in the same case**: the child's pid was written, so it
+/// ran.
+#[test]
+fn memory_day_stops_what_the_binary_started_in_a_group_of_its_own() {
+    let dir = bundle("setsid sh -c 'echo $$ > ../../server-pid; exec sleep 300' & sleep 30");
+    let out = run(&dir, "2");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(124), "{said}");
+    let pid = fs::read_to_string(dir.join("server-pid"))
+        .expect("the child ran and wrote its pid")
+        .trim()
+        .to_string();
+    let gone = (0..50).any(|_| {
+        let gone = !Path::new(&format!("/proc/{pid}")).exists();
+        if !gone {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        gone
+    });
+    if !gone {
+        // Do not leave the sleeper on the host the case failed on.
+        let _ = support::status_fenced(Command::new("kill").args(["-9", &pid]));
+    }
+    assert!(gone, "process {pid} outlived the deadline kill: {said}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn memory_day_kills_a_run_past_its_deadline_and_says_so() {
     let dir = bundle("sleep 30");

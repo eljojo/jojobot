@@ -54,6 +54,43 @@ def command():
     return [str(binary), *arguments], directory, environment
 
 
+def descendants(pid):
+    """Every process below `pid`, read from /proc."""
+    children = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            # The command name may hold spaces and brackets; the fields follow its `)`.
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            children.setdefault(int(fields[1]), []).append(int(entry.name))
+        except (OSError, IndexError, ValueError):
+            continue
+    found, pending = [], [pid]
+    while pending:
+        for child in children.get(pending.pop(), []):
+            found.append(child)
+            pending.append(child)
+    return found
+
+
+def stop_tree(pid):
+    """Kill the binary and everything it started. The case starts the server and its
+    store in process groups of their own, which a kill of the binary's group does not
+    reach, and a process whose parent has died is nobody's child, so the tree is read
+    and killed before the binary's own group is."""
+    for _ in range(5):
+        below = descendants(pid)
+        if not below:
+            break
+        for victim in below:
+            try:
+                os.kill(victim, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    os.killpg(pid, signal.SIGKILL)
+
+
 def main():
     BAR.mkdir(parents=True, exist_ok=True)
     log = BAR / "memory.log"
@@ -65,7 +102,7 @@ def main():
         try:
             code = child.wait(timeout=DEADLINE)
         except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
+            stop_tree(child.pid)
             child.wait()
             code = 124
     wall = round(time.monotonic() - began)
