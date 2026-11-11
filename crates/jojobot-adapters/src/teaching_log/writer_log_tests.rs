@@ -49,6 +49,10 @@ on_the_writers_log!(
         => |log| a_mixed_batch_is_applied(log.clone(), true),
     a_teaching_member_before_a_foreign_one_is_applied_on_the_writers_log
         => |log| a_mixed_batch_is_applied(log.clone(), false),
+    a_teaching_member_after_a_foreign_one_written_after_open_is_caught_up_on_the_writers_log
+        => |log| a_mixed_batch_written_after_open_is_caught_up(log.clone(), true),
+    a_teaching_member_before_a_foreign_one_written_after_open_is_caught_up_on_the_writers_log
+        => |log| a_mixed_batch_written_after_open_is_caught_up(log.clone(), false),
     a_member_of_another_family_leaves_the_replay_equal_on_the_writers_log
         => |log| another_family_leaves_the_replay_equal(log.clone()),
     an_unknown_kind_of_teachings_own_family_fails_the_replay_on_the_writers_log

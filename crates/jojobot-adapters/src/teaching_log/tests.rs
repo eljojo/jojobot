@@ -564,6 +564,61 @@ pub(super) async fn a_mixed_batch_is_applied(log: Arc<dyn LogStore>, foreign_fir
     );
 }
 
+/// **The same mixed batch, appended after the ledger is open, is applied by the live
+/// catch-up of the next write.** The cases above append before the open, so they prove
+/// the boot's replay and never the tail a running ledger reads. The batch is written
+/// behind the ledger's back, as another family's writer does, and the ledger meets it
+/// only when a write reads the log from its held head.
+pub(super) async fn a_mixed_batch_written_after_open_is_caught_up(
+    log: Arc<dyn LogStore>,
+    foreign_first: bool,
+) {
+    let opened = LoggedTeachings::open(log.clone(), &[]).await.unwrap();
+    let recorded = codec::encode(&TeachingEvent::Recorded {
+        run: RunId("marge".into()),
+        domain: "mail".into(),
+        taught_at: at(3),
+    });
+    let foreign = foreign_member();
+    let members = if foreign_first {
+        vec![foreign, recorded]
+    } else {
+        vec![recorded, foreign]
+    };
+    append_members(&*log, members).await;
+    assert!(
+        !opened.has_contact(&sid("marge"), "mail").await.unwrap(),
+        "the ledger has not read the tail yet"
+    );
+    assert!(
+        opened
+            .first_contact(&sid("homer"), "claims", at(4))
+            .await
+            .unwrap(),
+        "a write after the batch lands"
+    );
+    assert!(
+        opened.has_contact(&sid("marge"), "mail").await.unwrap(),
+        "the write's catch-up applied the teaching member of the mixed batch: {:?}",
+        opened.taught().await
+    );
+    assert_eq!(
+        head(&*log).await,
+        3,
+        "it appends at the head past the batch"
+    );
+}
+
+#[tokio::test]
+async fn a_teaching_member_after_a_foreign_one_written_after_open_is_caught_up() {
+    a_mixed_batch_written_after_open_is_caught_up(Arc::new(InMemoryLog::default()), true).await;
+}
+
+#[tokio::test]
+async fn a_teaching_member_before_a_foreign_one_written_after_open_is_caught_up() {
+    a_mixed_batch_written_after_open_is_caught_up(Arc::new(InMemoryLog::default()), false).await;
+}
+
 #[tokio::test]
 async fn a_teaching_member_after_a_foreign_one_in_one_batch_is_applied() {
     a_mixed_batch_is_applied(Arc::new(InMemoryLog::default()), true).await;
