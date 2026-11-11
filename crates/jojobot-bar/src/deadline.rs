@@ -283,15 +283,18 @@ pub fn run_job_for(
             } else {
                 format!("{label} ({running})")
             };
-            writeln!(
-                &*note,
-                "\n{MARKER} {what} was still running after {}s and was killed",
-                limit.as_secs_f64()
-            )?;
+            writeln!(&*note, "\n{}", timed_out_line(&what, limit.as_secs_f64()))?;
             return Ok(Some(false));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// **The line a killed binary leaves in its job's output**, the one place its words
+/// are written: the deadline writes it and the cases that read a timed-out binary
+/// build their text from it, so a case cannot hold a spelling the bar never prints.
+pub(crate) fn timed_out_line(what: &str, seconds: f64) -> String {
+    format!("{MARKER} {what} was still running after {seconds}s and was killed")
 }
 
 /// **The binaries that timed out**, one verdict line each, read from the text the

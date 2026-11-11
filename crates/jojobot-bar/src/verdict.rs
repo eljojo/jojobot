@@ -830,7 +830,8 @@ mod tests {
     #[test]
     fn a_binary_killed_at_its_deadline_is_both_timed_out_and_crashed() {
         let text = format!(
-            "{KILLED}\nbar: TIMED OUT: user_stories was still running after 1s and was killed\n"
+            "{KILLED}\n{}\n",
+            crate::deadline::timed_out_line("user_stories", 1.0)
         );
         let counted = crate::summarize_test_output(&text);
         assert_eq!(counted.crashed, ["user_stories"], "{:?}", counted.crashed);
