@@ -310,7 +310,7 @@ struct Boot {
 /// asks `/healthz` as `first_answer` does.
 fn watch_boot(run: &mut Running) -> Boot {
     let started = Instant::now();
-    let patience = jojobot_exercise::room::READY_TIMEOUT;
+    let patience = BOOT_PATIENCE;
     let mut readings = vec![Reading {
         at: Duration::ZERO,
         memory: memory_of_pid(run.pid).unwrap_or_default(),
@@ -533,6 +533,12 @@ async fn make(
         }
     }
 }
+
+/// How long a first boot over a replayed dump may take before the report gives up.
+/// The claims import of that boot writes the whole dump's claims into the event
+/// log, and on a CI host running many binaries side by side it took longer than
+/// the 120 seconds a room allows a server.
+const BOOT_PATIENCE: Duration = Duration::from_secs(600);
 
 /// Clients that make the day's calls at once. The grow step writes through eight.
 const CLIENTS: usize = 8;
