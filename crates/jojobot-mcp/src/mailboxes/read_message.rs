@@ -49,7 +49,7 @@ impl Jojobot {
                        mail. A message its sender replaced before anyone read it is \
                        superseded, a final state: reading it by id takes nothing, and its \
                        envelope says state superseded and names what replaced it. Taking delivery is NOT handling: \
-                       after completing work, close your mail with mark_processed or post_message. \
+                       after completing work, close your mail with mark_processed or a reply with `in_reply_to`. \
                        Progress reports must leave the original open. Reading your own mail renews \
                        your role claim. WITH `history: true` THIS VERB TAKES NO \
                        DELIVERY: it answers the message's changes of state in order, with the \
