@@ -8,6 +8,144 @@ use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
 
 mod current_handle;
 
+/// Legacy writes with no bot recover their run's writer exactly as the import does.
+#[tokio::test]
+async fn legacy_claim_readers_use_the_imports_run_selector() {
+    use jojobot_domain::memory::{Edge, EdgeShape};
+    let scratch = Scratch::new("legacy-selector");
+    let mut store = Dolt::start(&scratch.0, free_port()).await.expect("store");
+    let pool = migrated_database(&store, "legacyselector")
+        .await
+        .expect("database");
+    migrate::run(&pool).await.expect("schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("kinds");
+    for (handle, name) in [
+        ("bot:bart", "Bart"),
+        ("bot:marge", "Marge"),
+        ("thread:alpha", "Alpha"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(EntityId(handle.into()), name, "case"))
+            .await
+            .expect("added")
+            .written()
+            .expect("allowed");
+    }
+    let bart = EntityId("bot:bart".into());
+    let thread = EntityId("thread:alpha".into());
+    let thought = memory
+        .capture(NewFact {
+            session: Some("run-alpha".into()),
+            edge: Some(Edge::new(EdgeShape::Connection, thread.clone())),
+            ..NewFact::about(bart.clone(), "follows alpha", date(2026, 10, 1))
+        })
+        .await
+        .expect("capture")
+        .written()
+        .expect("allowed");
+    memory
+        .capture(NewFact {
+            session: Some("run-alpha".into()),
+            ..NewFact::about(thread.clone(), "alpha note", date(2026, 10, 1))
+        })
+        .await
+        .expect("capture")
+        .written()
+        .expect("allowed");
+    // Older writes carry only the run; its rows are the remaining origin.
+    sqlx::query("UPDATE fact_write SET bot = NULL")
+        .execute(&pool)
+        .await
+        .expect("legacy writes");
+    for (id, bot) in [("alpha", "bot:bart"), ("beta", "bot:marge")] {
+        sqlx::query("INSERT INTO session (id, sid, bot, focus, started_at, state) VALUES (?, 'run-alpha', ?, 'writing', '2026-10-01T00:00:00Z', 'wrapped')")
+            .bind(id).bind(bot).execute(&pool).await.expect("session row");
+    }
+    let key = memory
+        .resolve(&mut pool.begin().await.expect("tx"), &bart)
+        .await
+        .expect("resolve")
+        .expect("bot")
+        .0;
+    for (state, alpha_time, beta_time, expected) in [
+        (
+            "active",
+            "2026-10-02T00:00:00Z",
+            "2026-10-01T00:00:00Z",
+            "bot:marge",
+        ),
+        (
+            "wrapped",
+            "2026-10-01T00:00:00Z",
+            "2026-10-02T00:00:00Z",
+            "bot:marge",
+        ),
+        (
+            "wrapped",
+            "2026-10-01T00:00:00Z",
+            "2026-10-01T00:00:00Z",
+            "bot:bart",
+        ),
+    ] {
+        sqlx::query("UPDATE session SET started_at = ? WHERE id = 'alpha'")
+            .bind(alpha_time)
+            .execute(&pool)
+            .await
+            .expect("alpha time");
+        sqlx::query("UPDATE session SET state = ?, started_at = ? WHERE id = 'beta'")
+            .bind(state)
+            .bind(beta_time)
+            .execute(&pool)
+            .await
+            .expect("beta order");
+        let imported = memory.import_rows().await.expect("import rows");
+        let imported_bot = imported
+            .rows
+            .facts
+            .iter()
+            .find(|fact| fact.local == thought.id.as_str() && fact.home.0 == key.as_str())
+            .expect("imported thought")
+            .writes[0]
+            .run_bot
+            .clone()
+            .expect("run bot");
+        assert_eq!(imported_bot.as_str(), expected, "the selector value table");
+        let other = expected != bart.as_str();
+        let mut tx = pool.begin().await.expect("tx");
+        assert_eq!(
+            memory
+                .another_bots_claim(&mut tx, &key, &thought.id, &key)
+                .await
+                .expect("single reader"),
+            other,
+            "single reader: {state}, {alpha_time}, {beta_time}"
+        );
+        assert_eq!(
+            memory
+                .fill_writers_in(&mut tx, &thread)
+                .await
+                .expect("thread writers"),
+            vec![EntityId(expected.into())],
+            "thread reader"
+        );
+        tx.rollback().await.expect("rollback");
+        let recalled = memory.recall(&bart).await.expect("assembled claims");
+        assert_eq!(
+            recalled
+                .iter()
+                .find(|fact| fact.id == thought.id)
+                .expect("thought")
+                .written_by_another,
+            other,
+            "batched reader"
+        );
+    }
+    store.stop().await;
+}
+
 /// 🚨 **The substrate and the claim's own row answer the same thing**, on a
 /// claim written once and on a claim corrected twice.
 ///

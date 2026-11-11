@@ -189,8 +189,9 @@ impl DoltMemory {
                      JOIN (SELECT fact_id, MIN(ordinal) AS first FROM fact_write
                            WHERE entity = ? AND fact_id IN ({marks}) GROUP BY fact_id) f
                        ON f.fact_id = w.fact_id AND f.first = w.ordinal
-                     LEFT JOIN session s ON s.sid = w.session
-                     WHERE w.entity = ?"
+                     LEFT JOIN ({}) s ON s.sid = w.session
+                     WHERE w.entity = ?",
+                    write_origin::RUN_BOTS
                 )))
                 .bind(name.as_str());
                 let first = connected

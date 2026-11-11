@@ -3657,16 +3657,18 @@ impl DoltMemory {
         // **The bot the first write recorded, else the bot behind its run** (the
         // domain's one rule, [`first_writer`]): a run that has written nothing is
         // behind no session row, so the write keeps the bot itself.
-        let first: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT w.bot, s.bot FROM fact_write w LEFT JOIN session s ON s.sid = w.session
+        let first: Option<(Option<String>, Option<String>)> =
+            sqlx::query_as(AssertSqlSafe(format!(
+                "SELECT w.bot, s.bot FROM fact_write w LEFT JOIN ({}) s ON s.sid = w.session
              WHERE w.entity = ? AND w.fact_id = ?
              ORDER BY w.ordinal ASC LIMIT 1",
-        )
-        .bind(stored_home.as_str())
-        .bind(id.as_str())
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(store)?;
+                write_origin::RUN_BOTS
+            )))
+            .bind(stored_home.as_str())
+            .bind(id.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
         let Some((recorded, of_the_run)) = first else {
             return Ok(false);
         };
@@ -4304,16 +4306,16 @@ impl DoltMemory {
                 // **The bot the first write recorded, else the bot behind its run**
                 // (the domain's one rule, [`first_writer`]): a run no session row
                 // answers to still names its bot through the write.
-                let first: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-                    "SELECT w.bot, s.bot FROM fact_write w LEFT JOIN session s ON s.sid = w.session
+                let first: Option<(Option<String>, Option<String>)> =
+                    sqlx::query_as(AssertSqlSafe(format!(
+                    "SELECT w.bot, s.bot FROM fact_write w LEFT JOIN ({}) s ON s.sid = w.session
                      WHERE w.entity = ? AND w.fact_id = ?
-                     ORDER BY w.ordinal ASC LIMIT 1",
-                )
-                .bind(key.as_str())
-                .bind(fact.id.as_str())
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(store)?;
+                     ORDER BY w.ordinal ASC LIMIT 1", write_origin::RUN_BOTS)))
+                    .bind(key.as_str())
+                    .bind(fact.id.as_str())
+                    .fetch_optional(&mut **tx)
+                    .await
+                    .map_err(store)?;
                 let Some((recorded, of_the_run)) = first else {
                     continue;
                 };
