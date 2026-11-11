@@ -20,8 +20,8 @@ use jojobot_domain::log::claims::import;
 use jojobot_domain::memory::WriteClass;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{
-    Edge, EdgeShape, EntityId, FactAddress, FactPatch, Guarded, Memory, NewEntity, NewFact,
-    Override, Provenance, guard,
+    Edge, EdgeShape, EntityId, EntityPatch, FactAddress, FactPatch, Guarded, Memory, NewEntity,
+    NewFact, Override, Provenance, guard,
 };
 
 async fn thing(memory: &dyn Memory, handle: &str, name: &str) -> EntityId {
@@ -79,6 +79,54 @@ async fn stored(pool: &sqlx::MySqlPool, table: &str) -> i64 {
         .fetch_one(pool)
         .await
         .expect("a count")
+}
+
+/// **A row of the one table the import refuses is read with its claim and refused by
+/// name.** The current writer emits no event metadata, so the row is the shape an older
+/// build left: a key and a value for one claim. The reader keeps it, and the import
+/// names it and never drops it.
+#[tokio::test]
+async fn a_metadata_row_is_read_with_its_claim_and_the_import_refuses_it_by_name() {
+    let scratch = Scratch::new("import-metadata");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "importmetadata")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    say(&memory, &homer, "eats donuts", &[("mood", "happy")], 1).await;
+    sqlx::query(
+        "INSERT INTO fact_event_metadata (fact_home, fact_id, `key`, value) \
+         SELECT entity, id, 'kind', 'note' FROM fact WHERE content = 'eats donuts'",
+    )
+    .execute(&pool)
+    .await
+    .expect("a metadata row");
+
+    let read = memory.import_rows().await.expect("the reader reads");
+    assert!(
+        read.findings.is_empty(),
+        "the row is placed: {:?}",
+        read.findings
+    );
+    assert_eq!(read.rows.metadata.len(), 1, "{:?}", read.rows.metadata);
+    let row = &read.rows.metadata[0];
+    assert_eq!((row.key.as_str(), row.value.as_str()), ("kind", "note"));
+    assert_eq!(stored(&pool, "fact_event_metadata").await, 1);
+    assert!(
+        matches!(
+            import::import(&read.rows),
+            Err(import::ImportError::MetadataHeld { ref key, .. }) if key == "kind"
+        ),
+        "the import refuses the row by name"
+    );
+    server.stop().await;
 }
 
 #[tokio::test]
@@ -316,6 +364,18 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
     )
     .await;
     say(&memory, &krusty, "hosts a show", &[], 1).await;
+    // **An alias, so the table the count below compares is not empty**, written as the
+    // port writes one.
+    memory
+        .update_entity(
+            &homer,
+            EntityPatch {
+                aliases: Some(vec!["Homie".to_string()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the alias is written");
 
     // A merge: Lisa is folded into Bart.
     memory
@@ -443,6 +503,7 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
     }
     for table in [
         "entity",
+        "entity_alias",
         "fact",
         "fact_write",
         "entity_write",
@@ -456,6 +517,22 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
             "the store must hold {table} rows"
         );
     }
+    // **What was written is what is read**, so a reader that kept the right number of
+    // rows with the wrong content fails too.
+    assert!(
+        rows.entities
+            .iter()
+            .any(|row| row.handle == "person:homer" && row.aliases == ["Homie"]),
+        "the alias is read with its thing: {:?}",
+        rows.entities
+            .iter()
+            .map(|row| (&row.handle, &row.aliases))
+            .collect::<Vec<_>>()
+    );
+    // **Event metadata is unwritten in production**: the import refuses a row that holds
+    // one, by name. A store written through the port holds none, so its count of 0 is
+    // the store's and not an unguarded table; the next case reads a row of it.
+    assert_eq!(stored(&pool, "fact_event_metadata").await, 0);
     import::import(rows).expect("the rows map through the import with no error");
 
     // ── what the counts cannot see: a fold, a declaration and a reference ──
