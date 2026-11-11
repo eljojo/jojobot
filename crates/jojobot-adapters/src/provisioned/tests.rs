@@ -1831,7 +1831,7 @@ async fn every_claim_write_screens_overlay_keys() {
             "capture" => over.capture(claim).await.map(|_| ()),
             "update_fact" => over.update_fact(&address, patch, &caller).await.map(|_| ()),
             "update_fact_with_claim.patch" => over
-                .update_fact_with_claim(&address, patch, &caller, plain)
+                .update_fact_with_claim(&address, patch, &caller, plain.clone())
                 .await
                 .map(|_| ()),
             "update_fact_with_claim.claim" => over
@@ -1869,10 +1869,88 @@ async fn every_claim_write_screens_overlay_keys() {
                 .is_empty(),
             "the refused write created no event"
         );
-        over.record_app_event(event.clone())
-            .await
-            .expect("plain event passes through")
-            .landed()
-            .expect("the refusal did not spend the attempt");
+        match route {
+            "add_entity_with_first_claim" => {
+                let mut first = plain.clone();
+                first.subject = event.entity.id.clone();
+                over.add_entity_with_first_claim(event.entity.clone(), first)
+                    .await
+                    .expect("plain first claim passes")
+                    .written()
+                    .expect("the entity and claim landed");
+            }
+            "update_entity_with_claim" => {
+                over.update_entity_with_claim(&kept, EntityPatch::default(), plain.clone())
+                    .await
+                    .expect("plain companion passes")
+                    .written()
+                    .expect("the edit and claim landed");
+            }
+            "capture" => {
+                over.capture(plain.clone())
+                    .await
+                    .expect("plain claim passes")
+                    .written()
+                    .expect("the claim landed");
+            }
+            "update_fact" => {
+                over.update_fact(
+                    &address,
+                    FactPatch {
+                        content: Some("beside".into()),
+                        ..FactPatch::default()
+                    },
+                    &caller,
+                )
+                .await
+                .expect("plain patch passes")
+                .written()
+                .expect("the patch landed");
+            }
+            "update_fact_with_claim.patch" | "update_fact_with_claim.claim" => {
+                over.update_fact_with_claim(&address, FactPatch::default(), &caller, plain.clone())
+                    .await
+                    .expect("plain patch and companion pass")
+                    .written()
+                    .expect("the patch and claim landed");
+            }
+            "retract_with_claim" => {
+                over.retract_with_claim(&address, None, day, &caller, None, plain.clone())
+                    .await
+                    .expect("plain retraction companion passes")
+                    .written()
+                    .expect("the retraction and claim landed");
+            }
+            "merge_with_claim" => {
+                over.merge_with_claim(&spare, &kept, None, day, &caller, plain.clone())
+                    .await
+                    .expect("plain merge companion passes")
+                    .written()
+                    .expect("the merge and claim landed");
+            }
+            "record_app_event" => {
+                over.record_app_event(event.clone())
+                    .await
+                    .expect("plain event passes through")
+                    .landed()
+                    .expect("the refusal did not spend the attempt");
+            }
+            _ => unreachable!("the table names every route"),
+        }
+        let (subject, content) = if route == "add_entity_with_first_claim" {
+            (&event.entity.id, "beside")
+        } else if route == "record_app_event" {
+            (&event.entity.id, event.first.content.as_str())
+        } else {
+            (&kept, "beside")
+        };
+        assert!(
+            over.recall(subject)
+                .await
+                .expect("plain write is readable")
+                .iter()
+                .any(|fact| fact.content == content),
+            "{route} must land its own plain input"
+        );
     }
 }
