@@ -119,6 +119,11 @@ const STOP_PATIENCE: Duration = Duration::from_secs(60);
 /// of a case (preparing its store, stopping the process) runs side by side.
 static ONE_BOOT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// The memory report: the server's resident memory across a first boot over the
+/// production-sized store and a replayed day of calls.
+#[path = "boot_measures/memory_report.rs"]
+mod memory_report;
+
 struct Running {
     /// Held from before the process starts until it has answered.
     boot_turn: Option<std::sync::MutexGuard<'static, ()>>,
@@ -464,6 +469,23 @@ async fn restore_into(name: &str, source: &str, growing: bool) -> Scratch {
 }
 
 async fn restore_dump(name: &str, fixture: &str, growing: bool) -> Scratch {
+    let state = replay_dump(name, fixture).await;
+    let mut first = if growing {
+        recording(state)
+    } else {
+        spawn(state)
+    };
+    first.first_answer();
+    if growing {
+        grow(first.http_port).await;
+    }
+    first.stopped().0
+}
+
+/// **The store a dump holds, replayed into a directory of its own and stopped**, so
+/// no binary has booted over it yet: the next boot is a first boot over the rows the
+/// dump holds.
+async fn replay_dump(name: &str, fixture: &str) -> Scratch {
     // **A relative path is the workspace root's**, as the upgrade gate reads it: a
     // test runs from its own crate's directory, and CI names the directory
     // `target/upgrade-fixture`.
@@ -494,16 +516,7 @@ async fn restore_dump(name: &str, fixture: &str, growing: bool) -> Scratch {
             .unwrap_or_else(|e| panic!("replaying the recording failed on:\n{statement}\n{e}"));
     }
     store.stop().await;
-    let mut first = if growing {
-        recording(state)
-    } else {
-        spawn(state)
-    };
-    first.first_answer();
-    if growing {
-        grow(first.http_port).await;
-    }
-    first.stopped().0
+    state
 }
 
 /// The cached grown store, restored once for the whole test binary: every case
@@ -1098,6 +1111,66 @@ async fn compare_grown_claims(scaled: bool) {
     store.stop().await;
 }
 
+/// **One tool call to a running server**, answered as the client received it. An
+/// answer that is an error fails the case.
+async fn call(
+    peer: &rmcp::Peer<rmcp::RoleClient>,
+    name: &'static str,
+    arguments: serde_json::Value,
+) -> serde_json::Value {
+    use rmcp::model::CallToolRequestParams;
+    let result = peer
+        .call_tool(
+            CallToolRequestParams::new(name)
+                .with_arguments(arguments.as_object().expect("an object").clone()),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{name} failed: {e}"));
+    let text = serde_json::to_value(&result).expect("a result serializes");
+    assert!(text["isError"] != true, "{name} was an error: {text}");
+    text
+}
+
+/// **The JSON a tool answered with**, from the text of its first content block.
+fn answer_of(result: &serde_json::Value) -> serde_json::Value {
+    result["content"][0]["text"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .unwrap_or_default()
+}
+
+/// **A write**, answered. A name that resembles a known one comes back blocked with
+/// a token that lets the same call through, which a bulk writer takes. A refused
+/// write is a successful call, so the answer is read: a write that did not land
+/// would leave the store smaller than the case says. Returns the answer of the call
+/// that wrote.
+async fn writing(
+    peer: &rmcp::Peer<rmcp::RoleClient>,
+    name: &'static str,
+    arguments: serde_json::Value,
+) -> serde_json::Value {
+    let first = answer_of(&call(peer, name, arguments.clone()).await);
+    assert!(
+        first["wrote"] != false || first["status"] == "blocked",
+        "{name} wrote nothing: {first}"
+    );
+    if first["status"] != "blocked" {
+        return first;
+    }
+    let token = first["override_token"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{name} was blocked with no token: {first}"))
+        .to_string();
+    let mut again = arguments;
+    again["override_token"] = token.into();
+    let second = answer_of(&call(peer, name, again).await);
+    assert!(
+        second["status"] != "blocked",
+        "{name} was blocked after its token: {second}"
+    );
+    second
+}
+
 /// **Write the rows of the grown store through the server's own front door.** The
 /// recorded store holds a few dozen things and a handful of messages; the fold
 /// fill and the search index cost what the instance holds, so a boot measured
@@ -1111,7 +1184,7 @@ async fn compare_grown_claims(scaled: bool) {
 /// [`PRODUCTION_MESSAGES`].
 async fn grow(port: u16) {
     use rmcp::ServiceExt;
-    use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
+    use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
     use rmcp::transport::StreamableHttpClientTransport;
 
     let client = ClientInfo::new(
@@ -1125,58 +1198,6 @@ async fn grow(port: u16) {
     .expect("the client connects to the server");
     let started = Instant::now();
     let peer = client.peer().clone();
-
-    async fn call(
-        peer: &rmcp::Peer<rmcp::RoleClient>,
-        name: &'static str,
-        arguments: serde_json::Value,
-    ) -> serde_json::Value {
-        let result = peer
-            .call_tool(
-                CallToolRequestParams::new(name)
-                    .with_arguments(arguments.as_object().expect("an object").clone()),
-            )
-            .await
-            .unwrap_or_else(|e| panic!("{name} failed: {e}"));
-        let text = serde_json::to_value(&result).expect("a result serializes");
-        assert!(text["isError"] != true, "{name} was an error: {text}");
-        text
-    }
-    // A name that resembles a known one comes back blocked with a token that
-    // lets the same call through, which a bulk writer takes.
-    async fn writing(
-        peer: &rmcp::Peer<rmcp::RoleClient>,
-        name: &'static str,
-        arguments: serde_json::Value,
-    ) {
-        // **A refused write is a successful call**, so the answer is read: a write
-        // that did not land would leave the store smaller than the case says.
-        let answer = |result: &serde_json::Value| {
-            result["content"][0]["text"]
-                .as_str()
-                .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
-                .unwrap_or_default()
-        };
-        let first = answer(&call(peer, name, arguments.clone()).await);
-        assert!(
-            first["wrote"] != false || first["status"] == "blocked",
-            "{name} wrote nothing: {first}"
-        );
-        if first["status"] != "blocked" {
-            return;
-        }
-        let token = first["override_token"]
-            .as_str()
-            .unwrap_or_else(|| panic!("{name} was blocked with no token: {first}"))
-            .to_string();
-        let mut again = arguments;
-        again["override_token"] = token.into();
-        let second = answer(&call(peer, name, again).await);
-        assert!(
-            second["status"] != "blocked",
-            "{name} was blocked after its token: {second}"
-        );
-    }
 
     // **The recorded store may hold a run of this bot**, and a boot then offers
     // resume-or-new and hands back no sid until it is answered.
