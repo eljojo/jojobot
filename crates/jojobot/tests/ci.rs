@@ -960,6 +960,18 @@ fn the_memory_replay_has_a_job_that_cannot_stop_the_check() {
         last.contains("cat target/bar/memory-day.log"),
         "the job does not end on the day's verdict:\n{last}"
     );
+    // A docs-only run skips the day, and must not print a verdict for a day that never
+    // ran; a cancelled run has no verdict to print either.
+    let condition = last
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("if: "))
+        .unwrap_or_else(|| panic!("the verdict step has no condition:\n{last}"));
+    for wanted in ["steps.plan.outputs.fast != 'true'", "!cancelled()"] {
+        assert!(
+            condition.contains(wanted),
+            "the verdict step's condition lacks {wanted}: {condition}"
+        );
+    }
     let target = dry_run(&["memory", "CI_ROOT=/tmp/jojobot-ci/1"]);
     assert!(
         target.contains("scripts/ci-root /tmp/jojobot-ci/1 python3 scripts/memory-day"),
