@@ -17,7 +17,7 @@ use jojobot_adapters::writer::Writer;
 use jojobot_domain::log::Event;
 use jojobot_domain::log::claims::import::import;
 use jojobot_domain::log::claims::{ClaimEvent, State};
-use jojobot_domain::memory::boot_reader::BootReader;
+
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, Memory, NewEntity, NewFact, Provenance,
@@ -2066,10 +2066,9 @@ async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
 /// **Over a key write with no claim, the store and the State agree on the history
 /// of a key and differ on the ages of the thing. The difference is known, and the
 /// State is the side that is right**: a value no claim backs is not a fact. The
-/// history of a key (`history`, `key_trails` and the boot reader's
-/// `key_trails_many`) reads the writes without a join, but drops a write whose
-/// claim row it cannot find, so it lists what the State lists. The ages
-/// (`field_ages`, through `newest_change`, and the boot reader's `field_ages_many`)
+/// history of a key (`history` and `key_trails`) reads the writes without a
+/// join, but drops a write whose claim row it cannot find, so it lists what the
+/// State lists. The ages (`field_ages`, through `newest_change`)
 /// read `field_write` and count the write's moment as a change of the thing, and the
 /// State's `newest_change` does not. The orphan is placed at a moment far ahead of
 /// every other, so the ages show it. When the store's ages drop the orphan too, the
@@ -2088,19 +2087,12 @@ async fn claims_import_agrees_with_the_stores_history_and_differs_on_its_ages_ov
 
     // What each read path of the store returns for the thing, next to the State.
     let ahead: jiff::Timestamp = "2099-01-01T00:00:00Z".parse().expect("a moment");
-    let reader = memory.boot_reader();
     let count = |trails: &jojobot_domain::memory::KeyTrails, key: &str| {
         trails.history.get(key).map_or(0, Vec::len)
     };
     let own_trails = memory.key_trails(&homer).await.expect("the trails read");
-    let bulk_trails = reader
-        .key_trails_many(std::slice::from_ref(&homer))
-        .await
-        .expect("the bulk trails read")
-        .remove(&homer)
-        .expect("the bulk read answers for the thing");
     let state_trails = state.key_trails(&object);
-    let observed = vec![
+    let observed = [
         (
             "history mood",
             memory.history(&homer, "mood").await.expect("history").len(),
@@ -2111,25 +2103,11 @@ async fn claims_import_agrees_with_the_stores_history_and_differs_on_its_ages_ov
         ),
         ("key_trails mood", count(&own_trails, "mood")),
         ("key_trails hair", count(&own_trails, "hair")),
-        ("key_trails_many mood", count(&bulk_trails, "mood")),
-        ("key_trails_many hair", count(&bulk_trails, "hair")),
         ("state trails mood", count(&state_trails, "mood")),
         ("state trails hair", count(&state_trails, "hair")),
         (
             "field_ages counts the orphan",
             usize::from(memory.field_ages(&homer).await.expect("ages").newest == Some(ahead)),
-        ),
-        (
-            "field_ages_many counts the orphan",
-            usize::from(
-                reader
-                    .field_ages_many(std::slice::from_ref(&homer))
-                    .await
-                    .expect("bulk ages")
-                    .get(&homer)
-                    .and_then(|ages| ages.newest)
-                    == Some(ahead),
-            ),
         ),
         (
             "state ages count the orphan",
@@ -2139,26 +2117,23 @@ async fn claims_import_agrees_with_the_stores_history_and_differs_on_its_ages_ov
     // The history of a key: the store and the State list the held write and not the
     // orphan, and a key only an orphan names has no history in either.
     assert_eq!(
-        observed[..8],
+        observed[..6],
         [
             ("history mood", 1),
             ("history hair", 0),
             ("key_trails mood", 1),
             ("key_trails hair", 0),
-            ("key_trails_many mood", 1),
-            ("key_trails_many hair", 0),
             ("state trails mood", 1),
             ("state trails hair", 0),
         ],
         "the history of a key agrees: the orphan is in none of them"
     );
-    // The ages: both of the store's reads count the orphan's moment, the State's does
+    // The ages: the store's read counts the orphan's moment, the State's does
     // not. A known difference, with the State right.
     assert_eq!(
-        observed[8..],
+        observed[6..],
         [
             ("field_ages counts the orphan", 1),
-            ("field_ages_many counts the orphan", 1),
             ("state ages count the orphan", 0),
         ],
         "the store's ages count a write no claim backs and the State's do not"
@@ -2169,14 +2144,6 @@ async fn claims_import_agrees_with_the_stores_history_and_differs_on_its_ages_ov
     // the store's two reads and in the State, and the orphan's moment is in none.
     let held_in_the_state = state.held_since(&object, &[]);
     let held_in_the_store = memory.field_ages(&homer).await.expect("ages").keys;
-    let held_in_the_bulk = reader
-        .field_ages_many(std::slice::from_ref(&homer))
-        .await
-        .expect("bulk ages")
-        .remove(&homer)
-        .expect("the bulk read answers for the thing")
-        .keys;
-    assert_eq!(held_in_the_store, held_in_the_bulk);
     assert_eq!(
         held_in_the_store.keys().collect::<Vec<_>>(),
         held_in_the_state.keys().collect::<Vec<_>>(),
