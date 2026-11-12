@@ -474,6 +474,8 @@ impl State {
     /// **A thing as its scan serves it**, from that thing's own objects, claims
     /// and streams. A thing the State does not hold has none.
     pub fn scan(&self, subject: &ObjectId, declared: &[DeclaredType]) -> Option<ThingScan<'_>> {
+        #[cfg(test)]
+        State::note_scan();
         let subject = self.survivor(subject);
         let body = self.objects.get(subject)?;
         let (mut claims, mut unmapped): (Vec<_>, Vec<_>) = self
@@ -756,6 +758,8 @@ mod served;
 pub use document::DocumentParts;
 #[cfg(test)]
 mod built_on_tests;
+#[cfg(test)]
+mod cost_tests;
 #[cfg(test)]
 mod fact_tests;
 #[cfg(test)]

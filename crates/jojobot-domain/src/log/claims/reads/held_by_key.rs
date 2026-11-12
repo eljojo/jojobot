@@ -19,6 +19,8 @@ impl State {
         self.objects
             .iter()
             .filter_map(|(object, body)| {
+                #[cfg(test)]
+                State::note_visit();
                 let entity = self.entity_of(object, body)?;
                 (entity.browsable() && kind.is_none_or(|k| entity.kind == k))
                     .then(|| (entity.id, self.fields_served(object, &declared)))

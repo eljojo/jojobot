@@ -447,6 +447,8 @@ impl Eq for HeldFields {}
 #[cfg(test)]
 thread_local! {
     static FOLDS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SCANS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static VISITS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// **What the events so far say.**
@@ -1246,6 +1248,32 @@ impl State {
     #[cfg(test)]
     pub(crate) fn reset_folds_counted() {
         FOLDS_COUNTED.with(|n| n.set(0));
+        SCANS_COUNTED.with(|n| n.set(0));
+        VISITS_COUNTED.with(|n| n.set(0));
+    }
+
+    /// The count of things a read built a scan of on this thread, for a case.
+    #[cfg(test)]
+    pub(crate) fn scans_counted() -> usize {
+        SCANS_COUNTED.with(std::cell::Cell::get)
+    }
+
+    /// The count of things a browse looked at on this thread, for a case.
+    #[cfg(test)]
+    pub(crate) fn visits_counted() -> usize {
+        VISITS_COUNTED.with(std::cell::Cell::get)
+    }
+
+    /// Note a scan of one thing.
+    #[cfg(test)]
+    pub(super) fn note_scan() {
+        SCANS_COUNTED.with(|n| n.set(n.get() + 1));
+    }
+
+    /// Note one thing looked at by a browse.
+    #[cfg(test)]
+    pub(super) fn note_visit() {
+        VISITS_COUNTED.with(|n| n.set(n.get() + 1));
     }
 
     /// **Whether what is held is what a fold of the streams makes**, for the case
