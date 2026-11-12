@@ -233,6 +233,100 @@ async fn age_the_recording(pool: &sqlx::MySqlPool, hours: i64) {
     age_the_event_log(pool, hours).await;
 }
 
+/// **One claims-family event, every moment in it moved back by `earlier`**, or
+/// `None` for an event of another family. A moment is a text of the form the
+/// store's columns hold, a full date and time ending in `Z`, which is what the
+/// column loop above moves; the epoch is the store's "no moment" and stays. The
+/// event is read as plain JSON so that a moment inside any payload moves, and it
+/// must still decode as the claims family's event afterwards.
+fn aged_claim_member(member: &[u8], earlier: jiff::SignedDuration) -> Option<Vec<u8>> {
+    use jojobot_adapters::claims_log::codec;
+    codec::decode_own(member).unwrap_or_else(|e| {
+        panic!("the ageing cannot decode a claims event of the recording's log: {e}")
+    })?;
+    fn move_moments(value: &mut serde_json::Value, earlier: jiff::SignedDuration) {
+        match value {
+            serde_json::Value::String(text) => {
+                let shaped = text.len() > 11
+                    && text.ends_with('Z')
+                    && text.as_bytes().get(10) == Some(&b'T');
+                if let Some(moment) = shaped
+                    .then(|| text.parse::<jiff::Timestamp>().ok())
+                    .flatten()
+                    .filter(|moment| *moment > jiff::Timestamp::UNIX_EPOCH)
+                {
+                    *text = moment
+                        .checked_sub(earlier)
+                        .expect("an aged moment is in range")
+                        .to_string();
+                }
+            }
+            serde_json::Value::Array(items) => {
+                items
+                    .iter_mut()
+                    .for_each(|item| move_moments(item, earlier));
+            }
+            serde_json::Value::Object(fields) => {
+                fields
+                    .values_mut()
+                    .for_each(|item| move_moments(item, earlier));
+            }
+            _ => {}
+        }
+    }
+    let mut value: serde_json::Value =
+        serde_json::from_slice(member).expect("a claims event is plain JSON");
+    move_moments(&mut value, earlier);
+    let aged = serde_json::to_vec(&value).expect("a claims event is plain data");
+    codec::decode_own(&aged)
+        .unwrap_or_else(|e| panic!("the aged claims event no longer decodes: {e}"))
+        .expect("the aged event is still of the claims family");
+    Some(aged)
+}
+
+#[test]
+fn aging_a_claims_event_moves_each_moment_it_carries_and_leaves_the_epoch() {
+    use jojobot_adapters::claims_log::codec;
+    use jojobot_domain::log::Event;
+    use jojobot_domain::log::claims::ClaimEvent;
+    jojobot_domain::memory::kinds::load_shipped();
+    let at = |text: &str| Some(text.parse::<jiff::Timestamp>().expect("a moment"));
+    let event = Event {
+        event_kind: String::new(),
+        meaning_version: 0,
+        actor: None,
+        run: None,
+        session_card: None,
+        request: None,
+        part: None,
+        occurred_at: at("2026-11-12T06:00:00Z"),
+        written_at: at("2026-11-12T06:00:01Z"),
+        imported_source_time: Some(jiff::Timestamp::UNIX_EPOCH),
+        payload: ClaimEvent::ImportCompleted { events: 3 },
+    };
+    let stored = codec::encode(&event);
+    let aged = aged_claim_member(&stored, jiff::SignedDuration::from_hours(6))
+        .expect("a claims event is aged");
+    let read = codec::decode_own(&aged)
+        .expect("it decodes")
+        .expect("it is a claims event");
+    assert_eq!(read.occurred_at, at("2026-11-12T00:00:00Z"));
+    assert_eq!(read.written_at, at("2026-11-12T00:00:01Z"));
+    assert_eq!(read.imported_source_time, Some(jiff::Timestamp::UNIX_EPOCH));
+    assert_eq!(read.payload, event.payload);
+    let teaching = jojobot_adapters::teaching_log::codec::encode(
+        &jojobot_domain::teaching::events::TeachingEvent::Recorded {
+            run: jojobot_domain::teaching::events::RunId("r000001".into()),
+            domain: "claims".into(),
+            taught_at: "2026-11-12T06:00:00Z".parse().expect("a moment"),
+        },
+    );
+    assert!(
+        aged_claim_member(&teaching, jiff::SignedDuration::from_hours(6)).is_none(),
+        "an event of another family is not this function's"
+    );
+}
+
 /// **The event log, aged by the same offset as the rows**, through its own path.
 /// The columns above hold text; a batch is a blob, so the loop leaves it alone,
 /// and rows and log would then disagree by exactly the ageing, which no build
@@ -256,13 +350,15 @@ async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
     let log = WriterLog::open(pool.clone(), Writer::default())
         .await
         .expect("the event log opens to be aged");
-    assert!(
-        log.load_snapshot()
-            .await
-            .expect("the log's snapshot slot reads")
-            .is_none(),
-        "the recording holds a log snapshot, which the ageing cannot move: a snapshot carries moments of its own"
-    );
+    // **A snapshot is removed, not aged.** It holds the checksum of the batch it was
+    // taken at and the moments of the State it was built from; ageing the batches
+    // changes that checksum, so the boot would refuse it and warn. The aged log
+    // holds every event the snapshot summarises, so the boot replays it and reads
+    // the aged moments. The cases that restore with no ageing keep the snapshot.
+    sqlx::query("DELETE FROM event_log WHERE slot LIKE 'snapshot%'")
+        .execute(pool)
+        .await
+        .expect("the recording's snapshot is removed before its log is aged");
     let batches = log
         .read_from(Position(0), 100_000)
         .await
@@ -276,10 +372,11 @@ async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
                 let Some(event) = codec::decode_own(member).unwrap_or_else(|e| {
                     panic!("the ageing cannot decode an event of the recording's log: {e}")
                 }) else {
-                    // The ledger family's events: opening the log imports the old
-                    // ledger tables, whose moments the column loop above has already
-                    // aged, so these events carry the aged moments.
-                    return member.clone();
+                    // The claims family's events carry moments of their own, which
+                    // move with the rest. The ledger family's events: opening the
+                    // log imports the old ledger tables, whose moments the column
+                    // loop above has already aged, so these carry the aged moments.
+                    return aged_claim_member(member, earlier).unwrap_or_else(|| member.clone());
                 };
                 assert_eq!(
                     &codec::encode(&event),
