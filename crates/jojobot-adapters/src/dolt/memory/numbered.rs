@@ -814,6 +814,18 @@ impl DoltMemory {
                 return Ok(entity.id.clone());
             }
         }
+        // **A link the last release stored at a record the build supplies** names
+        // it by its supply identity, the handle behind the prefix. The rows file a
+        // supplied record by its handle, so the handle is what the link answers to.
+        if let Some(handle) = stored
+            .as_str()
+            .strip_prefix(jojobot_domain::log::claims::import::SUPPLY_PREFIX)
+        {
+            let handle = EntityId(handle.to_string());
+            if self.supplied.record_for(&handle).is_some() {
+                return Ok(handle);
+            }
+        }
         Ok(stored.clone())
     }
 

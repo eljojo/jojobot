@@ -161,6 +161,15 @@ impl Context {
         if self.touched.contains(stored.as_str()) {
             return None;
         }
+        // A link the last release stored at a record the build supplies names it by
+        // its supply identity, which these tables cannot place: the read of one
+        // thing knows the supplied records and serves the handle.
+        if stored
+            .as_str()
+            .starts_with(jojobot_domain::log::claims::import::SUPPLY_PREFIX)
+        {
+            return None;
+        }
         Some(
             self.by_badge
                 .get(stored.as_str())
