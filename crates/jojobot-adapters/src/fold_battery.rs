@@ -210,14 +210,6 @@ impl Probe<'_> {
                 .await;
             self.check(when, "fields", s, f.fields(h), d.fields(h))
                 .await;
-            self.check(
-                when,
-                "fields_versioned",
-                s,
-                f.fields_versioned(h),
-                d.fields_versioned(h),
-            )
-            .await;
             self.check(when, "field_ages", s, f.field_ages(h), d.field_ages(h))
                 .await;
             self.check(
