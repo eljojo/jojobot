@@ -163,6 +163,43 @@ async fn a_link_to_a_shipped_view_is_filed_and_served_by_its_handle() {
     );
 }
 
+/// **A link filed by the view's handle survives a log that is rebuilt from the rows.**
+/// The write leaves the handle in the rows and the supply identity in the State.
+/// With the log removed, the next boot imports the rows into a new State; the
+/// link must still name the view, in the value served and in who points at the view.
+#[tokio::test]
+async fn a_link_filed_by_a_shipped_views_handle_survives_a_log_rebuilt_from_the_rows() {
+    let scratch = Scratch::new("binary-link-rebuilt-from-rows");
+    let store_port = free_port();
+    let first = serve(&scratch, store_port).await;
+    name_a_shipped_view(&first).await;
+    sqlx::query("DELETE FROM event_log WHERE slot <> 'validity'")
+        .execute(&first.live)
+        .await
+        .expect("the log is removed");
+    first.stop().await;
+
+    let second = serve(&scratch, store_port).await;
+    let recalled = second.recalled().await;
+    let view = second
+        .surface
+        .must(
+            "recall",
+            json!({"subject": "view:colleagues", "sid": second.sid}),
+        )
+        .await
+        .expect("the view is recalled");
+    second.stop().await;
+    assert_eq!(
+        recalled["objects"][0]["fields"]["looks_at"], "view:colleagues",
+        "the served value after the log is rebuilt: {recalled}"
+    );
+    assert_eq!(
+        view["objects"][0]["held"]["count"], 1,
+        "the thing that looks at the view is among who points at it: {view}"
+    );
+}
+
 /// **A value the last release stored with the view's supply identity is served as
 /// the view's handle after a restart.** The rows are put back in the recorded
 /// shape (the identity behind the mark in the value, bare in the link row) and
