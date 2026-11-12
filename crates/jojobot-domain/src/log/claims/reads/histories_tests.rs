@@ -169,10 +169,8 @@ fn a_served_write_names_the_session_and_the_bot_of_its_envelope() {
         None,
         revised("r1", "second", Provenance::Observation),
     ));
-    let parts = state
-        .document_parts(&object("work:alpha"), &[])
-        .expect("the thing is held");
-    let writes = &parts.histories[&FactId("f1".into())];
+    let parts = state.claim_chains_of(&object("work:alpha"));
+    let writes = &parts[&FactId("f1".into())];
     assert_eq!(
         writes
             .iter()
@@ -225,8 +223,8 @@ fn a_claim_serves_the_lineage_and_mark_of_a_record_the_state_does_not_hold() {
         "the mark: a held source at its handle, a missing one as filed"
     );
 
-    let parts = state.document_parts(&object("work:alpha"), &[]).unwrap();
-    let write = parts.histories[&FactId("f2".into())].last().unwrap();
+    let parts = state.claim_chains_of(&object("work:alpha"));
+    let write = parts[&FactId("f2".into())].last().unwrap();
     assert_eq!(
         write.derived_from,
         Some(missing),
@@ -297,8 +295,8 @@ fn a_missing_record_is_served_under_the_handle_its_home_wears_now() {
     let served = FactAddress::new(EntityId("work:gamma".into()), FactId("f3".into()));
     let fact = state.fact(&record("work:alpha/f2")).unwrap();
     assert_eq!(fact.derived_from, Some(served.clone()), "the current fact");
-    let parts = state.document_parts(&object("work:alpha"), &[]).unwrap();
-    let write = parts.histories[&FactId("f2".into())].last().unwrap();
+    let parts = state.claim_chains_of(&object("work:alpha"));
+    let write = parts[&FactId("f2".into())].last().unwrap();
     assert_eq!(write.derived_from, Some(served), "the history");
 }
 
@@ -342,8 +340,8 @@ fn a_missing_record_of_a_supplied_home_is_served_under_its_handle() {
     let served = FactAddress::new(EntityId("work:delta".into()), FactId("f3".into()));
     let fact = state.fact(&record("work:alpha/f2")).unwrap();
     assert_eq!(fact.derived_from, Some(served.clone()), "the current fact");
-    let parts = state.document_parts(&object("work:alpha"), &[]).unwrap();
-    let write = parts.histories[&FactId("f2".into())].last().unwrap();
+    let parts = state.claim_chains_of(&object("work:alpha"));
+    let write = parts[&FactId("f2".into())].last().unwrap();
     assert_eq!(write.derived_from, Some(served), "the history");
 }
 
@@ -408,10 +406,7 @@ fn a_field_written_by_a_merged_bot_names_the_survivor() {
         writers,
         [Some("bot:theta".to_string()), Some("bot:gamma".to_string())]
     );
-    let served: Vec<String> = state
-        .document_parts(&object("work:alpha"), &[])
-        .expect("the thing is held")
-        .histories[&FactId("f1".into())]
+    let served: Vec<String> = state.claim_chains_of(&object("work:alpha"))[&FactId("f1".into())]
         .iter()
         .filter_map(|write| write.bot.as_ref().map(|b| b.0.clone()))
         .collect();
@@ -463,10 +458,8 @@ fn a_lineage_follows_the_label_a_merge_gave_the_claim() {
         },
     ));
     let moved = FactAddress::new(EntityId("work:alpha".into()), FactId("f2".into()));
-    let parts = state
-        .document_parts(&object("work:alpha"), &[])
-        .expect("the thing is held");
-    let write = &parts.histories[&FactId("f1".into())][0];
+    let parts = state.claim_chains_of(&object("work:alpha"));
+    let write = &parts[&FactId("f1".into())][0];
     assert_eq!(write.derived_from, Some(moved.clone()), "the history");
     assert_eq!(write.stands_for, Some(vec![moved]), "the stand-in");
 }

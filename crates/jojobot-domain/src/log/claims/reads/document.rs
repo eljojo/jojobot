@@ -1,7 +1,7 @@
 //! **A thing's value parts, put into the shapes the port serves.** Each is b2's
 //! read of the State; only the shape differs. Pure: the State is all it reads.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use super::{ObjectBody, ObjectVersion, Revision, State};
 use crate::actor::Actor;
@@ -9,22 +9,8 @@ use crate::log::claims::ObjectSnapshot;
 use crate::log::{ObjectId, RecordId};
 use crate::memory::{
     ClaimWrite, Edge, EdgeShape, EntityId, EntitySnapshot, EntityVersion, FactAddress, FactId,
-    FieldAges, FieldBacking, KeyTrails, types::DeclaredType,
+    FieldAges, KeyTrails, types::DeclaredType,
 };
-
-/// The value parts of one thing's document.
-pub struct DocumentParts {
-    pub fields: BTreeMap<String, String>,
-    pub version: u64,
-    pub ages: FieldAges,
-    pub histories: HashMap<FactId, Vec<ClaimWrite>>,
-    pub backing: BTreeMap<String, FieldBacking>,
-    pub trails: KeyTrails,
-    pub entity_versions: Vec<EntityVersion>,
-    /// **The writes of each claim the thing cannot serve**, by the address that
-    /// reads it.
-    pub unmapped_histories: HashMap<FactAddress, Vec<ClaimWrite>>,
-}
 
 /// The handle an object answers to now, or the id itself when it has none.
 fn served(state: &State, object: &ObjectId) -> EntityId {
@@ -145,36 +131,23 @@ fn entity_version(state: &State, ordinal: usize, version: &ObjectVersion) -> Ent
 }
 
 impl State {
-    /// **The value parts of the thing stored under `object`**, in the shapes the
-    /// port serves, from the State alone. `None` when the State holds no such
-    /// thing. The `session` of a write is the run on its envelope and its `bot` the
-    /// handle of the actor, both empty for a write whose envelope names neither.
-    pub fn document_parts(
-        &self,
-        object: &ObjectId,
-        declared: &[DeclaredType],
-    ) -> Option<DocumentParts> {
-        let thing = self.scan(object, declared)?;
-        let histories = self.claim_chains_of(object);
-        let mut unmapped_histories = HashMap::new();
-        for (record, held) in &thing.unmapped {
-            // Read at the address the folded thing's own handle gives the claim.
-            let address = FactAddress::new(
-                self.handle_worn_by(&held.claim.home),
-                FactId(held.claim.label.clone()),
-            );
-            unmapped_histories.insert(address, self.chain_of(record));
-        }
-        Some(DocumentParts {
-            unmapped_histories,
-            fields: thing.fields.clone(),
-            version: self.write_marker(object),
-            ages: self.field_ages_of(object, declared),
-            histories,
-            backing: self.backing(object, declared),
-            trails: self.key_trails_served(object),
-            entity_versions: self.entity_versions_of(object),
-        })
+    /// **The writes of each claim a merge left on the thing's object and no read
+    /// serves as its own**, by the address the folded thing's own handle gives the
+    /// claim. One chain for each such claim and nothing else built.
+    pub fn unmapped_chains_of(&self, object: &ObjectId) -> HashMap<FactAddress, Vec<ClaimWrite>> {
+        let subject = self.survivor(object);
+        self.records_homed_on(subject)
+            .into_iter()
+            .filter_map(|record| Some((record, self.records.get(record)?)))
+            .filter(|(_, held)| held.claim.home != *subject)
+            .map(|(record, held)| {
+                let address = FactAddress::new(
+                    self.handle_worn_by(&held.claim.home),
+                    FactId(held.claim.label.clone()),
+                );
+                (address, self.chain_of(record))
+            })
+            .collect()
     }
 
     /// **One claim's writes, oldest first**, the last being the claim now.

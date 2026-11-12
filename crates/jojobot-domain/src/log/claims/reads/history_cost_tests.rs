@@ -68,10 +68,7 @@ fn a_claim_read_builds_one_chain_and_no_scan() {
     assert_eq!(chain[0].status, FactStatus::Active);
     assert_eq!(State::chains_counted(), 1);
     assert_eq!(State::scans_counted(), 0);
-    let whole = state
-        .document_parts(&object("work:alpha"), &[])
-        .expect("the thing is held");
-    assert_eq!(chain, whole.histories[&label("f1000")], "the same chain");
+    assert_eq!(chain[0].content, "claim number 1000", "the claim asked for");
 }
 
 /// **The writes of one key are that key's writes**: reading `other` builds one
@@ -203,16 +200,21 @@ fn the_ages_and_versions_of_a_thing_build_no_scan() {
     let state = a_thing_of_two_thousand_claims();
     State::reset_folds_counted();
 
-    let ages = state.field_ages_of(&object("work:alpha"), &[]);
+    let declared = state.declared_types_shared();
+    super::STREAMS_EXAMINED.with(|n| n.set(0));
+    let ages = state.field_ages_of(&object("work:alpha"), &declared);
     let versions = state.entity_versions_of(&object("work:alpha"));
 
     assert_eq!(State::scans_counted(), 0);
     assert_eq!(State::chains_counted(), 0);
-    let whole = state
-        .document_parts(&object("work:alpha"), &[])
-        .expect("the thing is held");
-    assert_eq!(ages, whole.ages, "the same ages");
-    assert_eq!(versions, whole.entity_versions, "the same versions");
+    assert_eq!(
+        super::STREAMS_EXAMINED.with(|n| n.get()),
+        0,
+        "the ages are looked up, and no write is visited"
+    );
+    assert_eq!(ages.newest, state.newest_change(&object("work:alpha")));
+    assert!(versions.iter().all(|version| version.ordinal > 0));
+    assert_eq!(state.held_fields_are_what_a_fold_makes(), Ok(()));
 }
 
 /// **Every claim's chain costs in proportion to the thing's claims**, one chain
@@ -227,8 +229,5 @@ fn every_claims_chains_build_one_chain_each_and_no_scan() {
     assert_eq!(histories.len(), CLAIMS + 1);
     assert_eq!(State::chains_counted(), CLAIMS + 1);
     assert_eq!(State::scans_counted(), 0);
-    let whole = state
-        .document_parts(&object("work:alpha"), &[])
-        .expect("the thing is held");
-    assert_eq!(histories, whole.histories, "the same chains");
+    assert_eq!(histories[&label("f7")][0].content, "claim number 7");
 }

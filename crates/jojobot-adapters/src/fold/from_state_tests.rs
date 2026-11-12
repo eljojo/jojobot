@@ -261,9 +261,8 @@ async fn compare(merged: bool) {
                 .expect("the store reads the fields")
                 .0,
         };
-        let held = state
-            .document_parts(&ObjectId(stored.scan.doc_id.clone()), &declared)
-            .unwrap_or_else(|| panic!("{handle}: the State holds the thing"));
+        let object = ObjectId(stored.scan.doc_id.clone());
+        let held_list = state.declared_types_shared();
         let mut differ = |part: &str, same: bool, held: String, stored: String| {
             if !same {
                 differences.push(format!(
@@ -331,29 +330,12 @@ async fn compare(merged: bool) {
                 )
             ),
         );
+        let held_fields = state.fields(&object, &declared);
         differ(
             "fields",
-            held.fields == stored.fields,
-            format!("{:?}", held.fields),
+            held_fields == stored.fields,
+            format!("{:?}", held_fields),
             format!("{:?}", stored.fields),
-        );
-        differ(
-            "version",
-            held.version
-                == memory
-                    .fields_versioned(handle)
-                    .await
-                    .expect("the store's marker")
-                    .1,
-            format!("{:?}", held.version),
-            format!(
-                "{:?}",
-                memory
-                    .fields_versioned(handle)
-                    .await
-                    .expect("the store's marker")
-                    .1
-            ),
         );
         // What the store answers of the thing's other parts, read once; the State's
         // parts are held to these.
@@ -370,40 +352,44 @@ async fn compare(merged: bool) {
                 stored_unmapped.insert(claim.address.clone(), chain);
             }
         }
+        let held_ages = state.field_ages_of(&object, &held_list);
         differ(
             "ages",
-            held.ages == stored_ages,
-            format!("{:?}", held.ages),
+            held_ages == stored_ages,
+            format!("{:?}", held_ages),
             format!("{:?}", stored_ages),
         );
+        let held_histories = state.claim_chains_of(&object);
         differ(
             "histories",
-            held.histories == stored_histories,
-            format!("{:?}", held.histories),
+            held_histories == stored_histories,
+            format!("{:?}", held_histories),
             format!("{:?}", stored_histories),
         );
+        let held_backing = state.backing(&object, &declared);
         differ(
             "backing",
-            held.backing == memory.backing(handle).await.expect("the store's backing"),
-            format!("{:?}", held.backing),
+            held_backing == memory.backing(handle).await.expect("the store's backing"),
+            format!("{:?}", held_backing),
             format!(
                 "{:?}",
                 memory.backing(handle).await.expect("the store's backing")
             ),
         );
+        let held_trails = state.key_trails_served(&object);
         differ(
             "trails",
-            held.trails == stored_trails,
-            format!("{:?}", held.trails),
+            held_trails == stored_trails,
+            format!("{:?}", held_trails),
             format!("{:?}", stored_trails),
         );
+        let held_versions = state.entity_versions_of(&object);
         differ(
             "entity versions",
-            Some(&held.entity_versions) == stored_versions.as_ref(),
-            format!("{:?}", held.entity_versions),
+            Some(&held_versions) == stored_versions.as_ref(),
+            format!("{:?}", held_versions),
             format!("{:?}", stored_versions),
         );
-        let object = ObjectId(stored.scan.doc_id.clone());
         let assembled = Document {
             scan: state
                 .document_scan(&object, &declared)
@@ -413,10 +399,11 @@ async fn compare(merged: bool) {
                 .unwrap_or_else(|| panic!("{handle}: the State scans the thing"))
                 .fields,
         };
+        let held_unmapped = state.unmapped_chains_of(&object);
         differ(
             "unmapped histories",
-            held.unmapped_histories == stored_unmapped,
-            format!("{:?}", held.unmapped_histories),
+            held_unmapped == stored_unmapped,
+            format!("{:?}", held_unmapped),
             format!("{:?}", stored_unmapped),
         );
         differ(

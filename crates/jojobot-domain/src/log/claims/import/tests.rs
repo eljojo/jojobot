@@ -1923,12 +1923,10 @@ fn a_survivors_versions_are_served_in_time_order_across_what_it_absorbed() {
         ..Rows::default()
     };
     let state = State::replay(&imported(&rows));
-    let parts = state
-        .document_parts(&object("k1"), &[])
-        .expect("the survivor is held");
-    let moments: Vec<_> = parts.entity_versions.iter().map(|v| v.written_at).collect();
+    let versions = state.entity_versions_of(&object("k1"));
+    let moments: Vec<_> = versions.iter().map(|v| v.written_at).collect();
     assert_eq!(moments, [at(10), at(20), at(30)]);
-    let ordinals: Vec<_> = parts.entity_versions.iter().map(|v| v.ordinal).collect();
+    let ordinals: Vec<_> = versions.iter().map(|v| v.ordinal).collect();
     assert_eq!(ordinals, [1, 2, 3]);
 }
 

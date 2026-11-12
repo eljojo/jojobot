@@ -432,7 +432,31 @@ pub struct Payload {
 /// derived from the streams and the declarations, so two states that hold the same
 /// events are equal whatever they hold here.
 #[derive(Debug, Clone, Default)]
-struct HeldFields(BTreeMap<ObjectId, BTreeMap<String, String>>);
+struct HeldFields {
+    things: BTreeMap<ObjectId, HeldThing>,
+    /// **The records that carry the ledger of release notes**, which no write of
+    /// theirs counts as a change of the thing. Found by the write that names them.
+    ledgers: BTreeSet<RecordId>,
+}
+
+/// **What one thing holds**: each held key as one entry of its value and the moment
+/// of the write that holds it, and the newest moment any write that counts as a
+/// change of the thing was taken in. Worked out where the thing is folded and
+/// where a claim or its own row is written, never when a read asks: once the
+/// writes a snapshot covers are gone, a read could not work them out.
+#[derive(Debug, Clone, Default)]
+struct HeldThing {
+    keys: BTreeMap<String, HeldKey>,
+    newest: Option<Timestamp>,
+}
+
+/// One held key: its value and the moment its holding write was taken in, absent
+/// when that write was never stamped.
+#[derive(Debug, Clone)]
+struct HeldKey {
+    value: String,
+    age: Option<Timestamp>,
+}
 
 impl PartialEq for HeldFields {
     fn eq(&self, _: &Self) -> bool {
@@ -549,23 +573,30 @@ impl State {
                 self.keep_object(held.as_ref(), body);
                 let before = held.map(|held| held.parent);
                 self.index_object(object, before, &body.parent);
+                if let Some(at) = event.imported_source_time.or(event.written_at) {
+                    self.note_moment(object, at);
+                }
             }
             ClaimEvent::ObjectWriteObserved {
                 object,
                 filed_under,
                 ordinal,
                 snapshot,
-            } => self
-                .observed
-                .entry(object.clone())
-                .or_default()
-                .push(ObservedWrite {
-                    filed_under: filed_under.clone(),
-                    ordinal: *ordinal,
-                    snapshot: snapshot.clone(),
-                    run: event.run.clone(),
-                    source_time: event.imported_source_time,
-                }),
+            } => {
+                self.observed
+                    .entry(object.clone())
+                    .or_default()
+                    .push(ObservedWrite {
+                        filed_under: filed_under.clone(),
+                        ordinal: *ordinal,
+                        snapshot: snapshot.clone(),
+                        run: event.run.clone(),
+                        source_time: event.imported_source_time,
+                    });
+                if let Some(at) = event.imported_source_time {
+                    self.note_moment(object, at);
+                }
+            }
             ClaimEvent::AddressBound { object, address } => {
                 if indexes::handle_shaped(address)
                     && let Some(former) = self.own_handle_of(object)
@@ -632,6 +663,12 @@ impl State {
                     self.note_origin(record, claim);
                 }
                 self.index_record(record, before.as_ref(), claim);
+                self.note_change(
+                    &claim.home,
+                    None,
+                    record,
+                    event.imported_source_time.or(event.written_at),
+                );
             }
             ClaimEvent::RecordRevised { record, claim } => {
                 if let Some(held) = self.records.get_mut(record) {
@@ -647,6 +684,12 @@ impl State {
                         written_at: held.written_at,
                     });
                     self.index_record(record, Some(&before), claim);
+                    self.note_change(
+                        &claim.home,
+                        None,
+                        record,
+                        event.imported_source_time.or(event.written_at),
+                    );
                 }
             }
             ClaimEvent::FieldWritten {
@@ -673,6 +716,13 @@ impl State {
                     },
                 );
                 self.index_write(record, subject, key, *ordinal);
+                self.note_field_write(
+                    record,
+                    subject,
+                    key,
+                    write,
+                    event.imported_source_time.or(event.written_at),
+                );
             }
             ClaimEvent::FieldRemoved {
                 record,
@@ -697,6 +747,13 @@ impl State {
                     },
                 );
                 self.index_write(record, subject, key, *ordinal);
+                self.note_field_write(
+                    record,
+                    subject,
+                    key,
+                    &FieldValue::Removed,
+                    event.imported_source_time.or(event.written_at),
+                );
             }
             ClaimEvent::TypeDeclared { kind, declaration } => {
                 // The keys the kind named before and the keys it names now fold
@@ -982,8 +1039,9 @@ impl State {
             self.refresh_naming(record);
         }
         // The folded thing's streams are the survivor's now.
-        self.held_fields.0.remove(folded);
+        self.held_fields.things.remove(folded);
         self.refold(survivor);
+        self.recompute_newest(survivor);
         self.index_after_merge(folded, survivor, records, numbered);
     }
 
@@ -1218,12 +1276,114 @@ impl State {
         {
             return self
                 .held_fields
-                .0
+                .things
                 .get(self.survivor(subject))
-                .cloned()
+                .map(|held| {
+                    held.keys
+                        .iter()
+                        .map(|(key, held)| (key.clone(), held.value.clone()))
+                        .collect()
+                })
                 .unwrap_or_default();
         }
         self.fold_subject(subject, declared)
+    }
+
+    /// **Whether `declared` is the list the held entries were folded under.**
+    fn is_the_held_list(&self, declared: &[DeclaredType]) -> bool {
+        std::ptr::eq(declared.as_ptr(), self.declared_snapshot.as_ptr())
+            && declared.len() == self.declared_snapshot.len()
+    }
+
+    /// **When the write holding each key's value was taken in**, from the held
+    /// entries under the declarations in force, and worked out from the writes
+    /// under any other list.
+    pub fn held_since(
+        &self,
+        subject: &ObjectId,
+        declared: &[DeclaredType],
+    ) -> BTreeMap<String, Timestamp> {
+        if self.is_the_held_list(declared) {
+            return self
+                .held_fields
+                .things
+                .get(self.survivor(subject))
+                .map(|held| {
+                    held.keys
+                        .iter()
+                        .filter_map(|(key, held)| Some((key.clone(), held.age?)))
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        memory::folded_ages(&self.key_writes(subject), declared)
+    }
+
+    /// **The newest moment any write that counts as a change of the thing was
+    /// taken in**, held with the thing.
+    pub fn newest_change(&self, subject: &ObjectId) -> Option<Timestamp> {
+        self.held_fields
+            .things
+            .get(self.survivor(subject))
+            .and_then(|held| held.newest)
+    }
+
+    /// **Note a write that may be the thing's newest change**, when it counts as
+    /// one: a write of a claim that carries the ledger of release notes, and of a
+    /// bookkeeping key, is no change of the thing.
+    fn note_change(
+        &mut self,
+        subject: &ObjectId,
+        key: Option<&str>,
+        record: &RecordId,
+        at: Option<Timestamp>,
+    ) {
+        let Some(at) = at else { return };
+        if !memory::review::counts_as_a_change(key, record, &self.held_fields.ledgers) {
+            return;
+        }
+        self.note_moment(subject, at);
+    }
+
+    /// **Note a write of a key**, a record that carries the ledger of release notes
+    /// being found by its write, which also takes that record's earlier writes out
+    /// of the newest change.
+    fn note_field_write(
+        &mut self,
+        record: &RecordId,
+        subject: &ObjectId,
+        key: &KeyId,
+        write: &FieldValue,
+        at: Option<Timestamp>,
+    ) {
+        let names_the_ledger = key.0 == memory::capacity::ENGINE_RECORD
+            && matches!(write, FieldValue::Set(value) if value == memory::capacity::RELEASE_NOTES_RECORD);
+        if names_the_ledger {
+            self.held_fields.ledgers.insert(record.clone());
+            self.recompute_newest(subject);
+        } else {
+            self.note_change(subject, Some(&key.0), record, at);
+        }
+    }
+
+    /// Note a moment on the thing without asking whether it counts.
+    fn note_moment(&mut self, subject: &ObjectId, at: Timestamp) {
+        let subject = self.survivor(subject).clone();
+        let held = self.held_fields.things.entry(subject).or_default();
+        held.newest = Some(held.newest.map_or(at, |newest| newest.max(at)));
+    }
+
+    /// **Work the thing's newest change out again from everything it holds**, for
+    /// the writes that change which writes count: a record becoming the ledger and
+    /// a merge.
+    fn recompute_newest(&mut self, subject: &ObjectId) {
+        let subject = self.survivor(subject).clone();
+        let newest = self.computed_newest_change(&subject);
+        let held = self.held_fields.things.entry(subject.clone()).or_default();
+        held.newest = newest;
+        if held.keys.is_empty() && held.newest.is_none() {
+            self.held_fields.things.remove(&subject);
+        }
     }
 
     /// **The fold of one thing's writes** under `declared`.
@@ -1241,11 +1401,30 @@ impl State {
     /// its streams. A thing that holds nothing has no entry.
     fn refold(&mut self, subject: &ObjectId) {
         let subject = self.survivor(subject).clone();
-        let folded = self.fold_subject(&subject, &self.declared_snapshot.clone());
-        if folded.is_empty() {
-            self.held_fields.0.remove(&subject);
+        #[cfg(test)]
+        FOLDS_COUNTED.with(|n| n.set(n.get() + 1));
+        let (values, ages) = memory::folded_fields_with_ages(
+            &self.key_writes(&subject),
+            &self.declared_snapshot.clone(),
+        );
+        let keys: BTreeMap<String, HeldKey> = values
+            .into_iter()
+            .map(|(key, value)| {
+                let age = ages.get(&key).copied().flatten();
+                (key, HeldKey { value, age })
+            })
+            .collect();
+        let newest = self
+            .held_fields
+            .things
+            .get(&subject)
+            .and_then(|held| held.newest);
+        if keys.is_empty() && newest.is_none() {
+            self.held_fields.things.remove(&subject);
         } else {
-            self.held_fields.0.insert(subject, folded);
+            self.held_fields
+                .things
+                .insert(subject, HeldThing { keys, newest });
         }
     }
 
@@ -1351,18 +1530,27 @@ impl State {
             .keys()
             .map(|(subject, _)| self.survivor(subject).clone())
             .collect();
-        subjects.extend(self.held_fields.0.keys().cloned());
+        subjects.extend(self.held_fields.things.keys().cloned());
         for subject in subjects {
             let made = self.fold_subject(&subject, &declared);
-            let held = self
-                .held_fields
-                .0
-                .get(&subject)
-                .cloned()
-                .unwrap_or_default();
+            let held = self.fields(&subject, &declared);
             if made != held {
                 return Err(format!(
                     "{subject:?} holds {held:?} and a fold makes {made:?}"
+                ));
+            }
+            let ages = memory::folded_ages(&self.key_writes(&subject), &declared);
+            let held_ages = self.held_since(&subject, &declared);
+            if ages != held_ages {
+                return Err(format!(
+                    "{subject:?} holds ages {held_ages:?} and a fold makes {ages:?}"
+                ));
+            }
+            let newest = self.computed_newest_change(&subject);
+            if newest != self.newest_change(&subject) {
+                return Err(format!(
+                    "{subject:?} holds newest {:?} and the writes make {newest:?}",
+                    self.newest_change(&subject)
                 ));
             }
         }
@@ -1378,7 +1566,6 @@ mod indexes;
 pub mod job;
 mod prepare;
 mod reads;
-pub use reads::DocumentParts;
 mod rules;
 pub mod type_change;
 pub use indexes::Located;

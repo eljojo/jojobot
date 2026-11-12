@@ -5140,6 +5140,18 @@ pub fn folded_ages(
         .filter_map(|(key, moment)| moment.map(|moment| (key, moment)))
         .collect()
 }
+/// **What each key holds and when its holding write was taken in**, from the one
+/// fold, so a held value and its age come out of one pass and cannot disagree. A
+/// key whose holding write was never stamped has `None`.
+pub fn folded_fields_with_ages(
+    writes: &[KeyWrite],
+    declared: &[types::DeclaredType],
+) -> (
+    BTreeMap<String, String>,
+    BTreeMap<String, Option<jiff::Timestamp>>,
+) {
+    fold(writes, declared)
+}
 // LEGACY_READER(rewritten-reference-list): work:q-gate-binary-coverage
 /// The one fold: each held key's value, and the moment of the write holding it.
 fn fold(

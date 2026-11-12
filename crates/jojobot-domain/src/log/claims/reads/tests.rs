@@ -226,8 +226,14 @@ fn a_read_looks_only_at_the_streams_of_its_own_thing() {
                 _ => drop(state.held_since(&home, &[])),
             };
             let examined = super::STREAMS_EXAMINED.with(|n| n.get());
+            // The ages are held with the thing and looked up: no stream is read.
+            let allowed = if read == 0 {
+                own_streams..=own_streams + 1
+            } else {
+                0..=0
+            };
             assert!(
-                (own_streams..=own_streams + 1).contains(&examined),
+                allowed.contains(&examined),
                 "read {read} of {name} looked at {examined} streams, its own are {own_streams}"
             );
         }

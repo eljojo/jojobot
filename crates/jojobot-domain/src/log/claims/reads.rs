@@ -245,17 +245,6 @@ impl State {
     ) -> BTreeMap<String, FieldBacking> {
         memory::folded_backing(&self.key_writes(subject), declared)
     }
-
-    /// **When the store took in the write that holds each key's value now**, the
-    /// `keys` of the store's `field_ages`. A key whose holding write carries no
-    /// moment is absent.
-    pub fn held_since(
-        &self,
-        subject: &ObjectId,
-        declared: &[DeclaredType],
-    ) -> BTreeMap<String, Timestamp> {
-        memory::folded_ages(&self.key_writes(subject), declared)
-    }
 }
 
 /// **One thing as the store's scan serves it, in the State's own terms**: the
@@ -593,7 +582,11 @@ impl State {
     /// decided by the domain's one rule ([`memory::review::counts_as_a_change`]):
     /// a bookkeeping key, and any write of a claim that carries the ledger of
     /// release notes. A write with no moment counts for none.
-    pub fn newest_change(&self, subject: &ObjectId) -> Option<Timestamp> {
+    ///
+    /// **Worked out from every write the thing holds**, for the apply that holds the
+    /// answer ([`State::newest_change`]) and for the case that holds the held answer
+    /// to it. A read never calls it.
+    pub(super) fn computed_newest_change(&self, subject: &ObjectId) -> Option<Timestamp> {
         let subject = self.survivor(subject);
         let streams: Vec<(&KeyId, &Vec<Write>)> = self.streams_of(subject).collect();
         let ledgers = memory::review::ledger_records(streams.iter().flat_map(|(key, stream)| {
@@ -794,19 +787,18 @@ impl State {
     }
 }
 
-mod document;
-mod held_by_key;
-mod resolved;
-mod served;
-pub use document::DocumentParts;
 #[cfg(test)]
 mod built_on_tests;
 #[cfg(test)]
 mod cost_tests;
+mod document;
 #[cfg(test)]
 mod fact_tests;
 #[cfg(test)]
 mod former_handles_tests;
+#[cfg(test)]
+mod held_ages_tests;
+mod held_by_key;
 #[cfg(test)]
 mod held_fields_tests;
 #[cfg(test)]
@@ -821,8 +813,10 @@ mod merge_events_tests;
 mod own_handle_tests;
 #[cfg(test)]
 mod referring_tests;
+mod resolved;
 #[cfg(test)]
 mod scan_tests;
+mod served;
 #[cfg(test)]
 mod stored_listing_tests;
 #[cfg(test)]
