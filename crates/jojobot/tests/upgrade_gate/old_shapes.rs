@@ -664,7 +664,6 @@ async fn a_boot_that_stamps_a_due_day_before_the_teaching_ledger_opens_leaves_bo
         ..
     } = restore_the_fixture("due-days-before-teaching").await;
     let mut store = open_the_store(&state_dir, store_port).await;
-    leave_the_claims_import_to_the_head_boot(store.pool()).await;
     jojobot_adapters::dolt::migrate::run(store.pool())
         .await
         .expect("the planting schema");

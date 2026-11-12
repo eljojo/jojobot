@@ -44,6 +44,25 @@ fn fixture_dir() -> String {
 async fn the_current_binary_boots_on_the_last_deployed_store() {
     boots_on_a_store_filled_by(&fixture_dir(), "last-deployed").await;
 }
+/// **The boot the next release really makes**: the recording keeps its log and its
+/// snapshot, so the head loads them, imports nothing and serves. Every other case
+/// restores a store the claims import has not read, which is the store the cases
+/// were written for; this is the one that boots over what the last deployed build
+/// left. The boot is held to the gate's account of itself: no unexpected warning
+/// and no error.
+#[tokio::test]
+async fn the_current_binary_boots_quiet_over_the_recording_with_its_log_and_snapshot() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture_keeping_the_log(&fixture_dir(), "log-and-snapshot").await;
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    booted.stop().await;
+    drop(scratch);
+}
 #[tokio::test]
 async fn the_last_deployed_store_recorded_six_hours_earlier_reads_back() {
     boots_on_a_store_recorded_earlier(&fixture_dir(), "last-deployed-aged-hours", 6).await;
@@ -431,11 +450,30 @@ async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
 }
 
 /// **A fixture directory, restored into a store of this case's own, and aged**
-/// by `earlier_hours` before the gate moves the moments it pins.
+/// by `earlier_hours` before the gate moves the moments it pins. The recording's
+/// claims-era log is removed first (see
+/// [`leave_the_claims_import_to_the_head_boot`]), so the head boot meets the store
+/// every case was written for: rows the claims import has not read.
 async fn restore_a_fixture_recorded_earlier(
     fixture_dir: &str,
     label: &str,
     earlier_hours: i64,
+) -> Restored {
+    restore_a_fixture_as(fixture_dir, label, earlier_hours, false).await
+}
+
+/// **A fixture directory restored with its log and snapshot as the last deployed
+/// build left them**: the store the next release really boots over. Only the case
+/// that measures that boot uses it.
+async fn restore_a_fixture_keeping_the_log(fixture_dir: &str, label: &str) -> Restored {
+    restore_a_fixture_as(fixture_dir, label, 0, true).await
+}
+
+async fn restore_a_fixture_as(
+    fixture_dir: &str,
+    label: &str,
+    earlier_hours: i64,
+    keep_the_log: bool,
 ) -> Restored {
     let fixture_ref = format!("{fixture_dir}/ref.txt");
     let fixture_dump = format!("{fixture_dir}/doltdump.sql");
@@ -489,6 +527,13 @@ async fn restore_a_fixture_recorded_earlier(
         the_restored_log_holds_a_batch(restoring.pool()).await,
         "the recording made at {git_ref} holds no event log batch: the gate seeds its teaching marks through the log and supports only a recording from a build that keeps one (the architect's ruling on the upgrade gate's teaching seed: the empty-log branch is dead code)"
     );
+    // **The recording's log holds what the last deployed build imported**: the
+    // claims, and the old ledger tables. Rows planted below are read by the head
+    // boot only when that import has not run, so the log is removed here, after the
+    // check above and before anything is planted.
+    if !keep_the_log {
+        leave_the_claims_import_to_the_head_boot(restoring.pool()).await;
+    }
     // **The recording is aged before the gate pins anything.** The moments a case
     // compares against the clock are the three the edits below set, each to a
     // moment of its own choosing, so the age the recording was given changes
@@ -3886,7 +3931,6 @@ async fn a_stored_cadence_days_rhythm_checks_in_on_the_head_as_it_did_before() {
         ..
     } = restore_a_fixture(&fixture_dir(), "stored-rhythm-check-in").await;
     let mut store = open_the_store(&state_dir, store_port).await;
-    leave_the_claims_import_to_the_head_boot(store.pool()).await;
     let pool = store.pool().clone();
     jojobot_adapters::dolt::migrate::run(&pool)
         .await
@@ -4197,7 +4241,6 @@ async fn a_thread_a_deployed_build_left_over_the_default_ceiling_reads_and_edits
         ..
     } = restore_a_fixture(&fixture_dir(), "thread-over-ceiling").await;
     let mut store = open_the_store(&state_dir, store_port).await;
-    leave_the_claims_import_to_the_head_boot(store.pool()).await;
     plant_a_thread_over_the_default_ceiling(store.pool()).await;
     store.stop().await;
 
@@ -4676,7 +4719,6 @@ async fn a_stored_clear_by_a_claim_that_did_not_hold_the_key_is_imported_as_a_re
         ..
     } = restore_a_fixture(&fixture_dir(), "stored-clear").await;
     let mut store = open_the_store(&state_dir, store_port).await;
-    leave_the_claims_import_to_the_head_boot(store.pool()).await;
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
                              merged_into, archived_reason, archived_at)
