@@ -19,8 +19,8 @@ Three corrections, three different moves. Mistyped it just now? update_fact in p
 ### Teaching `ANSWER_TODAY_TEACHING`
 
 ```text
-A claim recorded on an earlier day is that day's record.
-When the operator asks today for an answer about this thing, capture today's answer on the thing itself, even when the earlier claim says the same.
+A claim or a field recorded on an earlier day is that day's record.
+When the operator asks today for an answer about this thing, capture today's answer on the thing itself, even when the earlier record says the same.
 An answer given in chat is not on the record until a capture writes it.
 ```
 

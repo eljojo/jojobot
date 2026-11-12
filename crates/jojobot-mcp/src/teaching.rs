@@ -50,14 +50,14 @@ pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the o
 /// The domain of the answer-today teaching.
 pub(crate) const ANSWER_TODAY_DOMAIN: &str = "answer-today";
 
-/// **Served on the read that returns a claim from an earlier day than the
-/// session's own.** A reader that finds the answer already on record can take
-/// the question as answered and tell the operator so, with nothing written
-/// today.
-pub(crate) const ANSWER_TODAY_TEACHING: &str = "A claim recorded on an earlier day is that \
-    day's record. When the operator asks today for an answer about this thing, capture today's \
-    answer on the thing itself, even when the earlier claim says the same. An answer given in \
-    chat is not on the record until a capture writes it.";
+/// **Served on the read that returns a claim, or fields, from an earlier day
+/// than the session's own.** A reader that finds the answer already on record
+/// can take the question as answered and tell the operator so, with nothing
+/// written today.
+pub(crate) const ANSWER_TODAY_TEACHING: &str = "A claim or a field recorded on an earlier day is \
+    that day's record. When the operator asks today for an answer about this thing, capture \
+    today's answer on the thing itself, even when the earlier record says the same. An answer \
+    given in chat is not on the record until a capture writes it.";
 
 /// **The prefix for search notes.** Each wording gets its own bounded ledger
 /// key, so a changed question can teach a new note while repeated wording is
@@ -1918,6 +1918,90 @@ mod tests {
                 "the teaching rides the page that shows the January claim: {answer}"
             );
         }
+    }
+
+    /// **A read that answers fields and no claim carries the answer-today
+    /// teaching too, when the fields are older than the session's day.** The read
+    /// that failed in the paid run was a default recall: its answer is the thing's
+    /// fields, dated by `as_of` and `fields_as_of`, and holds no claim. A field is
+    /// dated by the write that set it, so the two sessions here sit on days either
+    /// side of the write instead of the write being dated back.
+    #[tokio::test]
+    async fn a_field_only_read_of_older_fields_teaches_answer_today_once() {
+        let memory = Arc::new(InMemoryMemory::booted());
+        let jojobot = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        let later = boot_on(&jojobot, "gamma", "2099-01-01").await["session"]["sid"]
+            .as_str()
+            .expect("a sid")
+            .to_string();
+        let earlier = boot_on(&jojobot, "delta", "2020-01-01").await["session"]["sid"]
+            .as_str()
+            .expect("a sid")
+            .to_string();
+        ensure(&jojobot, "person:alpha").await;
+        let mut fact = jojobot_domain::memory::NewFact::about(
+            EntityId::person("person:alpha"),
+            "keeps a spare pair in the hall drawer",
+            jiff::civil::date(2026, 1, 5),
+        );
+        fact.fields
+            .insert("spare_pair".into(), "hall drawer".into());
+        fact.sets.insert("spare_pair".into());
+        memory
+            .capture(fact)
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        let read = |sid: &str| {
+            let jojobot = &jojobot;
+            let sid = sid.to_string();
+            async move {
+                json_of(
+                    &jojobot
+                        .recall(rmcp::handler::server::wrapper::Parameters(RecallArgs {
+                            sid: Some(sid),
+                            subject: Some("person:alpha".into()),
+                            ..Default::default()
+                        }))
+                        .await
+                        .expect("recall ok"),
+                )
+            }
+        };
+        let taught = |answer: &serde_json::Value| {
+            answer["teaching"]
+                .as_array()
+                .is_some_and(|taught| taught.contains(&serde_json::json!(ANSWER_TODAY_TEACHING)))
+        };
+        let before_the_write = read(&earlier).await;
+        assert!(
+            before_the_write["objects"][0]["facts"].is_null(),
+            "the read holds no claim: {before_the_write}"
+        );
+        assert!(
+            !taught(&before_the_write),
+            "fields written after the session's own day are not an earlier day's: {before_the_write}"
+        );
+        let after_the_write = read(&later).await;
+        assert!(
+            taught(&after_the_write),
+            "fields written before the session's day carry the teaching: {after_the_write}"
+        );
+        let again = read(&later).await;
+        assert!(
+            !taught(&again),
+            "the second read does not repeat it: {again}"
+        );
     }
 
     /// **A run picked up by its name is taught again, and once.** The pick-up

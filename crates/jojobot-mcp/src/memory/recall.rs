@@ -999,6 +999,45 @@ fn returns_a_claim_before(body: &serde_json::Value, day: &str) -> bool {
     }
 }
 
+/// **Whether the answer returns fields recorded before `day`**: an object that
+/// carries fields and whose `as_of`, or any key's `fields_as_of`, is an earlier
+/// day. A claim's own `fields` sit on a record with neither, so they never count.
+fn returns_a_field_before(body: &serde_json::Value, day: &str) -> bool {
+    match body {
+        serde_json::Value::Object(fields) => {
+            let holds_fields = fields
+                .get("fields")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|held| !held.is_empty());
+            (holds_fields
+                && (fields
+                    .get("as_of")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|at| at < day)
+                    || fields
+                        .get("fields_as_of")
+                        .and_then(serde_json::Value::as_object)
+                        .is_some_and(|older| {
+                            older
+                                .values()
+                                .any(|at| at.as_str().is_some_and(|at| at < day))
+                        })))
+                || fields
+                    .values()
+                    .any(|value| returns_a_field_before(value, day))
+        }
+        serde_json::Value::Array(items) => {
+            items.iter().any(|item| returns_a_field_before(item, day))
+        }
+        _ => false,
+    }
+}
+
+/// **Whether the answer returns a record from before `day`**, a claim or fields.
+fn returns_an_earlier_record(body: &serde_json::Value, day: &str) -> bool {
+    returns_a_claim_before(body, day) || returns_a_field_before(body, day)
+}
+
 /// Which clock a neighbourhood read compares.
 fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
     match raw.map(str::trim) {
@@ -4740,17 +4779,16 @@ impl Jojobot {
         {
             crate::answer::note_teaching(&mut body, crate::teaching::CLAIMS_TEACHING);
         }
-        // **A claim from an earlier day than the session's own is told, once, to be
-        // an earlier day's record**, so a question asked today is answered by a
-        // capture and not by the old claim.
+        // **A claim, or the fields of a thing, from an earlier day than the
+        // session's own is told, once, to be an earlier day's record**, so a
+        // question asked today is answered by a capture and not by the old record.
         // **Judged on the page the caller receives, not on the claims the call
         // selected**: a claim a `limit`, an `offset` or the ceiling holds back is not
         // read yet, and spending the teaching on it would leave the page that
         // shows it untaught. The copy is fitted as the answer is; the first test
-        // keeps a read with no earlier claim from paying for it.
-        if returns_an_active_claim(&body)
-            && let Ok(today) = self.dated_as(caller.as_ref(), None).await
-            && returns_a_claim_before(&body, &today.to_string())
+        // keeps a read with no earlier record from paying for it.
+        if let Ok(today) = self.dated_as(caller.as_ref(), None).await
+            && returns_an_earlier_record(&body, &today.to_string())
             && {
                 let mut page = body.clone();
                 crate::memory::ready::fit_under_ceiling(&mut page);
@@ -4763,7 +4801,7 @@ impl Jojobot {
                         after: left_over,
                     },
                 );
-                returns_a_claim_before(&page, &today.to_string())
+                returns_an_earlier_record(&page, &today.to_string())
             }
             && self
                 .first_contact(crate::teaching::ANSWER_TODAY_DOMAIN, caller.as_ref())

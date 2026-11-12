@@ -47,6 +47,49 @@ async fn a_read_of_last_seasons_answer_teaches_one_more_than_a_read_of_todays() 
     );
 }
 
+/// **The teachings the first default read of the glasses carried.** The answer
+/// is the thing's fields and holds no claim; the fields were written when the
+/// story ran, so a reader on a day after it stands later than the write and a
+/// reader on a day before it stands earlier.
+async fn first_field_read_teachings(reader_day: &str) -> usize {
+    let story = Story::begin("bot:otto").await;
+    let setup = story.session().await;
+    setup.add("thing:glasses", "The glasses").await;
+    setup
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:glasses",
+                "content": "a spare pair is in the hall drawer",
+                "provenance": "testimony",
+                "sets": {"spare": "hall drawer"},
+            }),
+        )
+        .await;
+    setup.wrap("the glasses written up").await;
+    let reader = story.session_on(reader_day, Some("new")).await;
+    let answer = reader
+        .call("recall", json!({"subject": "thing:glasses"}))
+        .await;
+    answer
+        .says("\"spare\":\"hall drawer\"")
+        .never_says("\"facts\"");
+    let teachings = answer.teachings().len();
+    story.finish().await;
+    teachings
+}
+
+#[tokio::test]
+async fn a_default_read_of_an_earlier_days_fields_teaches_one_more_than_a_read_of_a_later_days() {
+    let after_the_write = first_field_read_teachings("2099-01-01").await;
+    let before_the_write = first_field_read_teachings("2020-01-01").await;
+    assert_eq!(
+        after_the_write,
+        before_the_write + 1,
+        "fields older than the session's day carry the extra teaching, newer ones do not"
+    );
+}
+
 #[tokio::test]
 async fn an_answer_asked_today_is_written_on_the_thing_and_read_back_dated_today() {
     let story = Story::begin("bot:otto").await;
