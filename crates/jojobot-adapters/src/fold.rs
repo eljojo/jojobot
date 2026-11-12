@@ -1383,14 +1383,18 @@ impl Memory for Folded {
     fn supplies_at(&self, handle: &EntityId) -> bool {
         self.inner.supplies_at(handle)
     }
-    /// **Answered from the image**, which holds each bot's records with their
-    /// edges. The store's own check inside a ceiling write is its own and does
-    /// not pass here.
+    /// **Answered from the claims State**, which holds each bot's records with
+    /// their edges. The store's own check inside a ceiling write is its own and
+    /// does not pass here.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.thought_writers(thread)) {
-            Some(answer) => answer,
-            None => self.inner.thought_writers(thread).await,
+        let Some(kinds) = self.held(|image| image.kind_set()) else {
+            return self.inner.thought_writers(thread).await;
+        };
+        jojobot_domain::memory::validate_subject_in(&kinds, thread)?;
+        match self.claims(|state| state.thought_writers(thread, &state.declared_types())) {
+            Ok(writers) => Ok(writers),
+            Err(_) => self.inner.thought_writers(thread).await,
         }
     }
 

@@ -750,6 +750,7 @@ impl State {
 }
 
 mod document;
+mod resolved;
 mod served;
 pub use document::DocumentParts;
 #[cfg(test)]

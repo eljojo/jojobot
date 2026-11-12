@@ -738,42 +738,6 @@ impl Image {
             .cloned()
     }
 
-    /// **The bots that have written a thought into `thread`**, off the records
-    /// the image holds: a claim on a bot that draws a `connection` edge at the
-    /// thread, whatever has become of the claim. A bot that is archived writes
-    /// nothing, so it is not a writer. A thread nothing answers to, and one
-    /// folded into another, have none; the thread is found as every other read
-    /// finds a thing, by its handle or one it wore.
-    pub fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
-        jojobot_domain::memory::validate_subject_in(&self.kind_set, thread)?;
-        let Some(thread) = self.entity(thread) else {
-            return Ok(Vec::new());
-        };
-        if thread.merged_into.is_some() {
-            return Ok(Vec::new());
-        }
-        // **In the order the store keeps its rows**: by the key each bot is
-        // filed under, which is its badge, or its handle when it has none.
-        let mut bots: Vec<&Entity> = self
-            .entities
-            .iter()
-            .filter(|entity| entity.kind == EntityKind::BOT && entity.archived.is_none())
-            .collect();
-        bots.sort_by_key(|bot| bot.badge.as_deref().unwrap_or(bot.id.as_str()));
-        let mut writers: Vec<EntityId> = Vec::new();
-        for bot in bots {
-            let Some(doc) = self.docs.get(&bot.id) else {
-                continue;
-            };
-            for writer in jojobot_domain::memory::writers_in(&thread.id, &doc.scan.facts) {
-                if !writers.contains(&writer) {
-                    writers.push(writer);
-                }
-            }
-        }
-        Ok(writers)
-    }
-
     /// `entity_history`: the versions of one thing's own row as they were read
     /// when its document was filled, or the miss the store gives for a handle
     /// that names nothing. `Ok(None)` is a thing whose versions could not be read
