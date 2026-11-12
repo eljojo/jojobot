@@ -7,6 +7,9 @@ use std::collections::BTreeSet;
 /// build supplies, as the boot import is. The boot import stops on any finding,
 /// so the recording must read with none.
 async fn read_import_rows(pool: &sqlx::MySqlPool) -> Rows {
+    // The boot loads the shipped kinds before it reads any row, and a stored claim
+    // whose value carries a link needs them to parse it.
+    jojobot_domain::memory::kinds::load_shipped();
     let read = jojobot_adapters::dolt::memory::DoltMemory::open(pool.clone())
         .knowing(jojobot_mcp::provisions())
         .import_rows()

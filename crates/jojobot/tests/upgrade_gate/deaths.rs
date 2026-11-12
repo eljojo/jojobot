@@ -61,14 +61,8 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
 }
 
 // Add a named pair here with each migration introduced beyond the cached
-// store's ledger. The deploy-9.3.2 store predates the migrations listed below.
-deaths_beyond_the_last_release!(
-    role_lease_heartbeat => "0120_role_lease_heartbeat",
-    session_agent => "0121_session_agent",
-    session_agent_history_index => "0122_session_agent_history_index",
-    session_agent_index => "0123_session_agent_index",
-    field_write_live_clear => "0124_field_write_live_clear",
-);
+// store's ledger. The deploy-9.3.3 store holds every migration shipped so far.
+deaths_beyond_the_last_release!();
 
 #[tokio::test]
 async fn every_migration_added_since_the_last_release_has_a_death_case() {
