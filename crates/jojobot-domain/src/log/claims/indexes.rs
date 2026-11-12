@@ -925,6 +925,8 @@ impl State {
     /// nothing: a number is issued by the write that makes it and by no later
     /// revision ([`Self::issue_written`]).
     fn refresh_written(&mut self, subject: &ObjectId, key: &KeyId) {
+        // What the thing holds is folded again, so a read takes the held fold.
+        self.refold(subject);
         if key.0 == NUMBERS_BY {
             self.refresh_subtree(subject);
         } else {

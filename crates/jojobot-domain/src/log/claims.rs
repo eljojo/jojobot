@@ -428,6 +428,27 @@ pub struct Payload {
     pub bytes: u64,
 }
 
+/// **The folded fields of each thing, held beside the streams they fold.** It is
+/// derived from the streams and the declarations, so two states that hold the same
+/// events are equal whatever they hold here.
+#[derive(Debug, Clone, Default)]
+struct HeldFields(BTreeMap<ObjectId, BTreeMap<String, String>>);
+
+impl PartialEq for HeldFields {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for HeldFields {}
+
+// **How many things the folds have folded on this thread**, so a case can say a
+// read folds nothing and a write folds one thing.
+#[cfg(test)]
+thread_local! {
+    static FOLDS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// **What the events so far say.**
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct State {
@@ -443,6 +464,15 @@ pub struct State {
     streams: BTreeMap<(ObjectId, KeyId), Vec<Write>>,
     /// Every declaration of each kind, oldest first.
     declarations: BTreeMap<ObjectId, Vec<DeclaredType>>,
+    /// **What each thing holds, folded** under the declarations in force: a write
+    /// folds the thing it lands on, a declaration folds the things that hold a key
+    /// it names, and a read takes this and folds nothing. Keyed by the survivor of a
+    /// merge; a thing that holds nothing has no entry. **Not serialized**: it is
+    /// worked out from the streams and the declarations as each event applies, and the
+    /// State is only ever built by applying events, so a serialized copy is measured
+    /// and never loaded.
+    #[serde(skip)]
+    held_fields: HeldFields,
     /// **The declaration in force of each kind, as one shared list**, rebuilt when a
     /// declaration lands or is withdrawn and never by a read, so a read of the types
     /// copies nothing. **Not serialized**, for the reason `held_fields` is not: it is
@@ -664,15 +694,22 @@ impl State {
                 self.index_write(record, subject, key, *ordinal);
             }
             ClaimEvent::TypeDeclared { kind, declaration } => {
+                // The keys the kind named before and the keys it names now fold
+                // differently when the new declaration says something else of them.
+                let mut keys = self.keys_named_by(kind);
                 self.declarations
                     .entry(kind.clone())
                     .or_default()
                     .push(declaration.clone());
+                keys.extend(declaration.fields.iter().map(|field| field.key.clone()));
                 self.rebuild_declared_snapshot();
+                self.refold_holders_of(&keys);
             }
             ClaimEvent::TypeWithdrawn { kind } => {
+                let keys = self.keys_named_by(kind);
                 self.declarations.remove(kind);
                 self.rebuild_declared_snapshot();
+                self.refold_holders_of(&keys);
             }
         }
         applied
@@ -799,6 +836,14 @@ impl State {
     /// rebuilds and a read only clones the pointer of.
     pub fn declared_types_shared(&self) -> std::sync::Arc<Vec<DeclaredType>> {
         self.declared_snapshot.clone()
+    }
+
+    /// The keys the declaration in force of a kind names.
+    fn keys_named_by(&self, kind: &ObjectId) -> BTreeSet<String> {
+        self.declared(kind)
+            .into_iter()
+            .flat_map(|held| held.fields.iter().map(|field| field.key.clone()))
+            .collect()
     }
 
     fn rebuild_declared_snapshot(&mut self) {
@@ -931,6 +976,9 @@ impl State {
         for record in &moved_writers {
             self.refresh_naming(record);
         }
+        // The folded thing's streams are the survivor's now.
+        self.held_fields.0.remove(folded);
+        self.refold(survivor);
         self.index_after_merge(folded, survivor, records, numbered);
     }
 
@@ -1130,13 +1178,102 @@ impl State {
     }
 
     /// **What the thing holds**: the one fold over the writes of its active
-    /// claims that reach it.
+    /// claims that reach it. Under the declarations in force, which is what a read
+    /// passes, the held fold answers and nothing is folded; under any other list
+    /// the fold is made.
     pub fn fields(
         &self,
         subject: &ObjectId,
         declared: &[DeclaredType],
     ) -> BTreeMap<String, String> {
+        if std::ptr::eq(declared.as_ptr(), self.declared_snapshot.as_ptr())
+            && declared.len() == self.declared_snapshot.len()
+        {
+            return self
+                .held_fields
+                .0
+                .get(self.survivor(subject))
+                .cloned()
+                .unwrap_or_default();
+        }
+        self.fold_subject(subject, declared)
+    }
+
+    /// **The fold of one thing's writes** under `declared`.
+    fn fold_subject(
+        &self,
+        subject: &ObjectId,
+        declared: &[DeclaredType],
+    ) -> BTreeMap<String, String> {
+        #[cfg(test)]
+        FOLDS_COUNTED.with(|n| n.set(n.get() + 1));
         memory::folded_fields(&self.key_writes(subject), declared)
+    }
+
+    /// **Fold a thing again and hold it**, after a write or a revision that reaches
+    /// its streams. A thing that holds nothing has no entry.
+    fn refold(&mut self, subject: &ObjectId) {
+        let subject = self.survivor(subject).clone();
+        let folded = self.fold_subject(&subject, &self.declared_snapshot.clone());
+        if folded.is_empty() {
+            self.held_fields.0.remove(&subject);
+        } else {
+            self.held_fields.0.insert(subject, folded);
+        }
+    }
+
+    /// **Fold again the things that hold a key a declaration names**, after the
+    /// declarations in force changed what those keys fold to.
+    fn refold_holders_of(&mut self, keys: &BTreeSet<String>) {
+        let subjects: BTreeSet<ObjectId> = self
+            .streams
+            .keys()
+            .filter(|(_, key)| keys.contains(&key.0))
+            .map(|(subject, _)| subject.clone())
+            .collect();
+        for subject in subjects {
+            self.refold(&subject);
+        }
+    }
+
+    /// The count of things folded on this thread, for a case.
+    #[cfg(test)]
+    pub(crate) fn folds_counted() -> usize {
+        FOLDS_COUNTED.with(std::cell::Cell::get)
+    }
+
+    /// Reset that count.
+    #[cfg(test)]
+    pub(crate) fn reset_folds_counted() {
+        FOLDS_COUNTED.with(|n| n.set(0));
+    }
+
+    /// **Whether what is held is what a fold of the streams makes**, for the case
+    /// that holds the upkeep to a full fold.
+    #[cfg(test)]
+    pub(crate) fn held_fields_are_what_a_fold_makes(&self) -> Result<(), String> {
+        let declared = self.declared_snapshot.clone();
+        let mut subjects: BTreeSet<ObjectId> = self
+            .streams
+            .keys()
+            .map(|(subject, _)| self.survivor(subject).clone())
+            .collect();
+        subjects.extend(self.held_fields.0.keys().cloned());
+        for subject in subjects {
+            let made = self.fold_subject(&subject, &declared);
+            let held = self
+                .held_fields
+                .0
+                .get(&subject)
+                .cloned()
+                .unwrap_or_default();
+            if made != held {
+                return Err(format!(
+                    "{subject:?} holds {held:?} and a fold makes {made:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

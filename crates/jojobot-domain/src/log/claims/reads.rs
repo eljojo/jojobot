@@ -761,6 +761,8 @@ mod fact_tests;
 #[cfg(test)]
 mod former_handles_tests;
 #[cfg(test)]
+mod held_fields_tests;
+#[cfg(test)]
 mod histories_tests;
 #[cfg(test)]
 mod marker_tests;
