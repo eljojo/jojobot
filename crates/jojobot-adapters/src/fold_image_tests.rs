@@ -25,6 +25,7 @@ const SWITCHED: &[&str] = &[
     "declared_types",
     "declared_kinds",
     "recall",
+    "merge_events",
     "fields",
     "field_ages",
     "claim_histories",
