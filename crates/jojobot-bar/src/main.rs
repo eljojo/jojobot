@@ -67,6 +67,17 @@ fn sabotage_left_applied() -> bool {
 }
 
 fn main() -> ExitCode {
+    // **Make's flags stop here**, before any child starts. `make narrow CRATE=x FILTER=y`
+    // hands its recipe `MAKEFLAGS` with the command-line variables after a double dash,
+    // and cargo passes that text to a build script as `CARGO_MAKEFLAGS`; a crate that
+    // runs `make` from its build script (`tikv-jemalloc-sys`) then fails on the `-j`
+    // it finds after the variables. Cargo has its own jobserver for its children.
+    // SAFETY: this is the first statement of main, so no other thread exists to read
+    // the environment while it changes.
+    unsafe {
+        std::env::remove_var("MAKEFLAGS");
+        std::env::remove_var("MFLAGS");
+    }
     if sabotage_left_applied() {
         return ExitCode::FAILURE;
     }

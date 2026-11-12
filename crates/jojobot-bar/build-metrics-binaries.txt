@@ -46,6 +46,7 @@ test-branch_prune
 test-build_guard
 test-build_metrics
 test-bundle_run
+test-cargo_sees_no_make_flags
 test-carried
 test-changes_cursor
 test-changes_dolt
