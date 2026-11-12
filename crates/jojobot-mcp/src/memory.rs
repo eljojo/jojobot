@@ -77,6 +77,9 @@ mod resend_effects_tests;
 pub mod retract;
 mod review;
 pub(crate) mod room;
+mod rotation;
+#[cfg(test)]
+mod rotation_tests;
 pub mod search;
 pub mod set_charter;
 mod span_in_words;

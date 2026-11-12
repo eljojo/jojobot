@@ -523,6 +523,9 @@ mod thread_records;
 /// One claim, two runs, two zones — and both answers are right.
 #[path = "user_stories/timezones.rs"]
 mod timezones;
+/// Two people take turns at a chore: a key that comes back to an earlier person is told where turns live.
+#[path = "user_stories/turns_on_a_key.rs"]
+mod turns_on_a_key;
 /// A claim reads its settings and its own labels apart; one call moves a label.
 #[path = "user_stories/two_bags.rs"]
 mod two_bags;

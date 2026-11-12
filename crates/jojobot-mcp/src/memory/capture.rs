@@ -989,6 +989,11 @@ impl Jojobot {
             crate::answer::note_hint(&mut body, carry.to_string());
             carry_hint = true;
         }
+        if body.get("hint").is_none()
+            && let Some(rotation) = self.rotation_line(&fact).await
+        {
+            crate::answer::note_hint(&mut body, rotation.to_string());
+        }
         if fact.edge.is_none()
             && body.get("hint").is_none()
             && jojobot_domain::memory::entries::is_entry(&fact)
