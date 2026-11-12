@@ -44,6 +44,8 @@ fn a_cargo_child_of_make_narrow_sees_no_make_flags() {
         .env("CARGO", &fake_cargo)
         .env("STUB_ALL", "alpha::first: test")
         .env("STUB_SEEN", &seen)
+        // A run that names no history directory writes into the real one.
+        .env("BAR_HISTORY_DIR", dir.join("history-none"))
         // What `make narrow CRATE=jojobot FILTER=ci` gives its recipe, and what
         // make passes to a child it runs as a sub-make.
         .env(
