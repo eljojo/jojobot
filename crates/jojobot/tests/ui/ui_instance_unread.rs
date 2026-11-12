@@ -22,7 +22,7 @@ async fn an_unreadable_instance_record_is_not_an_instance_with_no_operator() {
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let counted = Arc::new(Counted::new(seeded_memory().await));
-    let board = seeded_board_over(counted.clone()).await;
+    let board = seeded_board_over(counted.clone()).await.unfilled();
     let (addr, ct, board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
@@ -57,7 +57,7 @@ async fn an_unreadable_instance_record_is_said_on_the_operators_page_and_shows_n
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let counted = Arc::new(Counted::new(seeded_memory().await));
-    let board = seeded_board_over(counted.clone()).await;
+    let board = seeded_board_over(counted.clone()).await.unfilled();
     with_an_operators_mail(&board).await;
     let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();

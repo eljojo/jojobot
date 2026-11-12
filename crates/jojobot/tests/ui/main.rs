@@ -5,6 +5,7 @@ mod support;
 
 #[path = "../ui.rs"]
 mod ui;
+mod ui_board_serves_from_the_image;
 mod ui_client_id_is_not_the_audience;
 mod ui_fenced_details;
 mod ui_home_written;

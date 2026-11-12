@@ -1120,6 +1120,7 @@ async fn otto_with_nothing_yet() -> Board {
         memory,
         mailboxes,
         sessions: Arc::new(InMemorySessions::new()),
+        filled: true,
     }
 }
 
@@ -2626,12 +2627,28 @@ async fn set_fields(memory: &dyn Memory, handle: &str, content: &str, keys: &[(&
 
 /// **[`signed_in`] over a board the case built.**
 async fn signed_in_over(board: Board) -> (SocketAddr, CancellationToken, reqwest::Client, String) {
+    let (addr, ct, client, cookie, _) = signed_in_serving(board).await;
+    (addr, ct, client, cookie)
+}
+
+/// **[`signed_in_over`], with the memory the server serves through**: a write a
+/// case makes after the start goes through it, so the image takes it as it takes
+/// a served write.
+async fn signed_in_serving(
+    board: Board,
+) -> (
+    SocketAddr,
+    CancellationToken,
+    reqwest::Client,
+    String,
+    Arc<dyn Memory>,
+) {
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let (addr, ct, board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    (addr, ct, client, cookie)
+    (addr, ct, client, cookie, board.memory)
 }
 
 /// **[`signed_in`] over the board that holds the views this build supplies.**
@@ -4067,23 +4084,27 @@ async fn the_homepage_has_a_box_for_each_kind_that_has_members_and_counts_them_t
     let (addr, ct, client, cookie) = signed_in_over(board).await;
     let home = read_text(&client, addr, "/", &cookie).await;
 
-    // ── topics: five stand (widgets and four more), the archived one does not ─
+    // ── topics: six stand (widgets, four more and the instance record the start
+    // passes seed), the archived one does not ─
     let topics = element(&home, "kind-topic", "section");
-    assert!(topics.contains("<span class=\"n\">5</span>"), "{topics}");
+    assert!(topics.contains("<span class=\"n\">6</span>"), "{topics}");
     let at = |handle: &str| topics.find(&format!("href=\"/{handle}/\""));
-    // The three written last, the newest first: the rehearsals topic was
-    // created first and written again last, so it leads.
-    let (rehearsals, rules, words) = (
-        at("topic:stunt-rehearsals").expect("the topic written last is listed"),
-        at("topic:all-rules").expect("the next is listed"),
-        at("topic:the-five-words").expect("the third is listed"),
+    // The three written last, the newest first: the start passes wrote the
+    // instance record after every fixture, so it leads; the rehearsals topic was
+    // created first and written again last, so it follows.
+    let (instance, rehearsals, rules) = (
+        at("topic:instance").expect("the topic written last is listed"),
+        at("topic:stunt-rehearsals").expect("the next is listed"),
+        at("topic:all-rules").expect("the third is listed"),
     );
     assert!(
-        rehearsals < rules && rules < words,
+        instance < rehearsals && rehearsals < rules,
         "newest first: {topics}"
     );
     assert!(
-        at("topic:stunt-schedule").is_none() && !topics.contains(">Widgets</a>"),
+        at("topic:the-five-words").is_none()
+            && at("topic:stunt-schedule").is_none()
+            && !topics.contains(">Widgets</a>"),
         "only the three written last: {topics}"
     );
     assert!(
@@ -4773,7 +4794,7 @@ async fn a_threads_page_puts_its_standing_decisions_first_and_then_its_own_claim
 async fn a_page_whose_backing_cannot_be_read_says_so_and_is_still_drawn() {
     let inner = memory_with_views().await;
     let counted = Arc::new(jojobot_adapters::counted::Counted::new(inner));
-    let board = seeded_board_over(counted.clone()).await;
+    let board = seeded_board_over(counted.clone()).await.unfilled();
     let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     counted.fail_backing_of(Some("person:alpha"));
@@ -5511,7 +5532,7 @@ async fn a_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_r
     let (memory, alpha, beta) =
         price_written_twice_then_the_older_rewritten("work:donut-budget", "Donut budget").await;
     let board = seeded_board_over(memory.clone()).await;
-    let (addr, ct, client, cookie) = signed_in_over(board).await;
+    let (addr, ct, client, cookie, served) = signed_in_serving(board).await;
     let id = EntityId("work:donut-budget".into());
 
     let before = read_text(&client, addr, "/work:donut-budget/", &cookie).await;
@@ -5528,7 +5549,7 @@ async fn a_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_r
     let backing = memory.backing(&id).await.expect("backing reads");
     assert_eq!(backing["price"].fact, beta.local, "the verb names beta");
 
-    rewrite_price(&memory, &alpha, "6").await;
+    rewrite_price(&served, &alpha, "6").await;
 
     let after = read_text(&client, addr, "/work:donut-budget/", &cookie).await;
     let row = price_row(&after);
@@ -5563,7 +5584,7 @@ async fn a_projects_page_names_the_write_the_fold_took_the_value_from_after_an_i
     let (memory, alpha, _) =
         price_written_twice_then_the_older_rewritten("project:donut-fund", "Donut fund").await;
     let board = seeded_board_over(memory.clone()).await;
-    let (addr, ct, client, cookie) = signed_in_over(board).await;
+    let (addr, ct, client, cookie, served) = signed_in_serving(board).await;
 
     let who = |page: &str| -> String {
         let at = page
@@ -5586,7 +5607,7 @@ async fn a_projects_page_names_the_write_the_fold_took_the_value_from_after_an_i
         who(&before)
     );
 
-    rewrite_price(&memory, &alpha, "6").await;
+    rewrite_price(&served, &alpha, "6").await;
 
     let after = read_text(&client, addr, "/project:donut-fund/", &cookie).await;
     assert!(
@@ -5850,7 +5871,7 @@ async fn a_page_that_maps_status_words_says_when_the_instance_record_cannot_be_r
     set_fields(&*inner, "work:omega", "to do", &[("status", "next")]).await;
     let counted = Arc::new(jojobot_adapters::counted::Counted::new(inner));
 
-    let board = seeded_board_over(counted.clone()).await;
+    let board = seeded_board_over(counted.clone()).await.unfilled();
     let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: &'static str| {
         let client = client.clone();

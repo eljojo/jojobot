@@ -259,9 +259,25 @@ pub async fn seed(store: &dyn Memory) {
 /// back **after** a page has been served. Asserting that a page changed nothing
 /// needs the store, not the page.
 pub struct Board {
+    /// Before the spawn, the store beneath the server; after it, the memory the
+    /// server serves through, so a write the case makes after the start
+    /// publishes into the image as a served write does.
     pub memory: Arc<dyn Memory>,
     pub mailboxes: Arc<InMemoryMailboxes>,
     pub sessions: Arc<InMemorySessions>,
+    /// Whether the spawn fills the image. Off only for a case that injects a
+    /// store failure and reads the fallback on purpose.
+    pub filled: bool,
+}
+
+impl Board {
+    /// **The degraded path, chosen by name**: the image is never filled, so a
+    /// read falls through to the store, as it does before the first fill or
+    /// after a refresh that failed. A case that makes the store fail asks for it.
+    pub fn unfilled(mut self) -> Self {
+        self.filled = false;
+        self
+    }
 }
 
 /// A bot with the three record types hanging off it: the mailbox it owns, one
@@ -371,6 +387,7 @@ pub async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
         memory,
         mailboxes,
         sessions,
+        filled: true,
     }
 }
 
@@ -512,8 +529,15 @@ pub async fn spawn_jojobot_clocked(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let indexed =
-        Arc::new(IndexedMemory::new(board.memory.clone()).expect("the search index opens"));
+    // **Assembled and filled by the calls the binary makes**, so a page case
+    // reads the image a started server reads, with mentions resolved above the
+    // fold as there, and not the store fallback.
+    let (folded, indexed) = jojobot::wiring::assemble_memory(board.memory.clone())
+        .await
+        .expect("the search index opens");
+    if board.filled {
+        jojobot::wiring::fill_memory(&folded, &indexed).await;
+    }
     let real: Arc<dyn Search> = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     let search: Arc<dyn Search> = match behind {
         Some(behind) => Arc::new(BehindSearch {
@@ -534,6 +558,17 @@ pub async fn spawn_jojobot_clocked(
         reqwest::Client::new(),
     );
 
+    let registry = if board.filled {
+        jojobot::wiring::run_startup_passes(
+            &(board.sessions.clone() as Arc<dyn Sessions>),
+            &indexed.memory(),
+            &(board.mailboxes.clone() as Arc<dyn Mailboxes>),
+            &clock,
+        )
+        .await
+    } else {
+        Arc::new(jojobot_mcp::sid::SessionRegistry::new())
+    };
     let state = AppState {
         apps: Default::default(),
         metrics: None,
@@ -547,7 +582,7 @@ pub async fn spawn_jojobot_clocked(
         sessions: board.sessions.clone() as Arc<dyn Sessions>,
         teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         requests: None,
-        registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
+        registry,
         ui: Some(Arc::new(ui)),
         clock,
         quiet_after: None,
@@ -562,6 +597,10 @@ pub async fn spawn_jojobot_clocked(
             .await
             .unwrap();
     });
+    let board = Board {
+        memory: indexed.memory(),
+        ..board
+    };
     (addr, ct, board)
 }
 

@@ -102,7 +102,7 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
         .set_prose(&EntityId("topic:widgets".into()), "alpha", None)
         .await
         .unwrap();
-    let board = seeded_board_over(memory.clone()).await;
+    let board = seeded_board_over(memory.clone()).await.unfilled();
     let queries = jojobot_mcp::memory::view_run::handle(
         memory.clone(),
         board.sessions.clone(),
@@ -525,7 +525,7 @@ async fn node_around_says_so_when_the_scan_cannot_be_read() {
         failed: AtomicU8::new(0),
         history_reads: AtomicUsize::new(0),
     });
-    let board = seeded_board_over(memory.clone()).await;
+    let board = seeded_board_over(memory.clone()).await.unfilled();
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;

@@ -67,7 +67,7 @@ async fn a_works_status_history_comes_with_the_pages_one_answer() {
             .await
             .unwrap();
     }
-    let board = seeded_board_over(memory.clone()).await;
+    let board = seeded_board_over(memory.clone()).await.unfilled();
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, _) =
@@ -234,7 +234,7 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
         )
         .await
         .unwrap();
-    let board = seeded_board_over(memory.clone()).await;
+    let board = seeded_board_over(memory.clone()).await.unfilled();
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, _) =
@@ -435,7 +435,7 @@ async fn an_unreadable_ancestry_refuses_the_org_chart_in_plain_words() {
                 .unwrap();
         }
     }
-    let board = seeded_board_over(memory.clone()).await;
+    let board = seeded_board_over(memory.clone()).await.unfilled();
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, _) =
@@ -483,7 +483,7 @@ async fn a_rhythms_failed_due_read_is_a_blind_section() {
         }))
         .await
         .unwrap();
-    let board = seeded_board_over(memory.clone()).await;
+    let board = seeded_board_over(memory.clone()).await.unfilled();
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, _) = support::ui_board::spawn_jojobot_on(
