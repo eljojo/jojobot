@@ -16,7 +16,7 @@
 //! to `target/bar/boot-measures.log`, with the counts of things, messages and log
 //! events, so a reader of the run knows what size was measured.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::net::TcpStream;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
