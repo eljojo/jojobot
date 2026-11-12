@@ -3858,6 +3858,7 @@ async fn a_stored_cadence_days_rhythm_checks_in_on_the_head_as_it_did_before() {
         ..
     } = restore_a_fixture(&fixture_dir(), "stored-rhythm-check-in").await;
     let mut store = open_the_store(&state_dir, store_port).await;
+    leave_the_claims_import_to_the_head_boot(store.pool()).await;
     let pool = store.pool().clone();
     jojobot_adapters::dolt::migrate::run(&pool)
         .await
@@ -4098,6 +4099,20 @@ async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_ov
 
 /// **Rows for a thread with five active records**, written below the surface into
 /// the recorded schema, as a build that let a thread grow without a limit left it.
+/// **A case that plants rows below the surface needs the head boot to import them.**
+/// The recording is 9.3.3's, whose log already holds a completed claims import, so
+/// rows planted afterwards are never read into the State and the served surface
+/// does not know them. This removes the log's batches and snapshots and keeps its
+/// identity row, so the head boot imports the store as the planted rows leave it.
+/// The cases that only boot the recording leave the log alone: they measure the
+/// upgrade a deployed 9.3.3 store takes. The same removal is in `boot_measures.rs`.
+pub(crate) async fn leave_the_claims_import_to_the_head_boot(pool: &sqlx::MySqlPool) {
+    sqlx::query("DELETE FROM event_log WHERE slot <> 'validity'")
+        .execute(pool)
+        .await
+        .expect("the recording's events and snapshots are removed");
+}
+
 async fn plant_a_thread_over_the_default_ceiling(pool: &sqlx::MySqlPool) {
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
@@ -4154,6 +4169,7 @@ async fn a_thread_a_deployed_build_left_over_the_default_ceiling_reads_and_edits
         ..
     } = restore_a_fixture(&fixture_dir(), "thread-over-ceiling").await;
     let mut store = open_the_store(&state_dir, store_port).await;
+    leave_the_claims_import_to_the_head_boot(store.pool()).await;
     plant_a_thread_over_the_default_ceiling(store.pool()).await;
     store.stop().await;
 
@@ -4632,6 +4648,7 @@ async fn a_stored_clear_by_a_claim_that_did_not_hold_the_key_is_imported_as_a_re
         ..
     } = restore_a_fixture(&fixture_dir(), "stored-clear").await;
     let mut store = open_the_store(&state_dir, store_port).await;
+    leave_the_claims_import_to_the_head_boot(store.pool()).await;
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
                              merged_into, archived_reason, archived_at)
