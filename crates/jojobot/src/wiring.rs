@@ -22,9 +22,15 @@
 //! going through both, so neither stage's decorators can be dropped by one
 //! caller and kept by the other.
 //!
-//! **What this does NOT unify.** Wrapping a bare store in `Provisioned`
-//! needs `.knowing(supplied)`, a method each concrete store type implements
-//! on itself rather than through `Memory` — `DoltMemory::knowing` and
+//! **The stack, from the store up:** the store told what the build supplies,
+//! the fold, `Provisioned`, `Mentioning`, the index. The fold holds the stored
+//! half and nothing below `Provisioned` knows what the build ships. Every caller
+//! builds it through [`assemble_memory_with`], so no case proves a stack the
+//! binary does not run.
+//!
+//! **What this does NOT unify.** Telling a store what the build supplies needs
+//! `.knowing(supplied)`, a method each concrete store type implements on itself
+//! rather than through `Memory` — `DoltMemory::knowing` and
 //! `InMemoryMemory::knowing` are two different inherent methods with no
 //! shared trait to call through generically, and unifying that would mean
 //! adding it to the `Memory` trait for every adapter, a larger and separate
@@ -41,12 +47,11 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::sessions::DoltSessions;
-use jojobot_adapters::fold::Folded;
 use jojobot_adapters::fold::mail::FoldedMailboxes;
 use jojobot_adapters::fold::sessions::FoldedSessions;
+use jojobot_adapters::fold::{Folded, SharedFold};
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::provisioned::Provisioned;
-use jojobot_adapters::provisioned_boot::ProvisionedBootReader;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::mention as mailbox_mention;
@@ -92,7 +97,9 @@ async fn timed<T>(step: &'static str, work: impl std::future::Future<Output = T>
 static PROVISIONED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 /// **Stage zero: seed the kinds this build ships, then name the stored rows
-/// under a supplied handle, then wrap in `Provisioned`.**
+/// under a supplied handle.** The store comes back as it went in: the layer that
+/// supplies what the build ships is laid over the fold by [`assemble_memory_with`],
+/// and nothing below it knows what the build ships.
 ///
 /// **The order is enforced here rather than left to the caller.**
 /// `stored_rows_under_supplied_handles` reads every stored entity, and reading
@@ -112,17 +119,6 @@ static PROVISIONED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 pub async fn open_provisioned<M: Memory + Clone + 'static>(
     bare: M,
     supplied: Provisions,
-) -> anyhow::Result<Arc<dyn Memory>> {
-    open_provisioned_on(bare, supplied, jojobot_domain::clock::Clock::default()).await
-}
-
-/// **[`open_provisioned`], dating the claims the layer writes with `clock`** —
-/// the clock the stores beneath stamp with, so an instance acting out a day
-/// dates an operator's name on a supplied record with that day.
-pub async fn open_provisioned_on<M: Memory + Clone + 'static>(
-    bare: M,
-    supplied: Provisions,
-    clock: jojobot_domain::clock::Clock,
 ) -> anyhow::Result<Arc<dyn Memory>> {
     if PROVISIONED.set(()).is_err() {
         anyhow::bail!(
@@ -148,7 +144,7 @@ pub async fn open_provisioned_on<M: Memory + Clone + 'static>(
     // the row holds. Each such handle is named once, so the operator can see
     // which of their things a later build has come to share a name with.
     //
-    // **Read against the bare store, before it is wrapped in `Provisioned`**:
+    // **Read against the bare store, before `Provisioned` is laid over it**:
     // the wrapped store would resolve the handle to the supplied record and
     // report nothing.
     match jojobot_domain::memory::owned::stored_rows_under_supplied_handles(&bare, &supplied).await
@@ -169,14 +165,17 @@ pub async fn open_provisioned_on<M: Memory + Clone + 'static>(
              wrongly; a restart once the store is reachable names them."
         ),
     }
-    Ok(Arc::new(Provisioned::new(bare, supplied).on_clock(clock)))
+    Ok(Arc::new(bare))
 }
 
-/// **Stage one: wrap memory, and open the fold and the index over it.**
+/// **Stage one: open the fold over the store, the layer that supplies what the
+/// build ships over the fold, and the index over both.**
 ///
-/// `resolved` is memory already carrying `.knowing(supplied)` and
-/// `Provisioned::new` — see the module doc for why that step is not here
-/// too. Both concrete wrappers come back, not trait objects, because a
+/// The stack, from the store up: the store carrying `.knowing(supplied)`, the
+/// fold, `Provisioned`, `Mentioning`, the index. The fold answers the stored half
+/// at every handle from the claims State and knows nothing of what the build
+/// ships; `Provisioned` lays the shipped half on top and is the one place
+/// shipped-ness lives. Both concrete wrappers come back, not trait objects, because a
 /// caller runs its own boot work against each of them (the fold's own
 /// `rebuild`, the index's full rebuild, or reading `list_entities` for the
 /// mention-text migration) before stage two.
@@ -188,14 +187,20 @@ pub async fn open_provisioned_on<M: Memory + Clone + 'static>(
 /// reaches the fold before it reaches the store.
 pub async fn assemble_memory(
     resolved: Arc<dyn Memory>,
+    supplied: Provisions,
 ) -> anyhow::Result<(Arc<Folded>, Arc<IndexedMemory>)> {
-    assemble_memory_with(resolved, None).await
+    assemble_memory_with(resolved, supplied, Clock::default(), None).await
 }
 
-/// **[`assemble_memory`], with the reader the fold's fill takes its reads from.**
-/// Without one, the fill reads each thing on its own.
+/// **[`assemble_memory`], dating the claims the supply layer writes with `clock`**
+/// (the clock the store beneath stamps with, so an instance acting out a day dates
+/// an operator's name on a supplied record with that day), **and with the reader the
+/// fold's fill takes its reads from.** Without one, the fill reads each thing on its
+/// own.
 pub async fn assemble_memory_with(
     resolved: Arc<dyn Memory>,
+    supplied: Provisions,
+    clock: Clock,
     boot_reader: Option<Arc<dyn BootReader>>,
 ) -> anyhow::Result<(Arc<Folded>, Arc<IndexedMemory>)> {
     // The boot registry chooses which families compare image and store reads;
@@ -205,10 +210,16 @@ pub async fn assemble_memory_with(
         folded = folded.with_boot_reader(reader);
     }
     let folded = Arc::new(folded);
-    // **Mentions resolve above the fold and below the index.** A mention in
-    // a claim has to see the full entity list, and what search holds must
+    // **What the build supplies is laid over the fold**, the one place
+    // shipped-ness lives. It sits UNDER the index on purpose: the index is a
+    // reader, and a reader that saw something no other reader sees would be a
+    // second seam.
+    let provisioned: Arc<dyn Memory> =
+        Arc::new(Provisioned::new(SharedFold(folded.clone()), supplied).on_clock(clock));
+    // **Mentions resolve above the supply layer and below the index.** A mention
+    // in a claim has to see the full entity list, and what search holds must
     // be what a reader sees.
-    let memory: Arc<dyn Memory> = Arc::new(mention::Mentioning::new(folded.clone()));
+    let memory: Arc<dyn Memory> = Arc::new(mention::Mentioning::new(provisioned));
     let indexed = Arc::new(
         IndexedMemory::with_writer(memory, folded.writer()).context("opening the search index")?,
     );
@@ -627,13 +638,10 @@ pub async fn boot_store_observed(
     let bare_memory = DoltMemory::open(store.pool().clone())
         .knowing(supplied.clone())
         .on_clock(clock);
-    // **The fold's fill reads from the store a table at a time**, with the same
-    // provisions laid over what it holds as the layer carries over the store.
-    let boot_reader: Arc<dyn BootReader> = Arc::new(ProvisionedBootReader::over(
-        bare_memory.boot_reader(),
-        supplied.clone(),
-    ));
-    let resolved = open_provisioned_on(bare_memory.clone(), supplied.clone(), clock).await?;
+    // **The fold's fill reads from the store a table at a time**, and holds the
+    // stored half only: what the build ships is laid over the fold, not under it.
+    let boot_reader: Arc<dyn BootReader> = Arc::new(bare_memory.boot_reader());
+    let resolved = open_provisioned(bare_memory.clone(), supplied.clone()).await?;
 
     // **A handle the build stopped supplying, or renamed, keeps the writes the
     // operator made while it was supplied** (rule 508). They are filed under the
@@ -823,8 +831,13 @@ pub async fn boot_store_observed(
     // scan is not fatal: the store is the truth, and refusing to start
     // because a projection couldn't be built is worse than a thin `search`.
     // It says so loudly instead.
-    let (folded, indexed) =
-        assemble_memory_with(observation.memory(resolved), Some(boot_reader)).await?;
+    let (folded, indexed) = assemble_memory_with(
+        observation.memory(resolved),
+        supplied.clone(),
+        clock,
+        Some(boot_reader),
+    )
+    .await?;
     fill_memory(&folded, &indexed).await;
     // **A boot write is bare only before the import.** Once the import is done the
     // State exists, so the repair passes below write through a journaled store and
@@ -1711,9 +1724,10 @@ mod tests {
         use jojobot_domain::session::{NewEntry, NewSession, Sid};
         use std::future::Future;
 
-        let (_, indexed) = assemble_memory(Arc::new(InMemoryMemory::booted()))
-            .await
-            .unwrap();
+        let (_, indexed) =
+            assemble_memory(Arc::new(InMemoryMemory::booted()), Provisions::default())
+                .await
+                .unwrap();
         let writer = indexed.writer();
         let bare = Arc::new(InMemorySessions::new());
         let counted = Arc::new(CountedSessions::new(bare.clone()));
@@ -2035,7 +2049,9 @@ mod tests {
             InMemoryMemory::booted(),
         )));
         let resolved: Arc<dyn Memory> = counted.clone();
-        let (_folded, indexed) = assemble_memory(resolved).await.expect("index opens");
+        let (_folded, indexed) = assemble_memory(resolved, Provisions::default())
+            .await
+            .expect("index opens");
         let milhouse = EntityId::person("person:milhouse");
         counted
             .add_entity(NewEntity::new(milhouse.clone(), "Milhouse", "user-named"))
@@ -2067,7 +2083,9 @@ mod tests {
     async fn a_write_through_the_assembled_stack_reaches_the_fold_underneath() {
         let bare = Arc::new(InMemoryMemory::booted());
         let resolved: Arc<dyn Memory> = bare.clone();
-        let (folded, indexed) = assemble_memory(resolved).await.expect("index opens");
+        let (folded, indexed) = assemble_memory(resolved, Provisions::default())
+            .await
+            .expect("index opens");
         // The boot fills the image; a fold nobody filled sends every read to
         // the store, and the staleness below would prove nothing.
         folded.rebuild().await.expect("the image fills");
@@ -2155,7 +2173,9 @@ mod tests {
 
         jojobot_domain::memory::kinds::load_shipped();
         let bare: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
-        let (folded, indexed) = assemble_memory(bare).await.expect("index opens");
+        let (folded, indexed) = assemble_memory(bare, Provisions::default())
+            .await
+            .expect("index opens");
         folded.rebuild().await.expect("the memory image fills");
         let mail = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let runs = Arc::new(InMemorySessions::new());

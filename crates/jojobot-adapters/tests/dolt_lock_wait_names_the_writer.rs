@@ -17,21 +17,20 @@ use jojobot_adapters::claims_import::{
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::{Dolt, migrate};
 use jojobot_adapters::fold::Folded;
-use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_adapters::writer::Writer;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::{EntityId, Memory, MemoryError, NewEntity};
 
-/// A journaled stack over the store: the layer that resolves what the build supplies
-/// over a store that writes through the log, with the fold on top.
+/// A journaled stack over the store: the fold over a store that writes through the
+/// log. The build supplies nothing here, so the layer over the fold has nothing to lay
+/// on and is left out.
 fn stack(pool: &sqlx::MySqlPool) -> Folded {
-    Folded::new(Arc::new(Provisioned::new(
+    Folded::new(Arc::new(
         DoltMemory::open(pool.clone())
             .journaled()
             .knowing(Provisions::default()),
-        Provisions::default(),
-    )))
+    ))
 }
 
 async fn add(folded: &Folded, handle: &str) -> Result<(), MemoryError> {

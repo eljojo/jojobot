@@ -292,9 +292,6 @@ impl Memory for Counted {
     fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
         self.inner.claims_lender()
     }
-    fn supplies_at(&self, handle: &EntityId) -> bool {
-        self.inner.supplies_at(handle)
-    }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.hit("thought_writers");
         self.inner.thought_writers(thread).await

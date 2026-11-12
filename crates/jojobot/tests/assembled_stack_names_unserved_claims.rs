@@ -39,10 +39,10 @@ async fn the_stack_the_binary_builds_names_the_claim_a_survivor_cannot_serve_and
 
     let supplied = jojobot_mcp::provisions();
     let bare = DoltMemory::open(server.pool().clone()).knowing(supplied.clone());
-    let resolved = jojobot::wiring::open_provisioned(bare, supplied)
+    let resolved = jojobot::wiring::open_provisioned(bare, supplied.clone())
         .await
         .expect("the build's provisions do not collide with an empty store");
-    let (folded, indexed) = jojobot::wiring::assemble_memory(resolved.clone())
+    let (folded, indexed) = jojobot::wiring::assemble_memory(resolved.clone(), supplied.clone())
         .await
         .expect("the index opens");
 

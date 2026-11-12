@@ -2026,9 +2026,6 @@ impl super::Memory for Mentioning {
     fn claims_lender(&self) -> Option<std::sync::Arc<dyn crate::log::claims::ClaimsLender>> {
         self.inner.claims_lender()
     }
-    fn supplies_at(&self, handle: &EntityId) -> bool {
-        self.inner.supplies_at(handle)
-    }
     /// **Straight through.** The answer is handles and renders nothing, and the
     /// default would list every bot and recall each one.
     async fn thought_writers(

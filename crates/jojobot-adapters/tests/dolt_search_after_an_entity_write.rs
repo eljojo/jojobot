@@ -17,15 +17,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
-use jojobot_adapters::provisioned::Provisioned;
+use jojobot_adapters::provisioned::SuppliedOverFold;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::mention::Mentioning;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::search::{HeldField, Hit, Search, SearchQuery};
-use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, EntityPatch, Memory, NewEntity, NewFact,
-};
+use jojobot_domain::memory::{Entity, EntityId, EntityKind, EntityPatch, NewEntity, NewFact};
 use tracing_subscriber::layer::{Context, SubscriberExt};
 
 static STATEMENTS: AtomicUsize = AtomicUsize::new(0);
@@ -113,19 +111,23 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     // supplies, the layer that resolves it, the layer that renders a mention as
     // a handle, and the index.
     let supplied = the_shipped_view();
-    let provisioned: Arc<dyn Memory> = Arc::new(Provisioned::new(
-        DoltMemory::open(pool.clone())
-            .journaled()
-            .knowing(supplied.clone()),
+    // **The fold holds the stored half; the supply layer is over it**, as the server
+    // wires it. **Mentions resolve above both and below the index**: the layer over
+    // them renders a mention as a handle, and the index scans what a reader sees.
+    let folded = Arc::new(SuppliedOverFold::new(
+        Arc::new(
+            DoltMemory::open(pool.clone())
+                .journaled()
+                .knowing(supplied.clone()),
+        ),
         supplied,
     ));
-    // **Mentions resolve above the fold and below the index**, as the server wires
-    // it: the fold holds text as stored, the layer over it renders a mention as a
-    // handle, and the index scans what a reader sees.
-    let folded = Arc::new(jojobot_adapters::fold::Folded::new(provisioned));
     let indexed = Arc::new(
-        IndexedMemory::with_writer(Arc::new(Mentioning::new(folded.clone())), folded.writer())
-            .expect("the search index opens"),
+        IndexedMemory::with_writer(
+            Arc::new(Mentioning::new(folded.clone())),
+            folded.folded().writer(),
+        )
+        .expect("the search index opens"),
     );
     folded.rebuild().await.expect("the fold loads");
     indexed.rebuild().await.expect("the boot scan reads");

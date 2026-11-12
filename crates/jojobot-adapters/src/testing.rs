@@ -129,7 +129,7 @@ pub async fn imported_database(
     name: &str,
 ) -> Result<sqlx::MySqlPool, crate::dolt::StartError> {
     let pool = migrated_database(store, name).await?;
-    try_import_claims(&pool)
+    try_import_claims(&pool, &jojobot_domain::memory::owned::Provisions::default())
         .await
         .map_err(|e| crate::dolt::StartError::Spawn(e.to_string()))?;
     Ok(pool)
@@ -151,12 +151,13 @@ pub async fn open_seam(writer: &crate::writer::Writer, pool: &sqlx::MySqlPool) {
 /// returns. The one recipe [`imported_database`] and [`import_claims_now`] share.
 async fn try_import_claims(
     pool: &sqlx::MySqlPool,
+    supplied: &jojobot_domain::memory::owned::Provisions,
 ) -> Result<(), crate::claims_import::ClaimsImportError> {
     let writer = crate::writer::Writer::default();
     crate::claims_import::import_claims_once(
         &writer,
         pool,
-        &jojobot_domain::memory::owned::Provisions::default(),
+        supplied,
         jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
     )
     .await?;
@@ -172,7 +173,18 @@ async fn try_import_claims(
 /// before the call is imported, and what it writes to the rows after the call, with
 /// no writer to emit events, the State never holds.
 pub async fn import_claims_now(pool: &sqlx::MySqlPool) {
-    try_import_claims(pool)
+    import_claims_supplying(pool, &jojobot_domain::memory::owned::Provisions::default()).await;
+}
+
+/// **The claims import with the build's supplied records**, as the boot runs it: the
+/// State holds each one under its supply identity, bound to its handle. A case that
+/// serves a supplied record through the fold imports with this, or the State has never
+/// heard of the record, which a served store's State has.
+pub async fn import_claims_supplying(
+    pool: &sqlx::MySqlPool,
+    supplied: &jojobot_domain::memory::owned::Provisions,
+) {
+    try_import_claims(pool, supplied)
         .await
         .expect("the claims import runs");
 }

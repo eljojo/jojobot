@@ -2313,8 +2313,7 @@ async fn claims_import_places_a_write_of_a_claim_a_merge_moved_on_the_row_it_was
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_relist_after_an_unrelated_write_keeps_the_operators_name_on_a_supplied_record_in_the_real_store()
  {
-    use jojobot_adapters::fold::Folded;
-    use jojobot_adapters::provisioned::Provisioned;
+    use jojobot_adapters::provisioned::SuppliedOverFold;
     use jojobot_adapters::search::{IndexedMemory, Retrieval};
     use jojobot_domain::actor::Actor;
     use jojobot_domain::log::claims::job;
@@ -2335,17 +2334,22 @@ async fn a_relist_after_an_unrelated_write_keeps_the_operators_name_on_a_supplie
     }
 
     // The stack the server serves through: the journaled store that knows what the
-    // build supplies, the layer that lays the operator's name over it, the fold, and
-    // the index over the fold, so a search by the name is read too.
-    let folded = Arc::new(Folded::new(Arc::new(Provisioned::new(
-        DoltMemory::open(pool.clone())
-            .journaled()
-            .knowing(supplied.clone()),
+    // build supplies, the fold over it, the layer that lays the operator's name over
+    // the fold, and the index over both, so a search by the name is read too.
+    let folded = Arc::new(SuppliedOverFold::new(
+        Arc::new(
+            DoltMemory::open(pool.clone())
+                .journaled()
+                .knowing(supplied.clone()),
+        ),
         supplied,
-    ))));
+    ));
     let indexed = Arc::new(
-        IndexedMemory::with_writer(Arc::new(Mentioning::new(folded.clone())), folded.writer())
-            .expect("the search index opens"),
+        IndexedMemory::with_writer(
+            Arc::new(Mentioning::new(folded.clone())),
+            folded.folded().writer(),
+        )
+        .expect("the search index opens"),
     );
     folded.rebuild().await.expect("the fold loads");
     indexed.rebuild().await.expect("the boot scan reads");

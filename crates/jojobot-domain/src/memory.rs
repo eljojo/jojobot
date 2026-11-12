@@ -7978,15 +7978,6 @@ pub trait Memory: Send + Sync {
         None
     }
 
-    /// **Whether the build supplies something at this handle**: a whole record, a
-    /// page of prose or a field default that the layer over the store lays on what
-    /// the store holds. The claims State holds none of it, so a reader that builds
-    /// a document from the State reads the store for such a handle. Every layer
-    /// over a store forwards the answer of the layer beneath. The default is no.
-    fn supplies_at(&self, _handle: &EntityId) -> bool {
-        false
-    }
-
     /// **Declare a type: a name, and the keys a record of it carries.**
     ///
     /// Write-time help. It tells a writer which keys to fill and what belongs

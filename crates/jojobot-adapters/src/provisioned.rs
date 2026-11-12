@@ -242,6 +242,40 @@ pub(crate) fn resolve_scan(provisions: &Provisions, doc: &mut search::DocScan) {
     }
 }
 
+/// **The served stack of memory below the mention layer, in one value**: the store,
+/// the fold over it, and the layer that supplies what the build ships over the
+/// fold. A caller that needs the fold's own `rebuild` keeps no second handle on
+/// it. The binary builds the same order in `jojobot::wiring::assemble_memory_with`;
+/// a case over a real or fake store uses this, so no case proves a stack the binary
+/// does not run.
+pub struct SuppliedOverFold(
+    Provisioned<crate::fold::SharedFold>,
+    std::sync::Arc<crate::fold::Folded>,
+);
+
+impl SuppliedOverFold {
+    pub fn new(store: std::sync::Arc<dyn Memory>, supplied: Provisions) -> Self {
+        let folded = std::sync::Arc::new(crate::fold::Folded::new(store));
+        SuppliedOverFold(
+            Provisioned::new(crate::fold::SharedFold(folded.clone()), supplied),
+            folded,
+        )
+    }
+
+    /// The fold's fill, as the boot runs it.
+    pub async fn rebuild(&self) -> Result<usize, MemoryError> {
+        self.1.rebuild().await
+    }
+
+    /// The fold under the layer.
+    pub fn folded(&self) -> &std::sync::Arc<crate::fold::Folded> {
+        &self.1
+    }
+}
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for SuppliedOverFold {}
+
 mod scans;
 
 #[async_trait]
@@ -261,18 +295,47 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         if self.provisions.is_empty() {
             return Ok(scanned);
         }
+        // **A supplied record no stored row wears has its document made here.** The
+        // claims State holds the record's stored half under its supply identity and
+        // gives it a document once a claim is written on it, so the scan below can
+        // hold one already: it is dropped, and the one this layer makes (the shipped
+        // fields under what the operator wrote) takes its place.
+        let stored: std::collections::HashSet<EntityId> = self
+            .inner
+            .list_entities(None)
+            .await?
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        let supplied_only =
+            |id: &EntityId| self.provisions.record_for(id).is_some() && !stored.contains(id);
+        scanned.retain(|doc| {
+            !doc.entity
+                .as_ref()
+                .is_some_and(|entity| supplied_only(&entity.id))
+        });
         for doc in &mut scanned {
             resolve_scan(&self.provisions, doc);
         }
         for (entity, _) in self.provisions.records() {
-            let stored = scanned
-                .iter()
-                .any(|d| d.entity.as_ref().is_some_and(|e| e.id == entity.id));
-            if !stored && let Some(doc) = self.supplied_scan(&entity.id).await? {
+            if !stored.contains(&entity.id)
+                && let Some(doc) = self.supplied_scan(&entity.id).await?
+            {
                 scanned.push(doc);
             }
         }
         Ok(scanned)
+    }
+
+    /// **Whether the page holds any text**: the build's layer counts, and the store
+    /// answers for the rest without copying the document. A layer that did not
+    /// forward this would fall back to the default, which reads the whole document
+    /// for one bit.
+    async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
+        match self.provisions.prose_for(entity) {
+            Some(shipped) if !shipped.trim().is_empty() => Ok(true),
+            _ => self.inner.has_prose(entity).await,
+        }
     }
 
     /// **What a boot will serve for this charter**, the build's layer joined to
@@ -286,6 +349,14 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     }
 
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<search::DocScan>, MemoryError> {
+        // A supplied record no stored row wears is made here, from what the layer
+        // beneath holds of it: the State's document of it carries the build's name
+        // and none of the shipped fields.
+        if self.provisions.record_for(entity).is_some()
+            && self.supplied_only(entity).await?.is_some()
+        {
+            return self.supplied_scan(entity).await;
+        }
         match self.inner.scan_entity(entity).await? {
             Some(mut doc) => {
                 resolve_scan(&self.provisions, &mut doc);
@@ -596,9 +667,6 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         &self,
     ) -> Option<std::sync::Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
         self.inner.claims_lender()
-    }
-    fn supplies_at(&self, handle: &EntityId) -> bool {
-        self.provisions.addresses().any(|at| at == handle) || self.inner.supplies_at(handle)
     }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.inner.thought_writers(thread).await

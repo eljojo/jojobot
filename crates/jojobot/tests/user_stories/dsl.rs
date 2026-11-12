@@ -11,7 +11,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use jojobot::AppState;
-use jojobot_adapters::provisioned::Provisioned;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::request::testing::InMemoryRequests;
@@ -710,25 +709,21 @@ impl Story {
         .await
     }
 
-    /// The store, plus what this build supplies over it — everything short of
-    /// `jojobot::wiring::assemble_memory`'s own `Folded` and `Mentioning`
-    /// wraps, which `spawn` calls, exactly as `main.rs` does, so the two
-    /// cannot drift.
+    /// The store, told what this build supplies — everything short of
+    /// `jojobot::wiring::assemble_memory`'s own `Folded`, `Provisioned` and
+    /// `Mentioning` wraps, which `spawn` calls, exactly as `main.rs` does, so the
+    /// two cannot drift.
     fn wired(store: InMemoryMemory) -> Arc<dyn jojobot_domain::memory::Memory> {
         // **Both halves are told the same set**, exactly as the binary wires
-        // it: the layer above resolves supplied records into answers and the
-        // store below sees them when its guard asks what exists.
+        // it: the store sees what the build supplies when its guard asks what
+        // exists, and `spawn` lays the same set over the fold.
         let supplied = jojobot_mcp::provisions();
         // **The store spends request ids into a ledger of its own**, as the real
         // store does in its own table, and the server reads the same ledger. A
         // restart serves over the same store, so it finds the same ledger.
         let ledger = InMemoryRequests::new();
-        let memory: Arc<dyn jojobot_domain::memory::Memory> = Arc::new(Provisioned::new(
-            store
-                .with_requests(ledger.clone())
-                .knowing(supplied.clone()),
-            supplied,
-        ));
+        let memory: Arc<dyn jojobot_domain::memory::Memory> =
+            Arc::new(store.with_requests(ledger.clone()).knowing(supplied));
         LEDGERS
             .lock()
             .expect("the ledger table is poisoned")
@@ -1119,7 +1114,7 @@ impl Story {
         // declaration changed the store under a filled image and cost a
         // second fill on every started or restarted Story.
         let _ = jojobot_mcp::seed::ensure_kinds(&store).await;
-        let (folded, indexed) = jojobot::wiring::assemble_memory(store)
+        let (folded, indexed) = jojobot::wiring::assemble_memory(store, jojobot_mcp::provisions())
             .await
             .expect("index opens");
         jojobot::wiring::fill_memory(&folded, &indexed).await;

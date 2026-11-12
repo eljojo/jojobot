@@ -76,10 +76,10 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     // A clone shares the store's counters, and `open_provisioned` takes the
     // store itself.
     let counted = bare.clone();
-    let resolved = jojobot::wiring::open_provisioned(bare, supplied)
+    let resolved = jojobot::wiring::open_provisioned(bare, supplied.clone())
         .await
         .expect("the build's provisions do not collide with an empty store");
-    let (folded, indexed) = jojobot::wiring::assemble_memory(resolved.clone())
+    let (folded, indexed) = jojobot::wiring::assemble_memory(resolved.clone(), supplied.clone())
         .await
         .expect("the index opens");
     let owners = Arc::new(MemoryOwners::new(indexed.memory()));

@@ -221,7 +221,7 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
         } else {
             Arc::new(InMemoryMemory::booted())
         };
-        let (folded, _) = crate::wiring::assemble_memory_with(memory, None)
+        let (folded, _) = crate::wiring::assemble_memory(memory, Default::default())
             .await
             .unwrap();
         let counts = folded.shadow_counts();
@@ -232,7 +232,7 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
                 .all(|c| matches!(c.family.name(), "referring_to"))
         );
     }
-    let (folded, _) = crate::wiring::assemble_memory_with(held(&[]).await, None)
+    let (folded, _) = crate::wiring::assemble_memory(held(&[]).await, Default::default())
         .await
         .unwrap();
     let counts = folded.shadow_counts();

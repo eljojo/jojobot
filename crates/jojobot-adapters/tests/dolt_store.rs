@@ -19,7 +19,7 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::fold::Folded;
-use jojobot_adapters::provisioned::Provisioned;
+use jojobot_adapters::provisioned::{Provisioned, SuppliedOverFold};
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::teaching_log::LoggedTeachings;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
@@ -10022,15 +10022,16 @@ async fn a_sets_only_edit_of_a_still_supplied_record_lands_over_the_real_store()
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    jojobot_adapters::testing::import_claims_now(&pool).await;
     let provisions = supplied();
-    let provisioned: Arc<dyn Memory> = Arc::new(Provisioned::new(
-        DoltMemory::open(pool.clone())
-            .journaled()
-            .knowing(provisions.clone()),
+    jojobot_adapters::testing::import_claims_supplying(&pool, &provisions).await;
+    let served = SuppliedOverFold::new(
+        Arc::new(
+            DoltMemory::open(pool.clone())
+                .journaled()
+                .knowing(provisions.clone()),
+        ),
         provisions,
-    ));
-    let served = Folded::new(provisioned);
+    );
     served.rebuild().await.expect("the image fills");
     let handle = EntityId("view:loops".into());
     let claim = jojobot_domain::memory::NewFact {
@@ -10092,7 +10093,7 @@ async fn a_sets_only_edit_of_a_still_supplied_record_lands_over_the_real_store()
 /// import's writer is dropped once it has drained: one that lives on holds the
 /// log's one-writer lock, and the journaled store opened next waits for it and
 /// gives up.
-async fn served_over_a_bound_store(pool: &sqlx::MySqlPool) -> Folded {
+async fn served_over_a_bound_store(pool: &sqlx::MySqlPool) -> SuppliedOverFold {
     use jojobot_adapters::provisioned::overlay_contract::supplied;
     let provisions = supplied();
     {
@@ -10107,13 +10108,14 @@ async fn served_over_a_bound_store(pool: &sqlx::MySqlPool) -> Folded {
         .expect("the claims import runs");
         importing.drain().await;
     }
-    let provisioned: Arc<dyn Memory> = Arc::new(Provisioned::new(
-        DoltMemory::open(pool.clone())
-            .journaled()
-            .knowing(provisions.clone()),
+    let served = SuppliedOverFold::new(
+        Arc::new(
+            DoltMemory::open(pool.clone())
+                .journaled()
+                .knowing(provisions.clone()),
+        ),
         provisions,
-    ));
-    let served = Folded::new(provisioned);
+    );
     served.rebuild().await.expect("the image fills");
     served
 }
@@ -10178,12 +10180,14 @@ async fn a_name_and_aliases_set_on_a_supplied_record_are_served_back_over_the_re
     // A stack opened afresh on the same database, as a restart opens one.
     drop(served);
     let provisions = jojobot_adapters::provisioned::overlay_contract::supplied();
-    let again = Folded::new(Arc::new(Provisioned::new(
-        DoltMemory::open(pool.clone())
-            .journaled()
-            .knowing(provisions.clone()),
+    let again = SuppliedOverFold::new(
+        Arc::new(
+            DoltMemory::open(pool.clone())
+                .journaled()
+                .knowing(provisions.clone()),
+        ),
         provisions,
-    )) as Arc<dyn Memory>);
+    );
     again.rebuild().await.expect("the image fills");
     assert_eq!(
         wears(again.list_entities(None).await.expect("lists")),

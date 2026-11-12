@@ -26,7 +26,6 @@ pub mod nudge;
 pub mod observe;
 pub mod owners;
 pub mod provisioned;
-pub mod provisioned_boot;
 pub mod search;
 pub mod snapshot_keeper;
 pub mod teaching_log;

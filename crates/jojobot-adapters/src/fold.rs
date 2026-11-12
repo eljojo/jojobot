@@ -388,8 +388,8 @@ impl Folded {
         }
         // **The thing's document, and the listing after an entity write, are built
         // from the claims State this write has just changed.** A State that cannot
-        // be had fails the refresh ([`Folded::without_state`]). Three things are
-        // read from the store, each a named decline and not a missing State:
+        // be had fails the refresh ([`Folded::without_state`]). Two things are read
+        // from the store, each a named decline and not a missing State:
         // - a thing a merge touched: TEMPORARY(9.3.4), owner card
         //   `q-934-merge-version-row-in-state`, the merge's own row. The store
         //   lists that row as a version of the folded handle and the State holds
@@ -397,16 +397,11 @@ impl Folded {
         //   the document of a folded handle come from the store;
         // - a role: its lease renewals are heartbeats kept off the log, so the State
         //   does not hold what a read of it serves: TEMPORARY(9.3.4), owner card
-        //   `q-934-role-lease-read-from-heartbeat-home`;
-        // - a record the State does not know, which is a record the build supplies
-        //   and the overlay serves: TEMPORARY(9.3.5), until supplied records are
-        //   supplied events.
-        // **A thing the build supplies content at** is a named decline too: the
-        // layer over the store lays that content on what the store holds, and the
-        // State holds none of it. TEMPORARY(9.3.5), until supplied records are
-        // supplied events.
-        let from_the_store =
-            self.before_the_import.load(Ordering::SeqCst) || self.inner.supplies_at(handle);
+        //   `q-934-role-lease-read-from-heartbeat-home`.
+        // **A record the build supplies is no decline**: the State holds it under its
+        // supply identity and answers its stored half, and the layer over the fold
+        // lays the shipped half on top.
+        let from_the_store = self.before_the_import.load(Ordering::SeqCst);
         let stated = if from_the_store {
             Ok(None)
         } else {
@@ -416,53 +411,13 @@ impl Folded {
                     return None;
                 }
                 let doc = Doc::from_state(state, object, &state.declared_types_shared())?;
-                Some((relist.then(|| state.listing()), doc))
+                Some((relist.then(|| state.stored_listing()), doc))
             })
         };
         let read = async {
             let (entities, doc) = match stated {
                 Err(unseen) => return Err(Self::without_state(unseen)),
-                Ok(Some((entities, doc))) => {
-                    // **A thing the State has never heard of is a record the build
-                    // supplies**, and the State's listing leaves it out: the image
-                    // keeps what it lists of those. TEMPORARY(9.3.5), until supplied
-                    // records are supplied events.
-                    let entities = match entities {
-                        Some(mut listed) => {
-                            let missing = self
-                                .held(|image| image.entities_missing_from(&listed))
-                                .unwrap_or_default();
-                            let supplied = self
-                                .claims(|state| {
-                                    missing
-                                        .into_iter()
-                                        .filter(|entity| state.resolve(&entity.id.0).is_none())
-                                        .collect::<Vec<_>>()
-                                })
-                                .map_err(Self::without_state)?;
-                            listed.extend(supplied);
-                            // **A record the build supplies is in the State's listing
-                            // too, as the build ships it**: the operator's name and
-                            // aliases are laid over it by the layer over the store and
-                            // are in no State row. The write that brought this relist
-                            // was about another thing (one about the record itself is
-                            // read from the store above), so the row the image holds
-                            // for it is still the one served. TEMPORARY(9.3.5), until
-                            // supplied records are supplied events.
-                            for held in self
-                                .held(|image| image.held_rows(|id| self.inner.supplies_at(id)))
-                                .unwrap_or_default()
-                            {
-                                if let Some(row) = listed.iter_mut().find(|row| row.id == held.id) {
-                                    *row = held;
-                                }
-                            }
-                            Some(listed)
-                        }
-                        None => None,
-                    };
-                    (entities, doc)
-                }
+                Ok(Some((entities, doc))) => (entities, doc),
                 Ok(None) => {
                     let entities = if relist {
                         Some(self.inner.list_entities(None).await?)
@@ -552,27 +507,20 @@ impl Folded {
     /// **One thing's read from the claims State**, the thing a spelling answers to:
     /// the handle it wears now, one it wore, or a number under a collection. `None`
     /// sends the read to the store, which answers it as it always did: no image or
-    /// no State, a spelling nothing answers to, and the three declines the State
+    /// no State, a spelling nothing answers to, and the two declines the State
     /// does not serve. TEMPORARY(9.3.4) `q-934-merge-version-row-in-state` for a
-    /// thing a merge touched, TEMPORARY(9.3.4)
-    /// `q-934-role-lease-read-from-heartbeat-home` for a role, and TEMPORARY(9.3.5)
-    /// for a handle the build supplies content at.
+    /// thing a merge touched, and TEMPORARY(9.3.4)
+    /// `q-934-role-lease-read-from-heartbeat-home` for a role.
     fn stated<T>(
         &self,
         id: &EntityId,
         read: impl FnOnce(&jojobot_domain::log::claims::State, &Entity, &[DeclaredType]) -> Option<T>,
     ) -> Option<T> {
         self.held(|_| ())?;
-        if self.inner.supplies_at(id) {
-            return None;
-        }
         self.claims(|state| {
             let entity = state.resolved_entity(id)?;
             let object = state.resolve(&entity.id.0)?;
-            if state.was_merged(object)
-                || state.holds_a_lease(object)
-                || self.inner.supplies_at(&entity.id)
-            {
+            if state.was_merged(object) || state.holds_a_lease(object) {
                 return None;
             }
             read(state, &entity, &state.declared_types_shared())
@@ -620,13 +568,9 @@ impl Folded {
 
     /// **The miss of a read of a spelling nothing answers to**, made from the
     /// claims State, so a miss reaches no store either. `None` when the spelling
-    /// answers to a thing, or there is no image or State to say it does not, or the
-    /// build supplies content at it.
+    /// answers to a thing, or there is no image or State to say it does not.
     fn missed(&self, id: &EntityId) -> Option<MemoryError> {
         self.held(|_| ())?;
-        if self.inner.supplies_at(id) {
-            return None;
-        }
         self.claims(|state| {
             state
                 .resolved_entity(id)
@@ -635,6 +579,23 @@ impl Folded {
         })
         .ok()
         .flatten()
+    }
+
+    /// **Whether the handle names a record the build supplies that no stored row
+    /// wears**: the State resolves it to an object under a supply identity, which
+    /// holds no document in the image. TEMPORARY(9.3.3.1), owner card
+    /// `q-9331-no-memory-image` with the history reads: the two reads that still
+    /// answer from the image's documents go to the store for such a handle until
+    /// the State serves them.
+    fn is_supplied_only(&self, handle: &EntityId) -> bool {
+        self.claims(|state| {
+            state.resolve(&handle.0).is_some_and(|object| {
+                object
+                    .0
+                    .starts_with(jojobot_domain::log::claims::import::SUPPLY_PREFIX)
+            })
+        })
+        .unwrap_or(false)
     }
 
     fn readable(&self) -> Result<(), MemoryError> {
@@ -666,6 +627,15 @@ fn fold_behind(landed: Landed, source: MemoryError) -> MemoryError {
         source: Box::new(source),
     }
 }
+
+/// **The fold as a store a layer can wrap by value.** The layer that supplies what
+/// the build ships takes its store by value, and the caller keeps its own `Arc` for
+/// boot work such as the fold's `rebuild`, so every call goes through to the same
+/// fold.
+pub struct SharedFold(pub Arc<Folded>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for SharedFold {}
 
 #[async_trait]
 impl Memory for Folded {
@@ -925,6 +895,24 @@ impl Memory for Folded {
         owned!(self, this, [], this.capture(fact).await);
         self.scoped(async {
             match self.inner.capture(fact).await? {
+                Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
+                    Ok(()) => Ok(Guarded::Written(fact)),
+                    Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
+                },
+                blocked => Ok(blocked),
+            }
+        })
+        .await
+    }
+
+    /// **The companion claim of an edit of a record the build supplies**, written
+    /// as a capture is: the store takes it, and the thing it is about is refreshed
+    /// from the State. The layer over the fold answers the edit with its own
+    /// entity and chooses nothing here.
+    async fn capture_companion(&self, claim: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        owned!(self, this, [], this.capture_companion(claim).await);
+        self.scoped(async {
+            match self.inner.capture_companion(claim).await? {
                 Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
                     Ok(()) => Ok(Guarded::Written(fact)),
                     Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
@@ -1611,9 +1599,6 @@ impl Memory for Folded {
     fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
         self.inner.claims_lender()
     }
-    fn supplies_at(&self, handle: &EntityId) -> bool {
-        self.inner.supplies_at(handle)
-    }
     /// **Answered from the claims State**, which holds each bot's records with
     /// their edges. The store's own check inside a ceiling write is its own and
     /// does not pass here.
@@ -1826,6 +1811,8 @@ mod landed_tests;
 mod refresh_from_state_tests;
 #[cfg(test)]
 mod stalled_read;
+#[cfg(test)]
+mod supplied_over_the_fold_tests;
 #[cfg(test)]
 mod uncertain_serving_tests;
 
