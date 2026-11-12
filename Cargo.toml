@@ -113,6 +113,10 @@ getrandom = "0.4"
 # process that spawned it, which is the one ending an unwind cannot reach ---
 libc = "0.2"
 
+# --- the server binary's allocator: after a replayed day the system allocator held
+# 2119.9 MiB where jemalloc held 741.9 MiB over the same store (run 5155) ---
+tikv-jemallocator = "0.6"
+
 # --- errors + logging ---
 thiserror = "2"
 anyhow = "1"

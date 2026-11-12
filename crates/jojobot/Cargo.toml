@@ -52,6 +52,8 @@ http-body = "1"
 prometheus-client = "0.25"
 # Process RSS and glibc's all-arena allocator totals on the metrics scrape.
 libc.workspace = true
+# The server binary's global allocator; main.rs installs it.
+tikv-jemallocator.workspace = true
 
 # **Two lock cases that need a server built with the room harness.** The check
 # lane compiles the workspace with `jojobot/room-harness`, so it runs them against
