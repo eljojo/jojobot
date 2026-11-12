@@ -465,22 +465,8 @@ impl Image {
         self.types = std::sync::Arc::new(types);
     }
 
-    /// **Take the store's declared types as they stand now**, after a kind write:
-    /// a kind's keys are a declared type under its name, so the list changes with
-    /// the kinds.
-    pub fn set_types(&mut self, types: Vec<DeclaredType>) {
-        self.types = std::sync::Arc::new(types);
-    }
-
     pub fn types(&self) -> Vec<DeclaredType> {
         self.types.as_ref().clone()
-    }
-
-    /// **The declared types, shared**: a read holds the image's own list and
-    /// copies nothing. A new image holds a new list, so a reader keeps the one it
-    /// was given for as long as it reads.
-    pub fn types_shared(&self) -> std::sync::Arc<Vec<DeclaredType>> {
-        self.types.clone()
     }
 
     /// `scan`: every document, in the listing's order.

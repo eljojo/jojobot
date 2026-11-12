@@ -1172,13 +1172,19 @@ pub async fn boot_store_observed(
     // **A later boot binds the records a new build supplies**, directly after the
     // import: the difference between the supply list and the log, in one batch, and
     // nothing when the list is unchanged. A failure stops the boot, as the import's.
+    //
+    // **The store side of the shipped declarations is read from the bare store, never
+    // through the served stack**: the fold answers declared types from the State, so a
+    // reconcile fed by it would compare the State with itself and append nothing. Until
+    // declarations are events, the store is their authority and this reconcile is the
+    // one bridge to the log.
     match timed(
         "claims-reconcile",
         Box::pin(reconcile_claims_supply(
             &folded.writer(),
             &store,
             &supplied,
-            seed_memory.as_ref(),
+            &bare_memory,
             &clock,
         )),
     )
