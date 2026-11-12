@@ -978,6 +978,27 @@ fn returns_an_active_claim(body: &serde_json::Value) -> bool {
     }
 }
 
+/// **Whether the answer returns an active claim recorded before `day`.** Dates
+/// are ISO days, so the string order is the date order.
+fn returns_a_claim_before(body: &serde_json::Value, day: &str) -> bool {
+    match body {
+        serde_json::Value::Object(fields) => fields.iter().any(|(key, value)| {
+            (key == "facts"
+                && value.as_array().is_some_and(|facts| {
+                    facts.iter().any(|fact| {
+                        fact["status"] == "active"
+                            && fact["recorded_at"].as_str().is_some_and(|at| at < day)
+                    })
+                }))
+                || returns_a_claim_before(value, day)
+        }),
+        serde_json::Value::Array(items) => {
+            items.iter().any(|item| returns_a_claim_before(item, day))
+        }
+        _ => false,
+    }
+}
+
 /// Which clock a neighbourhood read compares.
 fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
     match raw.map(str::trim) {
@@ -4718,6 +4739,18 @@ impl Jojobot {
                 .await
         {
             crate::answer::note_teaching(&mut body, crate::teaching::CLAIMS_TEACHING);
+        }
+        // **A claim from an earlier day than the session's own is told, once, to be
+        // an earlier day's record**, so a question asked today is answered by a
+        // capture and not by the old claim.
+        if returns_an_active_claim(&body)
+            && let Ok(today) = self.dated_as(caller.as_ref(), None).await
+            && returns_a_claim_before(&body, &today.to_string())
+            && self
+                .first_contact(crate::teaching::ANSWER_TODAY_DOMAIN, caller.as_ref())
+                .await
+        {
+            crate::answer::note_teaching(&mut body, crate::teaching::ANSWER_TODAY_TEACHING);
         }
         // **A read of a whole kind that returned enough to be worth narrowing is told,
         // once per session for each kind, that `where` would have asked directly.** The example is

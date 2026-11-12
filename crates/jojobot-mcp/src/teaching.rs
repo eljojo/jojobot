@@ -47,6 +47,18 @@ pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the o
     where a claim about what is true belongs. A negative is still an ordinary claim when it \
     corrects nothing: 'he did not attend' stands on its own.";
 
+/// The domain of the answer-today teaching.
+pub(crate) const ANSWER_TODAY_DOMAIN: &str = "answer-today";
+
+/// **Served on the read that returns a claim from an earlier day than the
+/// session's own.** A reader that finds the answer already on record can take
+/// the question as answered and tell the operator so, with nothing written
+/// today.
+pub(crate) const ANSWER_TODAY_TEACHING: &str = "A claim recorded on an earlier day is that \
+    day's record. When the operator asks today for an answer about this thing, capture today's \
+    answer on the thing itself, even when the earlier claim says the same. An answer given in \
+    chat is not on the record until a capture writes it.";
+
 /// **The prefix for search notes.** Each wording gets its own bounded ledger
 /// key, so a changed question can teach a new note while repeated wording is
 /// taught once per session, including on thin and empty answers.
@@ -1727,6 +1739,79 @@ mod tests {
                 .and_then(|taught| taught.as_array())
                 .is_none_or(|taught| !taught.contains(&serde_json::json!(CLAIMS_TEACHING))),
             "the capture after the read does not carry the claims teaching again: {written}"
+        );
+    }
+
+    /// **A read that returns a claim from an earlier day carries the answer-today
+    /// teaching once**, and a read whose claims are all from the session's own
+    /// day carries none.
+    #[tokio::test]
+    async fn a_read_returning_an_earlier_days_claim_teaches_answer_today_once() {
+        let memory = Arc::new(InMemoryMemory::booted());
+        let jojobot = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        make_bot(&jojobot, "gamma").await;
+        let sid = boot_on(&jojobot, "gamma", "2026-11-08").await["session"]["sid"]
+            .as_str()
+            .expect("a sid")
+            .to_string();
+        ensure(&jojobot, "person:alpha").await;
+        ensure(&jojobot, "person:beta").await;
+        for (handle, date) in [
+            ("person:alpha", jiff::civil::date(2026, 1, 5)),
+            ("person:beta", jiff::civil::date(2026, 11, 8)),
+        ] {
+            memory
+                .capture(jojobot_domain::memory::NewFact::about(
+                    EntityId::person(handle),
+                    "keeps a spare pair in the hall drawer",
+                    date,
+                ))
+                .await
+                .expect("capture ok")
+                .written()
+                .expect("not blocked");
+        }
+        let taught = |answer: &serde_json::Value| {
+            answer["teaching"]
+                .as_array()
+                .is_some_and(|taught| taught.contains(&serde_json::json!(ANSWER_TODAY_TEACHING)))
+        };
+        let read = |handle: &'static str| {
+            let jojobot = &jojobot;
+            let sid = sid.clone();
+            async move {
+                json_of(
+                    &jojobot
+                        .recall(rmcp::handler::server::wrapper::Parameters(RecallArgs {
+                            sid: Some(sid),
+                            ..recall_args(handle)
+                        }))
+                        .await
+                        .expect("recall ok"),
+                )
+            }
+        };
+        let today_only = read("person:beta").await;
+        assert!(
+            !taught(&today_only),
+            "a claim from the session's own day is today's record already: {today_only}"
+        );
+        let earlier = read("person:alpha").await;
+        assert!(
+            taught(&earlier),
+            "a claim from January read on 8 November carries the teaching: {earlier}"
+        );
+        let again = read("person:alpha").await;
+        assert!(
+            !taught(&again),
+            "the second read does not repeat it: {again}"
         );
     }
 

@@ -379,6 +379,7 @@ fn teachings(doc: &mut Doc) {
     doc.prose("Each rides once per session on the first verb it applies to, and again after a compaction.");
     let fixed: &[(&str, &str)] = &[
         ("CLAIMS_TEACHING", CLAIMS_TEACHING),
+        ("ANSWER_TODAY_TEACHING", ANSWER_TODAY_TEACHING),
         ("CLAIM_SUBJECT_TEACHING", CLAIM_SUBJECT_TEACHING),
         ("RHYTHM_HISTORY_TEACHING", RHYTHM_HISTORY_TEACHING),
         ("CLAIM_DIRECTION_TEACHING", CLAIM_DIRECTION_TEACHING),
