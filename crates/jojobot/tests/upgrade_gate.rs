@@ -2268,6 +2268,11 @@ async fn fields_every_thing_holds(pool: &sqlx::MySqlPool) -> Vec<(String, String
          -- it held is read as the survivor's.
          WHERE e.merged_into IS NULL
            AND w.value IS NOT NULL
+           -- A key whose newest value is the empty string holds nothing a read serves,
+           -- in the recorded build as in this one (the role holder's `agent` is the
+           -- case): the newest write is chosen below, so an older value of the key is
+           -- not taken in its place.
+           AND w.value <> ''
            -- A key written under `fields` stays on its record and never reaches the
            -- thing, so a thing does not hold it; rows written before the class
            -- existed are `own` and do reach it.
