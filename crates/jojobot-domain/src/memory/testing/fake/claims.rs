@@ -23,13 +23,28 @@ impl InMemoryMemory {
     }
 
     /// **The permanent key a handle stands for**: the key the fake files the thing
-    /// under, as the dolt store's badge is. A name that stands for none keeps its
-    /// spelling, as the import's reader keeps it.
+    /// under, as the dolt store's badge is. **A supplied record with no stored row
+    /// is filed under its supply identity**, as a live write at its handle is: the
+    /// State resolves the handle to that object. A name that stands for none keeps
+    /// its spelling, as the import's reader keeps it.
     pub(super) fn object_key(&self, id: &EntityId) -> ObjectId {
-        ObjectId(
-            self.storage_key(id)
-                .map_or_else(|| id.as_str().to_string(), |key| key.as_str().to_string()),
-        )
+        let held = self
+            .claims
+            .lock()
+            .expect("fake mutex poisoned")
+            .resolve(id.as_str())
+            .filter(|object| {
+                object
+                    .0
+                    .starts_with(crate::log::claims::import::SUPPLY_PREFIX)
+            })
+            .cloned();
+        held.unwrap_or_else(|| {
+            ObjectId(
+                self.storage_key(id)
+                    .map_or_else(|| id.as_str().to_string(), |key| key.as_str().to_string()),
+            )
+        })
     }
 
     /// **The record a claim is held in**, named by the row it is stored in: an
