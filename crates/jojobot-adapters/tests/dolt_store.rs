@@ -10320,6 +10320,136 @@ async fn a_claim_that_points_at_a_supplied_record_is_read_back_by_handle_over_th
     store.stop().await;
 }
 
+/// **A legacy write that names a supplied record files its pointers on the record's
+/// identity, over the real store.** The row-writing path decodes a stored name in the
+/// import's order, so the edge, the ref and the field link at a supplied handle land on
+/// the supply identity the State binds it to: the record's `referring_to` names the
+/// holder, and the holder's claim reads back by handle.
+#[tokio::test]
+async fn a_legacy_write_naming_a_supplied_record_files_its_pointers_on_its_identity() {
+    let scratch = Scratch::new("overlay-legacy-pointers");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "overlay_legacy_pointers")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let served = served_over_a_bound_store(&pool).await;
+    let loops = EntityId("view:loops".into());
+    let holder = EntityId("work:contract-links-alpha".into());
+
+    let first = NewFact {
+        edge: Some(Edge {
+            shape: EdgeShape::About,
+            object: loops.clone(),
+        }),
+        refs: vec![loops.clone()],
+        fields: [("blocks".to_string(), loops.to_string())]
+            .into_iter()
+            .collect(),
+        ..NewFact::about(
+            holder.clone(),
+            "keeps an eye on the loops",
+            date(2026, 11, 9),
+        )
+    };
+    let (_, landed) = jojobot_domain::log::claims::job::within(
+        an_operator_job(),
+        served.add_entity_with_first_claim(
+            NewEntity::new(holder.clone(), "Holder", "contract-fixture"),
+            first,
+        ),
+    )
+    .await
+    .expect("the creation answers")
+    .written()
+    .expect("nothing blocks the creation");
+
+    let pointing = served
+        .referring_to(&loops)
+        .await
+        .expect("referring_to answers");
+    assert!(
+        pointing.iter().any(|fact| fact.id == landed.id),
+        "the supplied record's referring_to does not name the holder: {pointing:?}"
+    );
+    let read = served
+        .recall(&holder)
+        .await
+        .expect("recall answers")
+        .into_iter()
+        .find(|fact| fact.id == landed.id)
+        .expect("the claim is in the read of its holder");
+    assert_eq!(read.edge.map(|edge| edge.object), Some(loops.clone()));
+    assert_eq!(read.refs, vec![loops]);
+    store.stop().await;
+}
+
+/// **A stored row at a supplied handle still takes the claim** (rule 508): the row
+/// wears the handle, so the claim lands on the row and not on the supply identity.
+#[tokio::test]
+async fn a_stored_row_at_a_supplied_handle_still_takes_a_legacy_claim() {
+    use jojobot_adapters::provisioned::overlay_contract::supplied;
+    let scratch = Scratch::new("overlay-row-wins");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "overlay_row_wins")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let handle = EntityId("view:loops".into());
+    // The operator's own row, made before the build supplied the handle.
+    DoltMemory::open(pool.clone())
+        .add_entity(NewEntity::new(handle.clone(), "My rounds", "user-named"))
+        .await
+        .expect("the row is stored")
+        .written()
+        .expect("nothing blocks the row");
+    let provisions = supplied();
+    jojobot_adapters::testing::import_claims_supplying(&pool, &provisions).await;
+    let served = SuppliedOverFold::new(
+        Arc::new(
+            DoltMemory::open(pool.clone())
+                .journaled()
+                .knowing(provisions.clone()),
+        ),
+        provisions,
+    );
+    served.rebuild().await.expect("the image fills");
+    let claim = jojobot_domain::memory::NewFact {
+        sets: ["note_9".to_string()].into(),
+        fields: jojobot_domain::memory::review::settings_fields(
+            [("note_9".to_string(), "kept on the row".to_string())].into(),
+        ),
+        ..NewFact::about(handle.clone(), "Set note_9.", date(2026, 11, 9))
+    };
+    jojobot_domain::log::claims::job::within(
+        an_operator_job(),
+        served.update_entity_with_claim(&handle, EntityPatch::default(), claim),
+    )
+    .await
+    .expect("the edit answers")
+    .written()
+    .expect("nothing blocks the edit");
+    let fields = served.fields(&handle).await.expect("the keys read");
+    assert_eq!(
+        fields.get("note_9").map(String::as_str),
+        Some("kept on the row")
+    );
+    let listed = served.list_entities(None).await.expect("lists");
+    let names: Vec<_> = listed
+        .iter()
+        .filter(|entity| entity.id == handle)
+        .map(|entity| entity.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["My rounds"], "the row answers at its handle");
+    store.stop().await;
+}
+
 /// **A review stamp is not a later change than the write that carries it, in the
 /// real store.** The store stamps each key of a write with a moment of its own;
 /// the stamp has to be the newest of them, or defrag's own write puts the thing

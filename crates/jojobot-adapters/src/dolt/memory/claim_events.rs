@@ -88,10 +88,25 @@ impl DoltMemory {
         Ok(Some(self.stored_writer(tx, caller).await?))
     }
 
-    /// **The permanent key a stored name stands for**: a badge, an entity's id
-    /// (filed under its badge when it has one), or a handle some thing wore and
-    /// left. A name that stands for none keeps its stored spelling, as the
-    /// import's reader keeps it.
+    /// **The object the claims State binds an address to**, when `of_kind` says the
+    /// object is the one wanted. The supplied and adopted branches of
+    /// [`object_key`](Self::object_key) read this, because a record a build renamed
+    /// keeps the identity its first handle gave it, which the handle's text cannot
+    /// rebuild. None outside a writer, or while the State cannot answer.
+    fn bound_in_the_state(stored: &str, of_kind: impl Fn(&ObjectId) -> bool) -> Option<ObjectId> {
+        crate::writer::Writer::current()
+            .and_then(|writer| writer.seam())
+            .and_then(|seam| seam.read_claims(|state| state.resolve(stored).cloned()))
+            .filter(of_kind)
+    }
+
+    /// **The permanent key a stored name stands for**, in the order the import's
+    /// reader decodes it (`Keys::placed`): a badge or an entity's id (filed under its
+    /// badge when it has one), a handle the build supplies, a handle some thing wore
+    /// and left, a handle the build once supplied. **A row that wears the handle
+    /// answers first** (rule 508). A name that stands for none keeps its stored
+    /// spelling, as the import's reader keeps it. TEMPORARY(9.3.4): goes with
+    /// `capture_in`.
     pub(super) async fn object_key(
         tx: &mut Transaction<'_, MySql>,
         stored: &str,
@@ -109,6 +124,13 @@ impl DoltMemory {
         if let Some(key) = held {
             return Ok(ObjectId(key));
         }
+        if let Some(supplied) = Self::bound_in_the_state(stored, |object| {
+            object
+                .0
+                .starts_with(jojobot_domain::log::claims::import::SUPPLY_PREFIX)
+        }) {
+            return Ok(supplied);
+        }
         let former: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT badge FROM entity_former_handle WHERE former_handle = ?",
         )
@@ -116,10 +138,16 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(ObjectId(match former.as_slice() {
-            [only] => only.clone(),
-            _ => stored.to_string(),
-        }))
+        if let [only] = former.as_slice() {
+            return Ok(ObjectId(only.clone()));
+        }
+        let adopted = jojobot_domain::log::claims::import::adopted_identity(stored);
+        if former.is_empty()
+            && let Some(object) = Self::bound_in_the_state(stored, |object| *object == adopted)
+        {
+            return Ok(object);
+        }
+        Ok(ObjectId(stored.to_string()))
     }
 
     /// **The record a claim is held under**, named by the object and the label the
