@@ -111,9 +111,24 @@ impl State {
     /// handles, each wearing the handle it wore itself. A folded row names what
     /// it was folded into, and what was folded into a thing is named on it.
     pub fn listing(&self) -> Vec<memory::Entity> {
+        self.listing_where(|_| true)
+    }
+
+    /// **The things somebody stored: [`listing`](Self::listing) without the objects
+    /// under a supply identity.** The layer over the fold lays what the build ships
+    /// on top of this, so a supplied record is listed once, as that layer serves it,
+    /// and never as the State holds it (the shipped name, no overlay). The whole
+    /// listing stays whole for the near-miss screen. TEMPORARY(9.3.5), owner card
+    /// `q-9331-no-memory-image`: remove when supplied records are supplied events.
+    pub fn stored_listing(&self) -> Vec<memory::Entity> {
+        self.listing_where(|object| !object.0.starts_with(super::import::SUPPLY_PREFIX))
+    }
+
+    fn listing_where(&self, keep: impl Fn(&ObjectId) -> bool) -> Vec<memory::Entity> {
         let mut rows: Vec<memory::Entity> = self
             .objects
             .iter()
+            .filter(|(object, _)| keep(object))
             .filter_map(|(object, body)| {
                 let mut row = self.entity_row(body, self.own_handle_of(object)?)?;
                 row.merged_into = self
@@ -808,6 +823,8 @@ mod own_handle_tests;
 mod referring_tests;
 #[cfg(test)]
 mod scan_tests;
+#[cfg(test)]
+mod stored_listing_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
