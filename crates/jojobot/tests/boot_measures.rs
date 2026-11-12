@@ -100,9 +100,10 @@ const PRODUCTION_TOOL_CALLS: i64 = 116_258;
 /// each with [`SETS_PER_CLAIM`] keys, [`TOOL_MESSAGES`] messages and the sessions.
 /// Writing the instance's whole count that way takes more than an hour, so
 /// [`scale_to_production`] reaches the counts above by copying rows the server
-/// wrote. A copy shares its parent's shape: the row counts and the bytes are
-/// production's, the variety of content is not. Copied messages stay in the state
-/// they were posted in (new), where production's are nearly all processed.
+/// wrote. A copy shares its parent's shape: the row counts are production's and the
+/// text is padded to a fitted length ([`PAD_FACTOR`]); the variety of content is
+/// not production's. Copied messages stay in the state they were posted in (new),
+/// where production's are nearly all processed.
 const SETS_PER_CLAIM: usize = 4;
 const TOOL_MESSAGES: i64 = 1_000;
 /// Connections that write the grown store at once.
@@ -570,9 +571,16 @@ async fn record_the_grown_store() {
         "the recorder's log holds no claims events before the first head boot"
     );
     drop(log);
+    let earlier = add_the_pre_import_log(
+        store.pool(),
+        PRODUCTION_PRE_IMPORT_EVENTS,
+        PRODUCTION_PRE_IMPORT_BATCHES,
+    )
+    .await;
     let counts = scale_to_production(store.pool()).await;
+    let padded = pad_the_text(store.pool(), PAD_FACTOR).await;
     store.stop().await;
-    dump_grown_store(&grown, &out, &counts);
+    dump_grown_store(&grown, &out, &format!("{counts} {earlier} {padded}"));
 }
 
 /// **Leave the log of a store the claims import has not run on**, which is what a
@@ -585,6 +593,75 @@ async fn remove_the_recorders_log(pool: &sqlx::MySqlPool) {
         .execute(pool)
         .await
         .expect("the recorder's events and snapshots are removed");
+}
+
+/// **How much longer the copied text is made, in units.** One unit adds 100 bytes
+/// to every write of a claim, 10 to every plain field value and 75 to every mail.
+/// The counts of the grown store are production's, measured; the bytes are not:
+/// production's totals were never read, so this factor is fitted. It is the one
+/// number the memory job's first-boot peak is set against production's reading
+/// (3.47 GiB at 9.3.3's first boot), and the card says it is an estimate.
+const PAD_FACTOR: i64 = 20;
+
+/// **Production's log before the claims import**, read from its boot lines: 31,388
+/// events in 14,974 batches. The log CI's store held was 34 events.
+const PRODUCTION_PRE_IMPORT_EVENTS: u64 = 31_388;
+const PRODUCTION_PRE_IMPORT_BATCHES: u64 = 14_974;
+
+/// Text that is words and not one repeated character, `bytes` long.
+fn filler(bytes: i64) -> String {
+    let mut text = " lorem ipsum dolor sit amet".repeat(bytes as usize / 20 + 1);
+    text.truncate(bytes as usize);
+    text
+}
+
+/// **Make the copied text longer**, for the claims, the plain field values and the
+/// mails the grower copied, by [`PAD_FACTOR`]-style units (see there). Only text
+/// that is read as text is padded: a key whose value holds an id stays whole.
+/// Returns what it did, for the record the dump keeps.
+async fn pad_the_text(pool: &sqlx::MySqlPool, factor: i64) -> String {
+    for (table, column, extra, condition) in [
+        ("fact", "content", 100, "TRUE"),
+        ("fact_write", "content", 100, "TRUE"),
+        ("field_write", "value", 10, "`key` LIKE 'load\\_key\\_%'"),
+        ("message", "body", 75, "TRUE"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE `{table}` SET `{column}` = CONCAT(`{column}`, ?) WHERE {condition}"
+        )))
+        .bind(filler(extra * factor))
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("padding {table}.{column}: {e}"));
+    }
+    format!("pad_factor={factor}")
+}
+
+/// **Put production's pre-import log into the store**: `events` teaching events
+/// in `batches` batches, the earlier batches taking the remainder, appended through
+/// the log's own writer and codec as the server's writes are.
+async fn add_the_pre_import_log(pool: &sqlx::MySqlPool, events: u64, batches: u64) -> String {
+    use jojobot_domain::log::Append;
+    let log = WriterLog::open(pool.clone(), Writer::default())
+        .await
+        .expect("the log opens to take its earlier events");
+    let mut head = log.head().expect("the log holds its head");
+    let (each, remainder) = (events / batches, events % batches);
+    let mut next = 1;
+    for index in 0..batches {
+        let count = each + u64::from(index < remainder);
+        let sealed = batch(&format!("pre-import-{index}"), head, next, count);
+        match log
+            .append(head, &sealed)
+            .await
+            .expect("a batch is appended")
+        {
+            Append::Committed(range) => head = range.last,
+            other => panic!("a pre-import batch did not commit: {other:?}"),
+        }
+        next += count;
+    }
+    format!("pre_import_events={events} pre_import_batches={batches}")
 }
 
 async fn scaling_store(state: &Scratch) -> Dolt {
@@ -886,6 +963,84 @@ async fn scaled_claim_rows_and_the_restored_claims_state_hold_the_same_history()
 #[ignore = "run through scripts/prepare-boot-store with the deployed binary"]
 async fn the_unscaled_seed_and_its_restored_claims_state_hold_the_same_history() {
     compare_grown_claims(false).await;
+}
+
+/// **The padding makes each copied text longer by its factor and touches no link.**
+/// A claim's text grows by 100 bytes for each unit of the factor, a plain field
+/// value by 10 and a mail by 75. A key that holds an id is left alone, since a
+/// longer id names nothing; so is every column that is not text of the kinds named.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn padding_grows_the_copied_text_by_its_factor_and_leaves_links_alone() {
+    let scratch = Scratch::new("pad-the-text");
+    let mut store = scaling_store(&scratch).await;
+    let pool = store.pool().clone();
+    for sql in [
+        "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
+           VALUES ('person:homer', 'f1', 'a claim', 'testimony', 'active', '2026-10-22')",
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at)
+           VALUES ('person:homer', 'f1', 1, 'a claim', 'testimony', 'active', '2026-10-22'),
+                  ('person:homer', 'f1', 2, 'a claim again', 'testimony', 'active', '2026-10-22')",
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+           VALUES ('person:homer', 'load_key_0', 1, 'shelf 1', 'f1'),
+                  ('person:homer', 'depends_on', 1, '@#abc123', 'f1')",
+        "INSERT INTO message (id, mailbox, ordinal, body, sender, sent_at, state)
+           VALUES ('m1', 'inbox', 1, 'hello', 'bot:sigma', '2026-10-22T00:00:00Z', 'new')",
+    ] {
+        sqlx::query(sql).execute(&pool).await.expect("a row lands");
+    }
+    pad_the_text(&pool, 2).await;
+    let length = |what: &'static str| {
+        let pool = pool.clone();
+        async move { count_of(&pool, what).await }
+    };
+    assert_eq!(
+        length("(SELECT LENGTH(content) FROM fact)").await,
+        7 + 200,
+        "a claim"
+    );
+    assert_eq!(
+        length("(SELECT SUM(LENGTH(content)) FROM fact_write)").await,
+        (7 + 200) + (13 + 200),
+        "every write of the claim"
+    );
+    assert_eq!(
+        length("(SELECT LENGTH(value) FROM field_write WHERE `key` = 'load_key_0')").await,
+        7 + 20,
+        "a plain field value"
+    );
+    assert_eq!(
+        length("(SELECT LENGTH(value) FROM field_write WHERE `key` = 'depends_on')").await,
+        8,
+        "a value that holds an id stays whole"
+    );
+    assert_eq!(
+        length("(SELECT LENGTH(body) FROM message)").await,
+        5 + 150,
+        "a mail"
+    );
+    store.stop().await;
+}
+
+/// **The pre-import log holds the events and the batches it is asked for**, the
+/// events spread as evenly as whole events allow, the earlier batches taking the
+/// remainder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_pre_import_log_holds_the_events_and_batches_it_is_asked_for() {
+    let scratch = Scratch::new("pre-import-log");
+    let mut store = scaling_store(&scratch).await;
+    let pool = store.pool().clone();
+    jojobot_domain::memory::kinds::load_shipped();
+    add_the_pre_import_log(&pool, 7, 3).await;
+    let log = WriterLog::open(pool.clone(), Writer::default())
+        .await
+        .expect("the log opens");
+    let held = log
+        .read_from(Position(0), 1_000)
+        .await
+        .expect("the log reads");
+    let sizes: Vec<usize> = held.iter().map(|batch| batch.members().len()).collect();
+    store.stop().await;
+    assert_eq!(sizes, vec![3, 2, 2]);
 }
 
 fn claims_counts(batches: &[SealedBatch]) -> (usize, usize) {

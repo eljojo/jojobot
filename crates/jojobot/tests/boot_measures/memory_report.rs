@@ -669,15 +669,107 @@ async fn replay_day(pid: u32, port: u16, first_call: usize, budget: Duration) ->
     }
 }
 
-/// How many claims a stopped store holds, counted by a store of its own that the
-/// count starts and stops.
-async fn claims_in(state: &Scratch) -> i64 {
+/// **What a store holds, counted and weighed**, so a reader can set CI's store beside
+/// production's. The memory the claims State takes follows the bytes of every write of
+/// every claim and how deep each claim's writes go, not only how many things exist.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Shape {
+    claims: i64,
+    /// Every write of every claim, the history the claims State keeps whole.
+    claim_writes: i64,
+    claim_write_bytes: i64,
+    /// The most writes any one claim has.
+    deepest_claim: i64,
+    field_writes: i64,
+    field_write_bytes: i64,
+    /// Batches of the event log. The validity row is not a batch.
+    event_batches: i64,
+    event_bytes: i64,
+    messages: i64,
+    message_bytes: i64,
+    runs: i64,
+    journal_entries: i64,
+    journal_bytes: i64,
+}
+
+async fn shape_in(pool: &sqlx::MySqlPool) -> Shape {
+    Shape {
+        claims: count_of(pool, "(SELECT COUNT(*) FROM fact)").await,
+        claim_writes: count_of(pool, "(SELECT COUNT(*) FROM fact_write)").await,
+        claim_write_bytes: count_of(
+            pool,
+            "(SELECT COALESCE(SUM(LENGTH(content) + COALESCE(LENGTH(details), 0)), 0) FROM fact_write)",
+        )
+        .await,
+        deepest_claim: count_of(
+            pool,
+            "(SELECT COALESCE(MAX(n), 0) FROM (SELECT COUNT(*) AS n FROM fact_write GROUP BY entity, fact_id) AS depth)",
+        )
+        .await,
+        field_writes: count_of(pool, "(SELECT COUNT(*) FROM field_write)").await,
+        field_write_bytes: count_of(
+            pool,
+            "(SELECT COALESCE(SUM(LENGTH(value)), 0) FROM field_write)",
+        )
+        .await,
+        event_batches: count_of(
+            pool,
+            "(SELECT COUNT(*) FROM event_log WHERE first_position IS NOT NULL)",
+        )
+        .await,
+        event_bytes: count_of(
+            pool,
+            "(SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM event_log WHERE first_position IS NOT NULL)",
+        )
+        .await,
+        messages: count_of(pool, "(SELECT COUNT(*) FROM message)").await,
+        message_bytes: count_of(
+            pool,
+            "(SELECT COALESCE(SUM(LENGTH(body)), 0) FROM message)",
+        )
+        .await,
+        runs: count_of(pool, "(SELECT COUNT(*) FROM session)").await,
+        journal_entries: count_of(pool, "(SELECT COUNT(*) FROM journal_entry)").await,
+        journal_bytes: count_of(
+            pool,
+            "(SELECT COALESCE(SUM(LENGTH(text)), 0) FROM journal_entry)",
+        )
+        .await,
+    }
+}
+
+/// The shape of a stopped store, read by a store of its own that the read starts and
+/// stops.
+async fn shape_of(state: &Scratch) -> Shape {
     let mut store = Dolt::start(&state.0.join("db"), free_port())
         .await
         .expect("the store comes up to be counted");
-    let claims = count_of(store.pool(), "(SELECT COUNT(*) FROM fact)").await;
+    let shape = shape_in(store.pool()).await;
     store.stop().await;
-    claims
+    shape
+}
+
+/// The report line for a shape. Every number is named, so a line set beside
+/// production's totals needs no key.
+fn shape_line(when: &str, shape: &Shape) -> String {
+    format!(
+        "memory-report store: {when}: {} claims, {} claim writes ({} bytes, deepest {} writes), \
+         {} field writes ({} bytes), {} event batches ({} bytes), {} messages ({} bytes), \
+         {} runs, {} journal entries ({} bytes)",
+        shape.claims,
+        shape.claim_writes,
+        shape.claim_write_bytes,
+        shape.deepest_claim,
+        shape.field_writes,
+        shape.field_write_bytes,
+        shape.event_batches,
+        shape.event_bytes,
+        shape.messages,
+        shape.message_bytes,
+        shape.runs,
+        shape.journal_entries,
+        shape.journal_bytes,
+    )
 }
 
 /// How many tool calls one entry of the day makes, before any retry of a write the
@@ -729,7 +821,9 @@ async fn first_boot() -> FirstBoot {
     let state = replay_dump("jojobot-memory-report", &fixture).await;
     // **The claims the boot reads are counted before it**, so a growth at boot is
     // divided by what the boot held and not by what a replay made of it.
-    let claims = claims_in(&state).await;
+    let shape = shape_of(&state).await;
+    record(&shape_line("before the first boot", &shape));
+    let claims = shape.claims;
     let mut run = spawn(state);
     let boot = watch_boot(&mut run);
     let (server_peak, store_peak) = boot.peak;
@@ -802,6 +896,33 @@ fn boot_line(imported: bool, server_peak: u64, store_peak: u64, after_boot: Memo
         mib(after_boot.resident),
         mib(after_boot.anonymous),
     )
+}
+
+/// **The line for the boot after the first**: the claims import is done and the
+/// first boot's orderly stop left a snapshot, which is the boot production pays at
+/// its next release. It is its own line so the first-boot reader does not take it
+/// for the first boot.
+fn second_boot_line(server_peak: u64, store_peak: u64, after_boot: Memory) -> String {
+    format!(
+        "memory-report second boot: the store held the claims import and a snapshot; server \
+         peak {} ({server_peak} kB), store peak {} ({store_peak} kB), server resident after \
+         boot {}, of which anonymous {}",
+        mib(server_peak),
+        mib(store_peak),
+        mib(after_boot.resident),
+        mib(after_boot.anonymous),
+    )
+}
+
+/// **Boot the server again over the store the first boot left**, as production
+/// boots at its next release, and record what the boot held.
+fn second_boot(state: Scratch) {
+    let mut run = spawn(state);
+    let boot = watch_boot(&mut run);
+    let (server_peak, store_peak) = boot.peak;
+    let after_boot = memory_of_pid(run.pid).expect("the second boot's server runs");
+    record(&second_boot_line(server_peak, store_peak, after_boot));
+    run.stopped();
 }
 
 /// What the boot's log said it held, for the per-thing division.
@@ -891,7 +1012,10 @@ async fn the_servers_memory_across_a_first_boot() {
         mib(super::memory_bound_kib()),
         mib(boot.store_peak),
     ));
-    boot.run.stopped();
+    // **The orderly stop takes a snapshot, so the next boot is the one production
+    // pays at its next release**: no import, and a snapshot to load.
+    let (state, _) = boot.run.stopped();
+    second_boot(state);
 }
 
 /// **The replay half of the report: a whole day of calls through the server
@@ -934,7 +1058,9 @@ async fn the_servers_memory_after_a_replayed_day() {
         .sum();
     let (server_peak, store_peak) = (boot.server_peak, boot.store_peak);
     let (state, _) = boot.run.stopped();
-    let claims_after = claims_in(&state).await;
+    let shape_after = shape_of(&state).await;
+    record(&shape_line("after the day", &shape_after));
+    let claims_after = shape_after.claims;
     let bound = super::memory_bound_kib();
     let beside = last.resident + store_resident;
     record(&format!(
@@ -1178,6 +1304,24 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         }
     }
 
+    /// **The second boot's line is its own line.** It is the boot production pays at
+    /// the next release: the import is done and the stop left a snapshot. It keeps
+    /// the peaks it was given and is not read by the verdict as the first boot's, so
+    /// it must not begin as the first boot's line does.
+    #[test]
+    fn memory_report_gives_the_second_boot_a_line_the_first_boots_reader_skips() {
+        let after = Memory {
+            resident: 900_000,
+            anonymous: 800_000,
+            peak: 0,
+        };
+        let line = second_boot_line(1_001_580, 1_221_188, after);
+        assert!(line.starts_with("memory-report second boot: "), "{line}");
+        assert!(!line.starts_with("memory-report boot: "), "{line}");
+        assert!(line.contains("(1001580 kB)"), "{line}");
+        assert!(line.contains("(1221188 kB)"), "{line}");
+    }
+
     /// **The per-thing line divides each projection's growth by what it holds, and
     /// gives the import no figure when it did not run.**
     #[test]
@@ -1203,6 +1347,148 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
             "an import that did not run was given a figure: {skipped}"
         );
         assert!(ran.contains("Some(7)") && ran.contains("Some(30)"), "{ran}");
+    }
+
+    /// **The store's line names every count and every byte total it holds**, each with its
+    /// own number, so a reader can set production's totals beside CI's and see which
+    /// differs. The numbers are all different here so that one read for another shows.
+    #[test]
+    fn memory_report_names_each_count_and_byte_total_of_a_store() {
+        let shape = Shape {
+            claims: 11,
+            claim_writes: 12,
+            claim_write_bytes: 13,
+            deepest_claim: 14,
+            field_writes: 15,
+            field_write_bytes: 16,
+            event_batches: 17,
+            event_bytes: 18,
+            messages: 19,
+            message_bytes: 20,
+            runs: 21,
+            journal_entries: 22,
+            journal_bytes: 23,
+        };
+        let line = shape_line("before the boot", &shape);
+        assert!(
+            line.starts_with("memory-report store: before the boot: "),
+            "{line}"
+        );
+        for number in 11..=23 {
+            let words: Vec<&str> = line.split(|c: char| !c.is_ascii_digit()).collect();
+            assert_eq!(
+                words
+                    .iter()
+                    .filter(|word| **word == number.to_string())
+                    .count(),
+                1,
+                "{number} appears once: {line}"
+            );
+        }
+    }
+
+    /// **The counts and byte totals are read out of the store's own tables.** A real store
+    /// holds two claims, one of them written twice, two mails, one run with a journal entry
+    /// and one event batch, and the shape says exactly that.
+    #[tokio::test]
+    async fn memory_report_counts_what_a_real_store_holds() {
+        let scratch = Scratch::new("memory-report-shape");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = jojobot_adapters::testing::migrated_database(&store, "shapecase")
+            .await
+            .expect("a database of its own");
+        for id in ["f1", "f2"] {
+            sqlx::query(
+                "INSERT INTO fact (entity, id, content, provenance, status, recorded_at) \
+                 VALUES ('person:homer', ?, 'now', 'inference', 'active', '2026-09-01')",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("a claim");
+        }
+        for (fact, ordinal, content) in [
+            ("f1", 1, "eats donuts"),
+            ("f1", 2, "eats donuts daily"),
+            ("f2", 1, "wears a hat"),
+        ] {
+            sqlx::query(
+                "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at) \
+                 VALUES ('person:homer', ?, ?, ?, 'inference', 'active', '2026-09-01')",
+            )
+            .bind(fact)
+            .bind(ordinal)
+            .bind(content)
+            .execute(&pool)
+            .await
+            .expect("a write of a claim");
+        }
+        sqlx::query(
+            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id) \
+             VALUES ('person:homer', 'diet', 1, 'donuts', 'f1')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a field write");
+        for (id, body) in [("m1", "hello"), ("m2", "hello again")] {
+            sqlx::query(
+                "INSERT INTO message (id, mailbox, ordinal, body, sender, sent_at, state) \
+                 VALUES (?, 'inbox', 1, ?, 'omega', '2026-09-01T00:00:00Z', 'new')",
+            )
+            .bind(id)
+            .bind(body)
+            .execute(&pool)
+            .await
+            .expect("a message");
+        }
+        sqlx::query(
+            "INSERT INTO session (id, bot, focus, started_at, state) \
+             VALUES ('s1', 'bot:omega', 'work', '2026-09-01T00:00:00Z', 'open')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a run");
+        sqlx::query(
+            "INSERT INTO journal_entry (session, id, ordinal, at, text) \
+             VALUES ('s1', 'j1', 1, '2026-09-01T00:00:00Z', 'a beat')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a journal entry");
+        sqlx::query(
+            "INSERT INTO event_log (slot, first_position, last_position, payload) \
+             VALUES ('test-slot', 1, 1, 'payload!')",
+        )
+        .execute(&pool)
+        .await
+        .expect("an event batch");
+
+        let shape = shape_in(&pool).await;
+        store.stop().await;
+        assert_eq!(shape.claims, 2, "{shape:?}");
+        assert_eq!(
+            shape.claim_writes, 3,
+            "two claims, one written twice: {shape:?}"
+        );
+        assert_eq!(shape.deepest_claim, 2, "{shape:?}");
+        assert!(
+            shape.claim_write_bytes >= ("eats donuts".len() + "eats donuts daily".len()) as i64,
+            "{shape:?}"
+        );
+        assert_eq!(shape.field_writes, 1, "{shape:?}");
+        assert_eq!(shape.field_write_bytes, "donuts".len() as i64, "{shape:?}");
+        assert_eq!(shape.messages, 2, "{shape:?}");
+        assert_eq!(
+            shape.message_bytes,
+            ("hello".len() + "hello again".len()) as i64
+        );
+        assert_eq!(shape.runs, 1, "{shape:?}");
+        assert_eq!(shape.journal_entries, 1, "{shape:?}");
+        assert_eq!(shape.journal_bytes, "a beat".len() as i64);
+        assert_eq!(shape.event_batches, 1, "{shape:?}");
+        assert_eq!(shape.event_bytes, "payload!".len() as i64);
     }
 
     #[test]
