@@ -10,6 +10,9 @@ use std::process::Stdio;
 use jojobot_adapters::testing::{Scratch, free_port};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
+/// How long the binary has to stop after the signal, and its stderr to end.
+const STOP_PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[tokio::test]
 async fn the_server_binary_ends_by_printing_jemallocs_statistics() {
     let scratch = Scratch::new("runs-on-jemalloc");
@@ -57,8 +60,17 @@ async fn the_server_binary_ends_by_printing_jemallocs_statistics() {
         .status()
         .expect("kill runs");
     assert!(stopped.success(), "the stop signal was not delivered");
-    let _ = child.wait().await;
-    let text = kept.await.expect("stderr was read");
+    // A server that does not stop ends the case instead of hanging the suite.
+    let ended = tokio::time::timeout(STOP_PATIENCE, child.wait()).await;
+    if ended.is_err() {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+        panic!("the binary did not stop within {STOP_PATIENCE:?} of the stop signal");
+    }
+    let text = tokio::time::timeout(STOP_PATIENCE, kept)
+        .await
+        .expect("stderr reached its end")
+        .expect("stderr was read");
     assert!(
         text.contains("jemalloc statistics"),
         "the binary ended without jemalloc's statistics, so it ran on another allocator:\n{text}"
