@@ -53,9 +53,10 @@ async fn loaded(pool: sqlx::MySqlPool) -> (Arc<DoltMemory>, Arc<Counted>, Folded
         .await
         .expect("the kinds are seeded");
     jojobot_adapters::testing::import_claims_now(&pool).await;
-    let store = Arc::new(DoltMemory::open(pool).journaled());
+    let store = Arc::new(DoltMemory::open(pool.clone()).journaled());
     let counted = Arc::new(Counted::new(store.clone()));
     let folded = Folded::new(counted.clone());
+    jojobot_adapters::testing::open_seam(&folded.writer(), &pool).await;
     folded.rebuild().await.expect("the fold loads");
     (store, counted, folded)
 }
@@ -104,7 +105,7 @@ async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_real_store_an
     };
     walk_a_merge_and_a_rename_among_holders(&probe).await;
     walk_a_merge_among_holders_of_one_name(&probe).await;
-    let fresh = Folded::new(counted.clone());
+    let fresh = Folded::new(counted.clone()).with_writer(folded.writer());
     fresh.rebuild().await.expect("the fold loads again");
     agree_after_a_reload(&fresh, &*store).await;
     // Whether the real store holds engine records that point at names is not assumed: the case

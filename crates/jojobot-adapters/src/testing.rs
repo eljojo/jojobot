@@ -135,6 +135,18 @@ pub async fn imported_database(
     Ok(pool)
 }
 
+/// **Open the ledgers of a writer over a database now**, as the boot does before
+/// anything serves, so a fold on this writer reads the claims State from its first
+/// read and not from its first write. The database holds the claims import
+/// ([`import_claims_now`]) before this runs.
+pub async fn open_seam(writer: &crate::writer::Writer, pool: &sqlx::MySqlPool) {
+    let (opener, pool) = (writer.clone(), crate::writer::sql::Pool::from(pool.clone()));
+    writer
+        .run(async move { opener.ensure_seam(&pool).await })
+        .await
+        .expect("the ledgers open over the imported log");
+}
+
 /// The claims import on a pool, on a writer of its own that is drained before it
 /// returns. The one recipe [`imported_database`] and [`import_claims_now`] share.
 async fn try_import_claims(

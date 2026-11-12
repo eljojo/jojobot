@@ -150,7 +150,7 @@ async fn writer_recovery_memory_reloads_the_whole_rail_and_reports_its_time() {
     let pool = migrated_database(&server, "reload_gamma")
         .await
         .expect("schema");
-    let native = Arc::new(DoltMemory::open(pool));
+    let native = Arc::new(DoltMemory::open(pool.clone()));
     jojobot_domain::memory::kinds::seed(&*native)
         .await
         .expect("kinds");
@@ -199,9 +199,12 @@ async fn writer_recovery_memory_reloads_the_whole_rail_and_reports_its_time() {
         }
         seeded.push(id);
     }
-    let counted = Arc::new(Counted::new(native.clone()));
+    crate::testing::import_claims_now(&pool).await;
+    let served = Arc::new(DoltMemory::open(pool.clone()).journaled());
+    let counted = Arc::new(Counted::new(served));
     let writer = crate::writer::Writer::default();
     let image = Arc::new(Folded::new(counted.clone()).with_writer(writer.clone()));
+    crate::testing::open_seam(&writer, &pool).await;
     image.rebuild().await.expect("published rail");
     let folded = crate::search::IndexedMemory::with_writer(image, writer.clone())
         .expect("the production search decorator");

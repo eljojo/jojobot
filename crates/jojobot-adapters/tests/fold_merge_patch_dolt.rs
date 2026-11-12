@@ -46,7 +46,7 @@ async fn fold_over(unrelated: usize, name: &str) -> (Dolt, Scratch, Arc<Counted>
     kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let store = Arc::new(DoltMemory::open(pool));
+    let store = Arc::new(DoltMemory::open(pool.clone()));
     let persons = [
         EntityId::person("person:alpha"),
         EntityId::person("person:beta"),
@@ -81,8 +81,13 @@ async fn fold_over(unrelated: usize, name: &str) -> (Dolt, Scratch, Arc<Counted>
             .written()
             .expect("not blocked");
     }
-    let counted = Arc::new(Counted::new(store));
+    // **As the binary wires it**: what the rows hold is imported into the log, the
+    // store serves journaled, and the fold reads the State the writer opens.
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let served = Arc::new(DoltMemory::open(pool.clone()).journaled());
+    let counted = Arc::new(Counted::new(served));
     let folded = Folded::new(counted.clone());
+    jojobot_adapters::testing::open_seam(&folded.writer(), &pool).await;
     folded.rebuild().await.expect("the fold fills");
     (server, scratch, counted, folded)
 }
