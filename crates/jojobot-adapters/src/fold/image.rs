@@ -189,9 +189,6 @@ pub(super) struct Image {
     /// its answer — so the list is asked of the store when it is filled and patched
     /// by a write to a thing's own claims, a holder at a time, in that order.
     referring: HashMap<String, Vec<Fact>>,
-    /// **What stands on what.** The claim each record was worked out from, to
-    /// the records worked out from it.
-    built_on: HashMap<(String, String), Vec<(EntityId, FactId)>>,
     /// **What the documents hold, by key** (see [`Held`]). Kept current a
     /// document at a time, and filled again with the image.
     held: Held,
@@ -348,12 +345,10 @@ impl Image {
             by_id: HashMap::new(),
             by_badge: HashMap::new(),
             referring: HashMap::new(),
-            built_on: HashMap::new(),
             held: Held::default(),
             events: Vec::new(),
         };
         image.reindex();
-        image.index_docs();
         image.hold_documents();
         image.derive_numbered();
         image
@@ -610,15 +605,10 @@ impl Image {
     /// what is kept beside the documents with it.
     fn take_in_doc(&mut self, doc: Doc) {
         if let Some(handle) = doc.scan.entity.as_ref().map(|e| e.id.clone()) {
-            let facts = doc.scan.facts.clone();
             let fields = doc.fields.clone();
             let old = self.docs.insert(handle.clone(), doc);
             self.held
                 .replace(&handle, old.as_ref().map(|old| &old.fields), &fields);
-            if let Some(old) = &old {
-                self.forget_built_on(&handle, old);
-            }
-            self.remember_built_on(&handle, &facts);
         }
     }
 
@@ -661,7 +651,6 @@ impl Image {
         for handle in gone {
             if let Some(doc) = self.docs.remove(&handle) {
                 self.held.remove(&handle, &doc.fields);
-                self.forget_built_on(&handle, &doc);
             }
         }
     }
@@ -689,47 +678,6 @@ impl Image {
         self.numbered = derived_formers(&self.entities, &self.fields_by_handle());
     }
 
-    /// Build the records-worked-out-from lookup from the documents held. A single
-    /// pass over the records held, paid by a fill and never by a write or a read.
-    fn index_docs(&mut self) {
-        self.built_on.clear();
-        let handles: Vec<EntityId> = self.entities.iter().map(|e| e.id.clone()).collect();
-        for handle in handles {
-            if let Some(facts) = self.docs.get(&handle).map(|doc| doc.scan.facts.clone()) {
-                self.remember_built_on(&handle, &facts);
-            }
-        }
-    }
-
-    /// Put on the records of `handle` that were worked out from a claim.
-    fn remember_built_on(&mut self, handle: &EntityId, facts: &[Fact]) {
-        for fact in facts {
-            if let Some(source) = &fact.derived_from {
-                self.built_on
-                    .entry((source.home.0.clone(), source.local.0.clone()))
-                    .or_default()
-                    .push((handle.clone(), fact.id.clone()));
-            }
-        }
-    }
-
-    /// Take off the records of `handle` that were worked out from a claim, as its
-    /// document `old` held them. A source with no record left is dropped.
-    fn forget_built_on(&mut self, handle: &EntityId, old: &Doc) {
-        for fact in &old.scan.facts {
-            let Some(source) = &fact.derived_from else {
-                continue;
-            };
-            let key = (source.home.0.clone(), source.local.0.clone());
-            if let Some(standing) = self.built_on.get_mut(&key) {
-                standing.retain(|(holder, _)| holder != handle);
-                if standing.is_empty() {
-                    self.built_on.remove(&key);
-                }
-            }
-        }
-    }
-
     /// Fill what is kept by key from the documents held.
     fn hold_documents(&mut self) {
         let mut held = Held::declaring(&self.types);
@@ -746,32 +694,7 @@ impl Image {
         self.held.is_what_a_build_would_make(
             &self.types,
             self.docs.iter().map(|(handle, doc)| (handle, &doc.fields)),
-        )?;
-        let mut built = Image::assembled(
-            self.entities.clone(),
-            self.former.clone(),
-            self.types.as_ref().clone(),
-            self.kinds.clone(),
-            self.docs.clone(),
-        );
-        let normal = |map: &HashMap<(String, String), Vec<(EntityId, FactId)>>| {
-            let mut rows: Vec<_> = map
-                .iter()
-                .map(|(key, standing)| {
-                    let mut standing = standing.clone();
-                    standing.sort();
-                    (key.clone(), standing)
-                })
-                .collect();
-            rows.sort();
-            rows
-        };
-        built.index_docs();
-        if normal(&built.built_on) == normal(&self.built_on) {
-            Ok(())
-        } else {
-            Err("the records worked out from a claim differ from a build".into())
-        }
+        )
     }
 
     /// **Every name the records of these documents point at**, which are the
@@ -1234,29 +1157,6 @@ impl Image {
         let moved =
             follow_claim::<_, MergeLoop>(home, address.local.clone(), moves_in(&self.events))?;
         Ok(moved.map(|(survivor, now)| FactAddress::new(survivor, now)))
-    }
-
-    pub fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
-        jojobot_domain::memory::validate_subject_in(&self.kind_set, &source.home)?;
-        let home = self
-            .entity(&source.home)
-            .map(|e| e.id.clone())
-            .unwrap_or_else(|| source.home.clone());
-        let Some(standing) = self.built_on.get(&(home.0, source.local.0.clone())) else {
-            return Ok(Vec::new());
-        };
-        let mut rows: Vec<(String, &FactId, &Fact)> = Vec::new();
-        for (holder, id) in standing {
-            if let Some(fact) = self
-                .docs
-                .get(holder)
-                .and_then(|doc| doc.scan.facts.iter().find(|f| &f.id == id))
-            {
-                rows.push((self.storage_key(holder), id, fact));
-            }
-        }
-        rows.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
-        Ok(rows.into_iter().map(|(_, _, fact)| fact.clone()).collect())
     }
 
     /// The key a thing's rows are filed under: its badge, or its handle when it

@@ -520,6 +520,21 @@ impl Folded {
             );
         }
     }
+    /// **What stands on a claim, read from the claims State** in the domain's one
+    /// claim order. The kind of the address is checked against the store's own
+    /// kinds, as every read of the image is. With no image, or no State to read,
+    /// the store answers.
+    async fn built_on_here(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        let Some(kinds) = self.held(|image| image.kind_set()) else {
+            return self.inner.built_on(source).await;
+        };
+        jojobot_domain::memory::validate_subject_in(&kinds, &source.home)?;
+        match self.claims(|state| state.built_on(source)) {
+            Ok(facts) => Ok(facts),
+            Err(_) => self.inner.built_on(source).await,
+        }
+    }
+
     fn readable(&self) -> Result<(), MemoryError> {
         if self.writer.rail_uncertain("memory") && self.image.read().expect("fold lock").is_none() {
             self.unheld()?;
@@ -1384,17 +1399,11 @@ impl Memory for Folded {
         match self.held(|image| image.moved(source)) {
             Some(Err(looped)) => return Err(looped.into()),
             Some(Ok(Some(moved))) => {
-                return match self.held(|image| image.built_on(&moved)) {
-                    Some(answer) => answer,
-                    None => self.inner.built_on(&moved).await,
-                };
+                return self.built_on_here(&moved).await;
             }
             _ => {}
         }
-        match self.held(|image| image.built_on(source)) {
-            Some(answer) => answer,
-            None => self.inner.built_on(source).await,
-        }
+        self.built_on_here(source).await
     }
 
     /// **Selected on what a record's fields name, in memory**, not by reading
@@ -1602,6 +1611,8 @@ impl Memory for Folded {
     }
 }
 
+#[cfg(test)]
+mod built_on_order_tests;
 #[cfg(test)]
 mod counting_scan;
 #[cfg(test)]
