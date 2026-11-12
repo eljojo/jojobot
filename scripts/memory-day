@@ -35,7 +35,11 @@ CASES = [
 ]
 # Room for the case on a loaded runner: the day took 1,756 to 2,000 s on a free runner and
 # about 3,450 s (1.5 entries a second) on a loaded one, and the three boots and the import
-# before it under 300 s. The memory job is stopped at 100 minutes, which leaves 20 for the runner cleanup, the downloads and the verdict.
+# before it under 300 s. The memory job is stopped at 100 minutes, which leaves 20 for the
+# runner cleanup, the downloads and the verdict.
+# TEMPORARY(9.3.4) `q-934-jemalloc-memory-measurement`: this deadline and the job's timeout are
+# sized to glibc's day on a loaded runner; lower both when jemalloc is in the binary (the day
+# took 1,450 s against 2,666 s on glibc).
 DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "4800"))
 # Rule 800's bound on the server's own memory, 4 GiB. It is not the unit's memoryMax,
 # which a later rule moves.

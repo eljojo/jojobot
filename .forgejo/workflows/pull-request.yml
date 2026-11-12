@@ -415,6 +415,9 @@ jobs:
   # wrapped in stop-with-siblings**, because this forge fails the run when a job
   # fails and the siblings stop on a red job: a replay that ran out of time must
   # not stop the check. The step's own lines say ok, FAILED or TIMED OUT.
+  # TEMPORARY(9.3.4) `q-934-jemalloc-memory-measurement`: the 100-minute timeout and the
+  # script's 4,800 s deadline are sized to glibc's day on a loaded runner (2,666 s); lower
+  # both when jemalloc is in the binary (1,450 s).
   memory:
     needs: [static, build, boot-store]
     runs-on: nix-x86_64
