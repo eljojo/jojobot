@@ -1340,3 +1340,38 @@ fn the_sweeper_runs_every_hour_and_deletes_only_what_ended_runs_left() {
     );
     assert!(yaml.contains("TOKEN: ${{ forgejo.token }}"), "{yaml}");
 }
+
+/// **A recipe that builds the workspace starts cargo without make's flags.** `make paid
+/// PLAYBOOK=x` hands its recipe `MAKEFLAGS` with the variable after a double dash, and
+/// cargo gives a build script the same text as `CARGO_MAKEFLAGS`; `tikv-jemalloc-sys`
+/// runs `make` from its build script and fails on the `-j` it finds after the variable.
+/// The bar takes the two variables out of its own environment, so the recipes that start
+/// cargo themselves do the same through `env -u`.
+#[test]
+fn every_recipe_that_builds_the_workspace_starts_cargo_without_make_flags() {
+    let mut seen = 0;
+    for target in [
+        "test",
+        "lint",
+        "build",
+        "integration",
+        "argument-coverage",
+        "paid",
+        "replay",
+    ] {
+        for line in dry_run(&[target]).lines() {
+            let builds = ["cargo test", "cargo clippy", "cargo build", "cargo run"]
+                .iter()
+                .any(|call| line.contains(call));
+            if !builds {
+                continue;
+            }
+            seen += 1;
+            assert!(
+                line.trim_start().starts_with("env -u MAKEFLAGS -u MFLAGS "),
+                "`make {target}` starts cargo with make's flags: {line}"
+            );
+        }
+    }
+    assert!(seen >= 7, "the recipes were not found: {seen}");
+}

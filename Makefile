@@ -12,6 +12,12 @@
 # own flake and toolchain, in an isolated worktree. It is not a local target.
 
 CARGO ?= cargo
+# **A cargo that builds the workspace, started without make's flags.** `make paid
+# PLAYBOOK=x` hands its recipe MAKEFLAGS with the variable after a double dash, and cargo
+# gives a build script the same text as CARGO_MAKEFLAGS; tikv-jemalloc-sys runs make from
+# its build script and fails on the -j it finds after the variable. The bar takes the two
+# variables out of its own environment; the recipes that start cargo themselves use this.
+CARGO_BUILD = env -u MAKEFLAGS -u MFLAGS $(CARGO)
 
 # **A pull-request job runs its bar at a fixed path.** `CI_ROOT=<path>` runs the
 # bar through `scripts/ci-root`, which shows this checkout at <path>. The test
@@ -233,10 +239,10 @@ narrow: ## The inner loop: one crate's tests and lint, plus the format check
 # silently and the bar never sees it: this is the boundary bar, so it asks
 # the same question the artifact it gates is built from.
 test: ## Every fast suite (no network)
-	$(CARGO) test --workspace --no-fail-fast --locked
+	$(CARGO_BUILD) test --workspace --no-fail-fast --locked
 
 lint: ## Clippy, warnings fatal
-	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings -D clippy::large_futures
+	$(CARGO_BUILD) clippy --workspace --all-targets --locked -- -D warnings -D clippy::large_futures
 
 fmt: ## Reformat the workspace
 	$(CARGO) fmt --all
@@ -245,7 +251,7 @@ fmt-check: ## Assert the workspace is formatted, rewriting nothing
 	$(CARGO) fmt --all --check
 
 build: ## Build the workspace
-	$(CARGO) build --workspace --locked
+	$(CARGO_BUILD) build --workspace --locked
 
 # **The real-dependency gate, and it needs no credentials any more.**
 #
@@ -257,7 +263,7 @@ build: ## Build the workspace
 # This target stays as the name a person reaches for, and it runs the same
 # thing rather than pretending there is a second gate.
 integration: ## Run the suites against the real store
-	$(CARGO) test -p jojobot-adapters --test dolt_store --test dolt_contract_parts --test dolt_without_a_home
+	$(CARGO_BUILD) test -p jojobot-adapters --test dolt_store --test dolt_contract_parts --test dolt_without_a_home
 
 # **The room suites, which `make check` does not run.** Each stands up a room:
 # the shipped server and a store of its own. Which test files are room suites
@@ -372,7 +378,7 @@ flake-check: ## The flake's checks, as release QA runs them
 # `make check` or a plain `cargo test` — a lead nobody can see is the failure
 # this report exists to end. This target is how a person actually reads it.
 argument-coverage: ## Print every served argument the story suite never calls with
-	$(CARGO) test -p jojobot --test argument_coverage served_arguments_with_no_story_site_are_reported -- --nocapture
+	$(CARGO_BUILD) test -p jojobot --test argument_coverage served_arguments_with_no_story_site_are_reported -- --nocapture
 
 # **The third tier, and it is billed.**
 #
@@ -396,8 +402,8 @@ PLAYBOOK ?=
 MODEL ?=
 TRANSCRIPT ?=
 paid: build ## Drive a REAL model through a playbook — reaches the network and COSTS MONEY
-	$(CARGO) build --locked -p jojobot --features room-harness
-	$(CARGO) run -q --locked -p jojobot-exercise -- \
+	$(CARGO_BUILD) build --locked -p jojobot --features room-harness
+	$(CARGO_BUILD) run -q --locked -p jojobot-exercise -- \
 		$(if $(PLAYBOOK),--playbook $(PLAYBOOK),) $(if $(MODEL),--model $(MODEL),) \
 		$(if $(TRANSCRIPT),--transcript $(TRANSCRIPT),)
 
@@ -412,7 +418,7 @@ paid: build ## Drive a REAL model through a playbook — reaches the network and
 STREAM ?=
 CANDIDATE ?=
 replay: build ## Replay a paid run's recorded calls on this build; reports the calls whose class changed
-	$(CARGO) run -q --locked -p jojobot-exercise --bin replay -- \
+	$(CARGO_BUILD) run -q --locked -p jojobot-exercise --bin replay -- \
 		$(if $(STREAM),--stream $(STREAM),) $(if $(ROOM),--room $(ROOM),) \
 		$(if $(CANDIDATE),--candidate $(CANDIDATE),)
 
