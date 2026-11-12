@@ -268,11 +268,30 @@ pub fn try_claim(port: u16) -> Result<Option<Claim>, PortsError> {
 /// for until the process ends, however many tests the process runs. The
 /// listener is let go at once: the caller's own server binds the port next.
 pub fn claim_for_life() -> Result<u16, PortsError> {
-    static KEPT: Mutex<Vec<Claim>> = Mutex::new(Vec::new());
     let claim = claim()?.release_listener();
     let port = claim.port();
-    KEPT.lock().expect("no claim panics while held").push(claim);
+    kept()
+        .lock()
+        .expect("no claim panics while held")
+        .push(claim);
     Ok(port)
+}
+
+/// **Whether this process was handed `port` by [`claim_for_life`].** A caller that
+/// asks for a replacement when another process takes such a port before its server
+/// binds it can tell a port it was handed from one somebody configured.
+pub fn is_claimed_for_life(port: u16) -> bool {
+    kept()
+        .lock()
+        .expect("no claim panics while held")
+        .iter()
+        .any(|claim| claim.port() == port)
+}
+
+/// The claims this process keeps for its life, in a list that is never emptied.
+fn kept() -> &'static Mutex<Vec<Claim>> {
+    static KEPT: Mutex<Vec<Claim>> = Mutex::new(Vec::new());
+    &KEPT
 }
 
 #[cfg(test)]

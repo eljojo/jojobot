@@ -98,6 +98,10 @@ const READY_WITHIN: Duration = Duration::from_secs(30);
 /// one.
 const POLL_EVERY: Duration = Duration::from_millis(50);
 
+/// How many ports a test's store start tries before it reports the last one taken.
+#[cfg(feature = "testing")]
+const PORT_ATTEMPTS: usize = 5;
+
 /// How long a request on the pool a start returns waits for one of its four
 /// connections before it fails with "pool timed out". **Sized for serving, not
 /// for the readiness poll**: a boot migration, the boundary snapshot or a slow
@@ -230,6 +234,8 @@ pub struct Dolt {
     /// The server's address without a database on the end, so another
     /// database on the same server can be opened.
     server: String,
+    /// The port the server took, which a test's start may have replaced.
+    port: u16,
     /// What the server wrote to its own stderr, the last lines of it, kept for
     /// as long as the store is up. A refused statement is answered with the
     /// store's words kept out (rule 53), and this is where a test reads them.
@@ -256,6 +262,39 @@ impl Dolt {
     /// a connection passes a longer one, so a loaded machine cannot fail it for
     /// a reason it does not assert on.
     pub(crate) async fn start_acquiring_within(
+        data_dir: &Path,
+        port: u16,
+        acquire_within: Duration,
+    ) -> Result<Self, StartError> {
+        // **A port a test was handed is replaced when another server takes it first.**
+        // The port is free when it is claimed and not bound until the store binds
+        // it, and on a busy machine another process can take it in between. The
+        // start then reads `PortTaken` on a case that asserts nothing about ports.
+        // Only a port this process was handed by the shared arbiter is replaced, so
+        // a configured port still refuses, and the production build has no arbiter.
+        #[cfg(feature = "testing")]
+        {
+            let mut port = port;
+            for _ in 1..PORT_ATTEMPTS {
+                match Self::start_once(data_dir, port, acquire_within).await {
+                    Err(StartError::PortTaken(taken))
+                        if jojobot_ports::is_claimed_for_life(taken) =>
+                    {
+                        port = jojobot_ports::claim_for_life()
+                            .map_err(|refusal| StartError::Spawn(refusal.to_string()))?;
+                    }
+                    done => return done,
+                }
+            }
+            Self::start_once(data_dir, port, acquire_within).await
+        }
+        #[cfg(not(feature = "testing"))]
+        Self::start_once(data_dir, port, acquire_within).await
+    }
+
+    /// **One start on exactly this port**: a port another server holds is the error
+    /// [`StartError::PortTaken`], whatever claimed it.
+    pub(crate) async fn start_once(
         data_dir: &Path,
         port: u16,
         acquire_within: Duration,
@@ -319,6 +358,7 @@ impl Dolt {
             child,
             pool,
             server,
+            port,
             stderr,
         })
     }
@@ -621,6 +661,13 @@ impl Dolt {
     /// The connection pool, for the two adapters that speak to this store.
     pub fn pool(&self) -> &MySqlPool {
         &self.pool
+    }
+
+    /// **The port this store serves on.** A test's start replaces a port another
+    /// server took, so a caller that hands the port to a second consumer reads it
+    /// here and not from the number it asked for.
+    pub fn port(&self) -> u16 {
+        self.port
     }
 
     /// Stop the server after the drain: asked, then killed after a grace
@@ -1395,7 +1442,9 @@ pub(crate) mod tests {
             .await
             .expect("the first server's schema");
 
-        let second = Dolt::start(&intruder.0, port).await;
+        // **One start on exactly this port**: `start` replaces a port the test was
+        // handed, so the refusal is asked of the start that does not.
+        let second = Dolt::start_once(&intruder.0, port, POLL_EVERY * 4).await;
         assert!(
             matches!(second, Err(StartError::PortTaken { .. })),
             "a second start on a held port must refuse, not adopt the server \
@@ -1436,6 +1485,67 @@ pub(crate) mod tests {
 
         ours.stop().await;
         first.stop().await;
+    }
+
+    /// **A start on a port another server took first comes up on a fresh port.** The
+    /// port a case is handed is free when it is claimed and not bound until the
+    /// store binds it; on a busy machine another process can take it in between,
+    /// and the start then reads `PortTaken` and fails a case that asserts nothing
+    /// about ports. A port this process was handed by `free_port` is replaced by
+    /// another one, a bounded number of times; the refusal itself stays (the case
+    /// above).
+    #[tokio::test]
+    async fn a_start_on_a_port_another_server_took_comes_up_on_a_fresh_port() {
+        let held = Scratch::new("port-retry-held");
+        let late = Scratch::new("port-retry-late");
+        let port = free_port();
+        let mut taker = Dolt::start(&held.0, port)
+            .await
+            .expect("another server takes the port");
+
+        let mut store = Dolt::start(&late.0, port)
+            .await
+            .expect("the start takes a fresh port when the one it was given is taken");
+        assert_ne!(
+            store.port(),
+            port,
+            "the store serves on the port it replaced"
+        );
+        assert_eq!(
+            taker.port(),
+            port,
+            "the other server keeps the port it took"
+        );
+        crate::dolt::migrate::run(store.pool())
+            .await
+            .expect("the store it came up with answers");
+
+        store.stop().await;
+        taker.stop().await;
+    }
+
+    /// **A port nobody handed this process is not replaced.** The retry is for the
+    /// ports `free_port` hands out; a port somebody configured (here one the
+    /// operating system gave, which the arbiter never claimed) still reads
+    /// `PortTaken`, so a start that was told where to serve does not move.
+    #[tokio::test]
+    async fn a_start_on_a_configured_port_another_server_holds_still_refuses() {
+        let held = Scratch::new("port-configured-held");
+        let late = Scratch::new("port-configured-late");
+        let given = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("the system gives a port");
+        let port = given.local_addr().expect("it has an address").port();
+        drop(given);
+        let mut taker = Dolt::start_once(&held.0, port, POLL_EVERY * 4)
+            .await
+            .expect("another server takes the port");
+
+        let second = Dolt::start(&late.0, port).await;
+
+        assert!(
+            matches!(second, Err(StartError::PortTaken(taken)) if taken == port),
+            "a configured port that is held must refuse and not move"
+        );
+        taker.stop().await;
     }
 
     /// 🚨 **A request waits for one of the four connections instead of failing

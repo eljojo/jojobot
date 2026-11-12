@@ -229,6 +229,18 @@ fn a_port_claimed_for_life_can_be_bound_and_stays_claimed() {
     );
 }
 
+/// **A port is known as handed out only if this process was handed it.** A caller
+/// that replaces a taken port tells one it was given from one somebody configured.
+#[test]
+fn only_a_port_this_process_was_handed_is_claimed_for_life() {
+    let port = jojobot_ports::claim_for_life().expect("a port");
+    assert!(jojobot_ports::is_claimed_for_life(port));
+    assert!(
+        !jojobot_ports::is_claimed_for_life(1),
+        "a port nobody handed this process reads as claimed",
+    );
+}
+
 /// The other process in the case below: told which port, it reports whether it
 /// could claim it. Run on its own, with no port named, it does nothing.
 #[test]
