@@ -575,6 +575,8 @@ fn bundle_report(
              echo \"$CARGO_MANIFEST_DIR $JOJOBOT_BIN\" > \"{root}/seen-env\"\n\
              ROOT=\"{root}\"\n\
              {boot_lines}\
+             echo 'memory-report calibration: pre_import_events=7; production'\\''s totals read \
+             on 2026-12-31' >> \"$ROOT/target/bar/boot-measures.log\"\n\
              {second_line}\
              {no_snapshot_line}\
              echo 'memory-report day: all 5300 entries of a day made, which is 6179 tool calls \
@@ -829,7 +831,9 @@ fn memory_day_verdict_prints_the_import_boot_beside_production_and_the_day_it_wa
     // The bundle's import boot line holds a resident memory after boot of 1146.2 MiB,
     // 32 percent of production's 3,553, and a peak of 1776.5 MiB, which would be 50
     // percent and is not the share.
-    for word in ["1776.5", "1146.2", "3553", "32%", "2026-11-12"] {
+    // The day is the one the calibration line of the report names, read from it and
+    // not spelled in the script.
+    for word in ["1776.5", "1146.2", "3553", "32%", "2026-12-31"] {
         assert!(
             verdict.contains(word),
             "the verdict lacks {word}: {verdict}"
@@ -840,6 +844,27 @@ fn memory_day_verdict_prints_the_import_boot_beside_production_and_the_day_it_wa
         !verdict.contains("50%"),
         "the share is taken from the peak: {verdict}"
     );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// **A report with no calibration line says the day is unnamed.** The verdict never
+/// supplies a day of its own, so a case that did not write one cannot read as sized to
+/// bytes read on a day nobody named.
+#[test]
+fn memory_day_verdict_names_no_day_when_the_report_holds_no_calibration_line() {
+    let body = format!(
+        "sed -i '/^memory-report calibration/d' \"$ROOT/target/bar/boot-measures.log\"\n{PASSED}"
+    );
+    let dir = bundle_with(&body, "1776.5", "1625.9");
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: ok"), "{verdict}");
+    assert!(
+        verdict.contains("no day production's bytes were read"),
+        "{verdict}"
+    );
+    assert!(!verdict.contains("2026-"), "{verdict}");
     fs::remove_dir_all(dir).unwrap();
 }
 

@@ -48,9 +48,6 @@ BAR = Path("target/bar")
 # Production's first boot at 9.3.3: the Rust process's resident memory the first sample after
 # serving began (3.47 GiB, VictoriaMetrics process_resident_memory_bytes, 2026-11-12).
 PRODUCTION_FIRST_BOOT_MIB = 3553.0
-# The grown store carries production's per-table bytes and claim depth, read on this day
-# (PRODUCTION_BYTES_READ_ON in tests/boot_measures.rs); the comparison names it.
-COMPARISON = "store sized to production's bytes read 2026-11-12"
 # The share of production's first-boot reading under which the store is too small for the bound
 # to speak for production: the verdict says so.
 SIZED_SHARE = 75
@@ -175,6 +172,19 @@ def measured(lines):
     return boot, boot_resident, second, no_snapshot, day, highest
 
 
+def comparison(lines):
+    """What the import boot is compared to, with the day production's bytes were read,
+    taken from the calibration line the case wrote (the last, if there are several): the
+    day is spelled once, in the case, and never again here."""
+    day = None
+    for line in lines:
+        found = re.search(r"^memory-report calibration: .*production's totals read on (\S+)$", line)
+        day = found.group(1) if found else day
+    if day is None:
+        return "the report names no day production's bytes were read"
+    return f"store sized to production's bytes read {day}"
+
+
 def main():
     BAR.mkdir(parents=True, exist_ok=True)
     log = BAR / "memory.log"
@@ -219,7 +229,7 @@ def main():
         if boot is not None and boot_resident is not None:
             share = round(100 * float(boot_resident) / PRODUCTION_FIRST_BOOT_MIB)
             beside = (f"import boot resident {boot_resident} MiB (peak {boot} MiB), {share}% of "
-                      f"production's {PRODUCTION_FIRST_BOOT_MIB:.0f} MiB ({COMPARISON}), ")
+                      f"production's {PRODUCTION_FIRST_BOOT_MIB:.0f} MiB ({comparison(lines)}), ")
         elif boot is not None:
             beside = f"import boot {boot} MiB, import boot share: not read, "
         numbers = (f"{beside}no-snapshot boot {no_snapshot} MiB, second-boot peak {second} MiB, "

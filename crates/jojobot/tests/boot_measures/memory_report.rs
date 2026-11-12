@@ -1016,13 +1016,20 @@ async fn no_snapshot_boot(state: Scratch) -> Running {
 }
 
 /// **What the calibration did, and whose bytes they are**: production's, read on
-/// `PRODUCTION_BYTES_READ_ON`.
+/// `PRODUCTION_BYTES_READ_ON`. The store is sized to production's per-write mean and its
+/// heaviest claim is then added on top, so its claim-write bytes total more than
+/// production's; the line says so, so that "production's bytes" is not read as the
+/// total. The verdict script reads the day from the end of this line.
 fn calibration_line(done: &str) -> String {
     calibration_line_for(super::PRODUCTION_BYTES_READ_ON, done)
 }
 
 fn calibration_line_for(read_on: &str, done: &str) -> String {
-    format!("memory-report calibration: {done}; production's totals read on {read_on}")
+    format!(
+        "memory-report calibration: {done}; sized to production's per-write mean, then its \
+         heaviest claim added, so the claim-write total is above production's; \
+         production's totals read on {read_on}"
+    )
 }
 
 /// What the boot's log said it held, for the per-thing division.
@@ -1435,6 +1442,9 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         let line = calibration_line(events);
         assert!(line.starts_with("memory-report calibration: "), "{line}");
         assert!(line.contains(events), "{line}");
+        // The store holds the per-write mean plus the heavy claim, which is more than
+        // production's total: the line says it is a mean.
+        assert!(line.contains("mean"), "{line}");
         assert!(
             line.contains(&format!(
                 "production's totals read on {}",

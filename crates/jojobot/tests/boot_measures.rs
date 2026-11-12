@@ -593,17 +593,19 @@ async fn remove_the_recorders_log(pool: &sqlx::MySqlPool) {
 /// applied by the memory case on its own copy of the grown store, so the store the
 /// check lane boots over is not changed.
 const PRODUCTION_BYTES_READ_ON: &str = "2026-11-12";
-/// Bytes a write of a claim carries, content and details together: 66.3 MB over 53,338
-/// writes. CI's store carried 43.
-const PRODUCTION_FACT_WRITE_BYTES: i64 = 1_243;
-/// Bytes a mail body carries: 48.1 MB over 28,373 mails. CI's store carried 130.
-const PRODUCTION_MAIL_BYTES: i64 = 1_695;
+/// The readings are claim #f25 on the card for the memory proof's store size; each
+/// constant is the whole-number mean of its exact totals there.
+/// Bytes a write of a claim carries, content and details together: 66,255,882 bytes over
+/// 53,338 writes. CI's store carried 43.
+const PRODUCTION_FACT_WRITE_BYTES: i64 = 1_242;
+/// Bytes a mail body carries: 48,149,059 bytes over 28,373 mails. CI's store carried 130.
+const PRODUCTION_MAIL_BYTES: i64 = 1_697;
 /// The writes of production's deepest claim. CI's deepest held 8.
 const PRODUCTION_DEEPEST_FACT_WRITES: i64 = 1_395;
-/// The writes of production's heaviest claim by bytes, and what each carries: 12.3 MB
-/// over 413 writes.
+/// The writes of production's heaviest claim by bytes, and what each carries: 12,258,523
+/// bytes over 413 writes.
 const PRODUCTION_HEAVY_FACT_WRITES: i64 = 413;
-const PRODUCTION_HEAVY_FACT_WRITE_BYTES: i64 = 29_782;
+const PRODUCTION_HEAVY_FACT_WRITE_BYTES: i64 = 29_682;
 
 /// **Production's log before the claims import**, read from its boot lines: 31,388
 /// events in 14,974 batches. The log CI's store held was 34 events.
