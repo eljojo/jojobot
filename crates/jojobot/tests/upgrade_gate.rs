@@ -1641,7 +1641,11 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
         logged.iter().all(|mark| mark.sid.as_str() != "alpha"),
         "the cleared run stays absent after ageing: {logged:?}"
     );
-    assert_eq!(logged, rows, "an aged store's log and rows agree");
+    // The log may hold marks of the recording's own runs that no row holds.
+    assert!(
+        rows.iter().all(|row| logged.contains(row)),
+        "an aged store's log holds every row's mark: log {logged:?}, rows {rows:?}"
+    );
 }
 
 /// **The teaching marks the restore seeded through the log survive the first
@@ -1669,9 +1673,13 @@ async fn assert_the_teaching_marks_equal_the_rows(
             "the seeded mark of {sid} reads back with its own time from the store recorded at {git_ref}: {rows:?}"
         );
     }
-    assert_eq!(
-        imported, rows,
-        "the teaching marks the log holds after the first boot differ from the rows of the store recorded at {git_ref}"
+    // **The log holds every mark the rows hold, and may hold more.** The recording is
+    // 9.3.3's, which teaches through the log alone: the marks of its own runs are in
+    // the log and in no row. A row of the seeded marks that the log lost, or moved,
+    // is the failure.
+    assert!(
+        rows.iter().all(|row| imported.contains(row)),
+        "the teaching marks the log holds after the first boot lack a row of the store recorded at {git_ref}: log {imported:?}, rows {rows:?}"
     );
     store.stop().await;
 }
