@@ -168,7 +168,8 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "a shipped record's own field is named the same way"
     );
 
-    // ── fields_versioned: implemented by the store, consumed by `Folded` ────
+    // ── fields_versioned: the fold answers it from the claims State, and the
+    //    layer over the fold lays the shipped fields on it ───────────────────
     indexed
         .capture(NewFact {
             fields: fields(&[("note", "first")]),
@@ -179,14 +180,10 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         .expect("capture ok")
         .written()
         .expect("nothing collides");
-    let (held, first) = resolved
+    let (held, _) = indexed
         .fields_versioned(&gamma)
         .await
         .expect("a versioned read answers");
-    assert!(
-        first > 0,
-        "the layer `Folded` reads through carries the store's write count, not the default's 0"
-    );
     assert_eq!(
         held.get("one_liner").map(String::as_str),
         Some(GAMMA_DEFAULT),
@@ -203,23 +200,32 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         .expect("capture ok")
         .written()
         .expect("nothing collides");
-    let (_, second) = resolved
+    let (later, _) = indexed
         .fields_versioned(&gamma)
         .await
         .expect("a versioned read answers");
-    assert!(
-        second > first,
-        "the marker grows with every write, which is what the stale-read guard compares"
+    assert_eq!(
+        later.get("note").map(String::as_str),
+        Some("second"),
+        "the versioned read answers the newest write: {later:?}"
     );
     assert_eq!(
-        folded
+        indexed
             .fields(&gamma)
             .await
-            .expect("the fold answers")
+            .expect("the stack answers")
             .get("one_liner")
             .map(String::as_str),
         Some(GAMMA_DEFAULT),
-        "the fold is refreshed from the versioned read, so it must hold the shipped default too"
+        "the layer over the fold lays the shipped default on what the fold holds"
+    );
+    assert!(
+        !folded
+            .fields(&gamma)
+            .await
+            .expect("the fold answers")
+            .contains_key("one_liner"),
+        "the fold holds the stored half only and knows nothing of what the build ships"
     );
 
     // ── backing, built_on, referring_to, claim_histories: implemented by the
