@@ -36,20 +36,23 @@ type Seat = (ObjectId, String, u64);
 
 /// **The maps [`State::apply`] keeps.** A merge moves the folded object's
 /// projections to its survivor; spellings retain the object that bound them.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub(super) struct Indexes {
     /// The highest ordinal written in each stream.
+    #[serde(serialize_with = "super::serialize_entries")]
     top_ordinal: BTreeMap<(ObjectId, KeyId), u64>,
     /// Per home, how many claims hold each claim number. A count, so a claim
     /// that leaves a home gives its number back.
     claim_numbers: BTreeMap<ObjectId, BTreeMap<u64, u32>>,
     merges: u64,
     /// (home, label) to the claim that holds it.
+    #[serde(serialize_with = "super::serialize_entries")]
     labels: BTreeMap<(ObjectId, String), RecordId>,
     /// (home, label) the claim was CREATED under to the claim. A merge changes the
     /// home and the label a claim is served under and never the pair it was filed
     /// under in the store's rows, so this is the key of a write that names the claim
     /// by its row.
+    #[serde(serialize_with = "super::serialize_entries")]
     origins: BTreeMap<(ObjectId, String), RecordId>,
     /// The claims homed on each object, whatever label they hold. A merge that
     /// retains two claims under one label leaves one slot in `labels` and both
@@ -72,6 +75,7 @@ pub(super) struct Indexes {
     /// The streams each claim wrote to: a revision changes what they fold to.
     written_by: BTreeMap<RecordId, BTreeSet<(ObjectId, KeyId)>>,
     /// Each seat to the members that hold it; two only if the writes disagree.
+    #[serde(serialize_with = "super::serialize_entries")]
     seats: BTreeMap<Seat, BTreeSet<ObjectId>>,
     /// The seats each member holds, to take them back when the member changes.
     held_seats: BTreeMap<ObjectId, BTreeSet<Seat>>,

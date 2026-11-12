@@ -3758,7 +3758,7 @@ pub fn is_quiet(touched_at: Option<jiff::Timestamp>, aged_before: Option<jiff::T
 /// class is the fact that lasts about a write, and whether the write reaches the
 /// thing is a reading of it ([`reaches_the_thing`]). `Legacy` is every write made
 /// before the class was kept: it was an own field, and it reached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub enum WriteClass {
     /// Written before the class was kept.
     Legacy,

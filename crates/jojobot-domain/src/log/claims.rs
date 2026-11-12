@@ -32,16 +32,16 @@ use crate::memory::{
 
 /// **The identity of a key across every thing that holds it.** The text a caller
 /// typed is a spelling of it; the key a thing holds is this.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 pub struct KeyId(pub String);
 
 /// The identity of a kind.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 pub struct KindId(pub String);
 
 /// **What one write of a key did.** A clear is a write: it takes the key off the
 /// thing until a later write puts it back.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum FieldValue {
     Set(String),
     Clear,
@@ -52,7 +52,7 @@ pub enum FieldValue {
 }
 
 /// **Everything an object is, complete when written.**
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ObjectBody {
     pub kind: KindId,
     pub parent: Option<ObjectId>,
@@ -72,7 +72,7 @@ pub struct ObjectBody {
 /// The columns of a stored snapshot, decoded: `parent` and `merged_into` are the
 /// permanent keys they name. `merged_into` is history only; identity is decided
 /// by the merge events and nothing else.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ObjectSnapshot {
     pub kind: String,
     pub name: String,
@@ -92,7 +92,7 @@ pub struct ObjectSnapshot {
 /// build recorded with no snapshot has none: the snapshot is unknown, and nothing
 /// stands in for it. The moment and the run are the envelope's, as for any other
 /// imported write.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ObservedWrite {
     /// The handle the row was filed under when it was written.
     pub filed_under: String,
@@ -104,7 +104,7 @@ pub struct ObservedWrite {
 
 /// **Everything a claim says, complete when written.** `label` is the address
 /// binding (`fN`) and never the claim's identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ClaimBody {
     pub label: String,
     pub home: ObjectId,
@@ -266,7 +266,7 @@ pub enum ClaimEvent {
 }
 
 /// What the state holds of one claim.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Record {
     pub claim: ClaimBody,
     /// The actor on the envelope of the event that created the claim; a
@@ -287,7 +287,7 @@ pub struct Record {
 
 /// **One write of one claim**: the claim complete as that write left it, and
 /// what the envelope of the event says of the write.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Revision {
     pub claim: ClaimBody,
     /// The actor on the envelope of the event that made this write.
@@ -302,7 +302,7 @@ pub struct Revision {
 /// it, and what the envelope says of the write. `seq` is the place of the write
 /// among all object writes, so the versions of an object and of the things
 /// folded into it read in the order they were made.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ObjectVersion {
     pub seq: u64,
     /// The object that was written, which is not the one asked about when the
@@ -314,7 +314,7 @@ pub struct ObjectVersion {
     pub written_at: Option<Timestamp>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 struct Write {
     record: RecordId,
     ordinal: u64,
@@ -331,7 +331,7 @@ struct Write {
 }
 
 /// **One spelling retired from an object**, and the day it stopped being current.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 struct Retirement {
     address: String,
     object: ObjectId,
@@ -340,7 +340,7 @@ struct Retirement {
 
 /// **One numbered merge**: the two objects, when the store took it in, the run
 /// that made it and each claim's label before and after.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 struct MergeEntry {
     /// **The number the merge holds**, counting the numbers the store left empty
     /// before it: the number the store holds it under.
@@ -429,7 +429,7 @@ pub struct Payload {
 }
 
 /// **What the events so far say.**
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct State {
     objects: BTreeMap<ObjectId, ObjectBody>,
     addresses: BTreeMap<String, ObjectId>,
@@ -439,6 +439,7 @@ pub struct State {
     /// bound again answers to its new object.
     retired_addresses: BTreeMap<String, ObjectId>,
     records: BTreeMap<RecordId, Record>,
+    #[serde(serialize_with = "serialize_entries")]
     streams: BTreeMap<(ObjectId, KeyId), Vec<Write>>,
     /// Every declaration of each kind, oldest first.
     declarations: BTreeMap<ObjectId, Vec<DeclaredType>>,
@@ -465,6 +466,14 @@ pub struct State {
     /// a reader takes the count without walking the State under its lock.
     payload: Payload,
     indexes: indexes::Indexes,
+}
+
+// JSON object keys cannot hold tuples; entries preserve their structure.
+fn serialize_entries<K: serde::Serialize, V: serde::Serialize, S: serde::Serializer>(
+    entries: &BTreeMap<K, V>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(entries.iter())
 }
 
 impl State {

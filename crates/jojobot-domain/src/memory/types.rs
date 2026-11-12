@@ -55,7 +55,7 @@ mod field_checks;
 ///
 /// The smallest set that makes filtering, sorting and joining real. A list is
 /// deliberately not here: it is a shape, not a value, and nothing needs one yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub enum ValueType {
     /// Anything at all. The default, and the honest answer for prose.
     Text,
@@ -108,7 +108,7 @@ pub enum ValueType {
 /// one aggregating fold beyond the default because there is one case for one,
 /// and the next belongs here when a second real case arrives (rule 106).
 /// [`Fold::Describes`] is not an aggregation: it is the absence of one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, serde::Serialize)]
 pub enum Fold {
     /// The newest write wins. **The default, and it needs no declaration**
     /// (rule 9): a key nobody has declared folds this way, which is how every
@@ -509,7 +509,7 @@ impl ValueType {
 /// It is what the protection reads. A list of protected names would be an
 /// enumeration somebody has to maintain, and it would go stale on the day a
 /// type is added to it (rule 106).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, serde::Serialize)]
 pub enum Origin {
     /// The software declared it. **Closed**: a caller cannot replace it, and
     /// changing it is a code change.
@@ -544,7 +544,7 @@ impl Origin {
 /// One kind is spelled as it always was (`place`), so a declaration stored
 /// before a key could name several reads back unchanged. Several are joined by
 /// [`Kinds::SEPARATOR`] (`bot|person`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Kinds(Vec<EntityKind>);
 
 impl Kinds {
@@ -602,7 +602,7 @@ impl Kinds {
 }
 
 /// One key of a type, what it holds, and how its writes fold.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Field {
     pub key: String,
     pub holds: ValueType,
@@ -868,7 +868,7 @@ impl Field {
 /// **A named set of keys.** It arrives complete with its fields: a type with no
 /// fields is a name nobody can query by, and a caller should never have to
 /// configure one into usefulness.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct DeclaredType {
     pub name: String,
     pub fields: Vec<Field>,

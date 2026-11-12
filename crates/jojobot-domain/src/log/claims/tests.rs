@@ -1196,3 +1196,46 @@ fn a_merge_that_leaves_one_claim_two_writes_of_a_key_counts_its_newest() {
         );
     }
 }
+
+#[test]
+fn the_claims_snapshot_serializes_streams_history_and_indexes() {
+    let events = [
+        ClaimEvent::ObjectCreated {
+            object: object("alpha"),
+            body: body("thing", "Alpha"),
+        },
+        ClaimEvent::AddressBound {
+            object: object("alpha"),
+            address: "thing:alpha".into(),
+        },
+        created("beta", claim("f1", "alpha", "first", 1)),
+        write("beta", "alpha", "status", 1, "queued"),
+        ClaimEvent::RecordRevised {
+            record: record("beta"),
+            claim: claim("f1", "alpha", "second", 2),
+        },
+    ];
+    let state = replay(&events);
+    let value = serde_json::to_value(&state).expect("the populated State serializes as JSON");
+    assert_eq!(
+        value["records"]["beta"]["history"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        value["streams"][0][0],
+        serde_json::json!(["alpha", "status"])
+    );
+    assert_eq!(value["streams"][0][1][0]["write"]["Set"], "queued");
+    assert_eq!(
+        value["indexes"]["top_ordinal"][0],
+        serde_json::json!([["alpha", "status"], 1])
+    );
+    assert_eq!(
+        value["indexes"]["labels"][0],
+        serde_json::json!([["alpha", "f1"], "beta"])
+    );
+    assert_eq!(value["objects"]["alpha"]["name"], "Alpha");
+}
