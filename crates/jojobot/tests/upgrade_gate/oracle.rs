@@ -24,7 +24,14 @@ pub(super) fn with_badges_as_handles(
             match badges.get(bare) {
                 Some(handle) => piece.replacen(item, handle, 1),
                 None if marked.is_some() && is_a_handle(bare) => piece.replacen(item, bare, 1),
-                None => piece.to_string(),
+                // The supply identity of a supplied record: the handle behind it.
+                None => match bare
+                    .strip_prefix("supplied/")
+                    .filter(|handle| marked.is_some() && is_a_handle(handle))
+                {
+                    Some(handle) => piece.replacen(item, handle, 1),
+                    None => piece.to_string(),
+                },
             }
         })
         .collect::<Vec<_>>()
@@ -78,6 +85,26 @@ mod tests {
         assert_eq!(
             with_badges_as_handles("kitchen, @#view:colleagues, @#b4d63", &badges()),
             "kitchen, view:colleagues, person:homer"
+        );
+    }
+
+    /// **A record the build supplies may be stored behind the mark with its supply
+    /// identity**, as the 9.3.3 recording holds `looks_at`: the handle behind the
+    /// prefix `supplied/`. It is read as the handle, in a list as alone. An
+    /// identity that wraps no handle stays as written.
+    #[test]
+    fn a_marked_supply_identity_is_read_as_the_handle_behind_it() {
+        assert_eq!(
+            with_badges_as_handles("@#supplied/view:colleagues", &badges()),
+            "view:colleagues"
+        );
+        assert_eq!(
+            with_badges_as_handles("kitchen, @#supplied/view:colleagues, @#b4d63", &badges()),
+            "kitchen, view:colleagues, person:homer"
+        );
+        assert_eq!(
+            with_badges_as_handles("@#supplied/e77f0", &badges()),
+            "@#supplied/e77f0"
         );
     }
 
