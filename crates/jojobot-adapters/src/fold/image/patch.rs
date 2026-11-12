@@ -67,12 +67,11 @@ impl Image {
             spelled.clear();
             let _ = write!(
                 spelled,
-                "{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
+                "{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
                 doc.scan,
                 doc.fields,
                 doc.ages,
                 doc.histories,
-                doc.backing,
                 doc.trails,
                 doc.unmapped_histories,
                 doc.entity_versions,

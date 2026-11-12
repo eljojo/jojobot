@@ -3,10 +3,14 @@
 //! number held under a collection; the State answers all three the way the port's
 //! `resolve_handle` does.
 
+use std::collections::BTreeMap;
+
 use super::super::State;
 use crate::log::ObjectId;
-use crate::memory::numbered::numbered_handle;
-use crate::memory::{Entity, EntityId, EntityKind, types::DeclaredType, writers_in};
+use crate::memory::numbered::{nearest_numbers, numbered_handle};
+use crate::memory::{
+    Entity, EntityId, EntityKind, MemoryError, guard, types::DeclaredType, writers_in,
+};
 
 impl State {
     /// **The thing a spelling answers to**: the handle it wears now, else one it
@@ -23,6 +27,31 @@ impl State {
         let key = self.numbers_by(object)?;
         let member = self.numbered_member(object, &key, number)?;
         self.entity(&self.handle_of(member)?)
+    }
+
+    /// **The miss a read of a spelling nothing answers to gets**, as the store
+    /// gives it: the handle asked, with what it nearly was. A numbered handle
+    /// whose collection numbers its members offers the numbers the collection
+    /// holds; any other offers the near-miss screen over every thing listed.
+    pub fn unknown_entity(&self, asked: &EntityId) -> MemoryError {
+        let entities = self.listing();
+        let nearest = numbered_handle(asked)
+            .and_then(|_| {
+                let declared = self.declared_types();
+                let fields: BTreeMap<EntityId, BTreeMap<String, String>> = self
+                    .objects
+                    .keys()
+                    .filter_map(|object| Some((self.own_handle_of(object)?, object)))
+                    .map(|(handle, object)| (handle, self.fields_served(object, &declared)))
+                    .collect();
+                nearest_numbers(asked, &entities, &fields)
+            })
+            .filter(|held| !held.is_empty())
+            .unwrap_or_else(|| guard::screen(asked, &[], &entities));
+        MemoryError::UnknownEntity {
+            attempted: asked.to_string(),
+            nearest,
+        }
     }
 
     /// **The bots that wrote a thought into a thread**, each once, in the order

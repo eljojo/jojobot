@@ -323,9 +323,21 @@ async fn compare(merged: bool) {
         );
         differ(
             "version",
-            held.version == stored.version,
+            held.version
+                == memory
+                    .fields_versioned(handle)
+                    .await
+                    .expect("the store's marker")
+                    .1,
             format!("{:?}", held.version),
-            format!("{:?}", stored.version),
+            format!(
+                "{:?}",
+                memory
+                    .fields_versioned(handle)
+                    .await
+                    .expect("the store's marker")
+                    .1
+            ),
         );
         differ(
             "ages",
@@ -341,9 +353,12 @@ async fn compare(merged: bool) {
         );
         differ(
             "backing",
-            held.backing == stored.backing,
+            held.backing == memory.backing(handle).await.expect("the store's backing"),
             format!("{:?}", held.backing),
-            format!("{:?}", stored.backing),
+            format!(
+                "{:?}",
+                memory.backing(handle).await.expect("the store's backing")
+            ),
         );
         differ(
             "trails",
@@ -367,8 +382,7 @@ async fn compare(merged: bool) {
         );
         differ(
             "assembled scan and fields",
-            (&assembled.scan, &assembled.fields, assembled.version)
-                == (&stored.scan, &stored.fields, stored.version),
+            (&assembled.scan, &assembled.fields) == (&stored.scan, &stored.fields),
             format!("{:?}", assembled.fields),
             format!("{:?}", stored.fields),
         );

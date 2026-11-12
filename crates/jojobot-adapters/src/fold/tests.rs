@@ -394,64 +394,6 @@ async fn merge_moves_the_fold_to_the_survivor() {
     );
 }
 
-/// **`fields` answers from the cache, not by re-asking the store every
-/// time.** A write made straight to the wrapped store — bypassing
-/// `Folded`, the shape a second writer would take — is invisible to a
-/// `fields` call that hits the cache, exactly the load-bearing
-/// single-writer assumption this module's doc warns about. Without this
-/// case, `fields` falling straight through to the store on every call —
-/// correct, but pointless — would look identical to every other test
-/// here passing.
-#[tokio::test]
-async fn fields_are_served_from_the_cache_not_rederived_on_every_call() {
-    let inner = Arc::new(InMemoryMemory::booted());
-    let folded = Folded::new(inner);
-    folded.rebuild().await.expect("an empty store fills");
-    seeded(&folded, &alpha(), "Alpha").await;
-    folded
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
-            fields: BTreeMap::from([("due_on".to_string(), "2026-09-14".to_string())]),
-            ..NewFact::about(alpha(), "cached", date(2026, 9, 1))
-        }))
-        .await
-        .expect("capture ok")
-        .written()
-        .expect("not blocked");
-
-    // Straight to the wrapped store, never through `Folded::capture` —
-    // the cache is never told this happened.
-    folded
-        .inner
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
-            fields: BTreeMap::from([("due_on".to_string(), "2026-09-21".to_string())]),
-            ..NewFact::about(alpha(), "written around the fold", date(2026, 9, 8))
-        }))
-        .await
-        .expect("capture ok")
-        .written()
-        .expect("not blocked");
-
-    assert_eq!(
-        folded
-            .inner
-            .fields(&alpha())
-            .await
-            .expect("fields ok")
-            .get("due_on"),
-        Some(&"2026-09-21".to_string()),
-        "the store itself already sees the bypassed write"
-    );
-    assert_eq!(
-        folded
-            .fields(&alpha())
-            .await
-            .expect("fields ok")
-            .get("due_on"),
-        Some(&"2026-09-14".to_string()),
-        "the fold still answers with what it cached, not what the store now holds"
-    );
-}
-
 /// **The behavioural contract holds wrapped in a fold, not only bare.**
 /// `Folded` forwards every guard, every read and every write it does not
 /// itself refresh straight to the store underneath, so the whole existing

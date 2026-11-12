@@ -499,6 +499,57 @@ impl Folded {
         }
     }
 
+    /// **One thing's read from the claims State**, the thing a spelling answers to:
+    /// the handle it wears now, one it wore, or a number under a collection. `None`
+    /// sends the read to the store, which answers it as it always did: no image or
+    /// no State, a spelling nothing answers to, and the three declines the State
+    /// does not serve. TEMPORARY(9.3.4) `q-934-merge-version-row-in-state` for a
+    /// thing a merge touched, TEMPORARY(9.3.4)
+    /// `q-934-role-lease-read-from-heartbeat-home` for a role, and TEMPORARY(9.3.5)
+    /// for a handle the build supplies content at.
+    fn stated<T>(
+        &self,
+        id: &EntityId,
+        read: impl FnOnce(&jojobot_domain::log::claims::State, &Entity, &[DeclaredType]) -> Option<T>,
+    ) -> Option<T> {
+        self.held(|_| ())?;
+        if self.inner.supplies_at(id) {
+            return None;
+        }
+        self.claims(|state| {
+            let entity = state.resolved_entity(id)?;
+            let object = state.resolve(&entity.id.0)?;
+            if state.was_merged(object)
+                || state.holds_a_lease(object)
+                || self.inner.supplies_at(&entity.id)
+            {
+                return None;
+            }
+            read(state, &entity, &state.declared_types())
+        })
+        .ok()
+        .flatten()
+    }
+
+    /// **The miss of a read of a spelling nothing answers to**, made from the
+    /// claims State, so a miss reaches no store either. `None` when the spelling
+    /// answers to a thing, or there is no image or State to say it does not, or the
+    /// build supplies content at it.
+    fn missed(&self, id: &EntityId) -> Option<MemoryError> {
+        self.held(|_| ())?;
+        if self.inner.supplies_at(id) {
+            return None;
+        }
+        self.claims(|state| {
+            state
+                .resolved_entity(id)
+                .is_none()
+                .then(|| state.unknown_entity(id))
+        })
+        .ok()
+        .flatten()
+    }
+
     fn readable(&self) -> Result<(), MemoryError> {
         if self.writer.rail_uncertain("memory") && self.image.read().expect("fold lock").is_none() {
             self.unheld()?;
@@ -799,9 +850,16 @@ impl Memory for Folded {
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.doc(subject).map(|doc| doc.scan.facts.clone())) {
-            Some(answer) => answer,
-            None => self.inner.recall(subject).await,
+        let stated = self.stated(subject, |state, entity, declared| {
+            let object = state.resolve(&entity.id.0)?;
+            Some(state.document_scan(object, declared)?.facts)
+        });
+        match stated {
+            Some(facts) => Ok(facts),
+            None => match self.missed(subject) {
+                Some(unknown) => Err(unknown),
+                None => self.inner.recall(subject).await,
+            },
         }
     }
 
@@ -842,8 +900,16 @@ impl Memory for Folded {
         entity: &EntityId,
     ) -> Result<Vec<jojobot_domain::memory::unmapped::UnmappedClaim>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.unmapped(entity)) {
-            Some(answer) => Ok(answer),
+        let stated = self.stated(entity, |state, found, declared| {
+            if found.id != *entity {
+                return Some(Vec::new());
+            }
+            let object = state.resolve(&found.id.0)?;
+            Some(state.document_scan(object, declared)?.unmapped)
+        });
+        match stated {
+            Some(unmapped) => Ok(unmapped),
+            None if self.missed(entity).is_some() => Ok(Vec::new()),
             None => self.inner.unmapped_claims(entity).await,
         }
     }
@@ -976,9 +1042,16 @@ impl Memory for Folded {
 
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.doc(entity).map(|doc| doc.fields.clone())) {
-            Some(answer) => answer,
-            None => self.inner.fields(entity).await,
+        let stated = self.stated(entity, |state, found, declared| {
+            let object = state.resolve(&found.id.0)?;
+            Some(state.scan(object, declared)?.fields)
+        });
+        match stated {
+            Some(fields) => Ok(fields),
+            None => match self.missed(entity) {
+                Some(unknown) => Err(unknown),
+                None => self.inner.fields(entity).await,
+            },
         }
     }
 
@@ -987,13 +1060,19 @@ impl Memory for Folded {
         entity: &EntityId,
     ) -> Result<(BTreeMap<String, String>, u64), MemoryError> {
         self.readable()?;
-        match self.held(|image| {
-            image
-                .doc(entity)
-                .map(|doc| (doc.fields.clone(), doc.version))
-        }) {
-            Some(answer) => answer,
-            None => self.inner.fields_versioned(entity).await,
+        let stated = self.stated(entity, |state, found, declared| {
+            let object = state.resolve(&found.id.0)?;
+            Some((
+                state.scan(object, declared)?.fields,
+                state.write_marker(object),
+            ))
+        });
+        match stated {
+            Some(versioned) => Ok(versioned),
+            None => match self.missed(entity) {
+                Some(unknown) => Err(unknown),
+                None => self.inner.fields_versioned(entity).await,
+            },
         }
     }
 
@@ -1263,16 +1342,33 @@ impl Memory for Folded {
 
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.scan_one(entity)) {
+        let stated = self.stated(entity, |state, found, declared| {
+            if found.id != *entity {
+                return Some(None);
+            }
+            let object = state.resolve(&found.id.0)?;
+            Some(Some(state.document_scan(object, declared)?))
+        });
+        match stated {
             Some(doc) => Ok(doc),
+            None if self.missed(entity).is_some() => Ok(None),
             None => self.inner.scan_entity(entity).await,
         }
     }
 
     async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.has_prose(entity)) {
+        let stated = self.stated(entity, |state, found, declared| {
+            if found.id != *entity {
+                return Some(false);
+            }
+            let object = state.resolve(&found.id.0)?;
+            let doc = state.document_scan(object, declared)?;
+            Some(!doc.prose.trim().is_empty())
+        });
+        match stated {
             Some(has) => Ok(has),
+            None if self.missed(entity).is_some() => Ok(false),
             None => self.inner.has_prose(entity).await,
         }
     }
@@ -1327,9 +1423,16 @@ impl Memory for Folded {
         entity: &EntityId,
     ) -> Result<BTreeMap<String, FieldBacking>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.backing(entity)) {
-            Some(answer) => answer,
-            None => self.inner.backing(entity).await,
+        let stated = self.stated(entity, |state, found, declared| {
+            let object = state.resolve(&found.id.0)?;
+            Some(state.backing(object, declared))
+        });
+        match stated {
+            Some(backing) => Ok(backing),
+            None => match self.missed(entity) {
+                Some(unknown) => Err(unknown),
+                None => self.inner.backing(entity).await,
+            },
         }
     }
 

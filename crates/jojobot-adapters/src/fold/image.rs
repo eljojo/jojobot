@@ -22,7 +22,7 @@ use jojobot_domain::memory::numbered::{
 };
 use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, EntityVersion, FactAddress, FactId, FieldAges,
-    FieldBacking, FormerHandle, KeyTrails, Memory, MemoryError, guard,
+    FormerHandle, KeyTrails, Memory, MemoryError, guard,
     kinds::KindSet,
     search::DocScan,
     types::{DeclaredType, Origin, ValueType},
@@ -40,13 +40,10 @@ pub(super) struct Doc {
     /// `fields_versioned` of the thing: what it holds, and the marker of the
     /// writes behind it.
     pub fields: BTreeMap<String, String>,
-    pub version: u64,
     /// `field_ages` of the thing.
     pub ages: FieldAges,
     /// `claim_histories` of the thing.
     pub histories: HashMap<FactId, Vec<ClaimWrite>>,
-    /// `backing` of the thing.
-    pub backing: BTreeMap<String, FieldBacking>,
     /// `history` of every key and `keys_kept_off_the_thing` of every record.
     pub trails: KeyTrails,
     /// **The writes of each claim this thing cannot serve**, read when the
@@ -78,7 +75,7 @@ impl Doc {
             .as_ref()
             .map(|e| e.id.clone())
             .ok_or_else(|| MemoryError::Store("a scanned document names no thing".into()))?;
-        let (fields, version) = match taken.fields {
+        let (fields, _version) = match taken.fields {
             Some(held) => held,
             None => inner.fields_versioned(&handle).await?,
         };
@@ -89,10 +86,6 @@ impl Doc {
         let histories = match taken.histories {
             Some(held) => held,
             None => inner.claim_histories(&handle).await?,
-        };
-        let backing = match taken.backing {
-            Some(held) => held,
-            None => inner.backing(&handle).await?,
         };
         let trails = match taken.trails {
             Some(held) => held,
@@ -111,10 +104,8 @@ impl Doc {
         Ok(Doc {
             scan,
             fields,
-            version,
             ages,
             histories,
-            backing,
             trails,
             unmapped_histories,
             entity_versions,
@@ -134,10 +125,8 @@ impl Doc {
         Some(Doc {
             scan,
             fields: parts.fields,
-            version: parts.version,
             ages: parts.ages,
             histories: parts.histories,
-            backing: parts.backing,
             trails: parts.trails,
             unmapped_histories: parts.unmapped_histories,
             entity_versions: Some(parts.entity_versions),
@@ -569,32 +558,6 @@ impl Image {
             .collect()
     }
 
-    /// `scan_entity`: the document of the thing wearing exactly this handle,
-    /// which is how the store's own row lookup asks it.
-    pub fn scan_one(&self, id: &EntityId) -> Option<DocScan> {
-        let at = self.by_id.get(id)?;
-        let entity = self.entities.get(*at)?;
-        self.docs.get(&entity.id).map(|doc| doc.scan.clone())
-    }
-
-    /// `has_prose`: whether the document `scan_one` would return holds a page,
-    /// answered without copying it.
-    pub fn has_prose(&self, id: &EntityId) -> bool {
-        self.by_id
-            .get(id)
-            .and_then(|at| self.entities.get(*at))
-            .and_then(|entity| self.docs.get(&entity.id))
-            .is_some_and(|doc| !doc.scan.prose.trim().is_empty())
-    }
-
-    /// **The claims of a thing that cannot be served**, as the store named them
-    /// when it filled the image: stored under a folded key, listed in no event.
-    pub fn unmapped(&self, id: &EntityId) -> Vec<jojobot_domain::memory::unmapped::UnmappedClaim> {
-        self.scan_one(id)
-            .map(|doc| doc.unmapped)
-            .unwrap_or_default()
-    }
-
     /// **Whether some thing names this address as a claim it cannot serve.**
     pub fn names_as_unmapped(&self, address: &FactAddress) -> bool {
         self.docs.values().any(|doc| {
@@ -709,14 +672,6 @@ impl Image {
         let moved =
             follow_claim::<_, MergeLoop>(home, address.local.clone(), moves_in(&self.events))?;
         Ok(moved.map(|(survivor, now)| FactAddress::new(survivor, now)))
-    }
-
-    /// `backing`.
-    pub fn backing(
-        &self,
-        entity: &EntityId,
-    ) -> Result<BTreeMap<String, FieldBacking>, MemoryError> {
-        Ok(self.doc(entity)?.backing.clone())
     }
 
     /// `key_trails`.
