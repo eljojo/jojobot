@@ -152,6 +152,7 @@ fn box_label(held: &Mailbox) -> String {
 const READ_SESSIONS: &str = "sessions";
 const READ_MAIL: &str = "mail";
 const READ_THINGS: &str = "things";
+const READ_PAYLOAD: &str = "payload";
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct RouteStatus {
@@ -248,6 +249,14 @@ pub struct Metrics {
     process_heap_in_use: Gauge,
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     process_allocator_retained: Gauge,
+    /// The bytes of text the claims State holds for the data it serves, and the
+    /// records that hold it: the State's own count, read with the store's gauges.
+    payload_bytes: Gauge,
+    payload_records: Gauge,
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    resident_to_payload: Gauge<f64, AtomicU64>,
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    resident_per_record: Gauge<f64, AtomicU64>,
     sessions_live: Family<[(&'static str, &'static str); 0], Gauge>,
     mail: Family<BoxState, Gauge>,
     things: Family<Kind, Gauge>,
@@ -257,6 +266,9 @@ pub struct Metrics {
     shadow_disagreements: Family<Shadowed, Gauge>,
     /// The shadow whose counts a scrape reports, set once the store is wired.
     shadow: std::sync::OnceLock<Arc<jojobot_adapters::fold::shadow::Shadow>>,
+    /// The claims State a scrape counts the payload of, set once the store is wired. A
+    /// served store lends none of its own, so the process says where its State is.
+    claims: std::sync::OnceLock<Arc<dyn jojobot_domain::log::claims::ClaimsLender>>,
     /// **One scrape at a time**, holding when the gauges were last read: a
     /// scrape clears and refills them, and two at once would encode each
     /// other's half-filled families.
@@ -348,6 +360,34 @@ impl Metrics {
             );
             (resident, in_use, retained)
         };
+        let payload_bytes = Gauge::default();
+        registry.register(
+            "jojobot_payload_bytes",
+            "Bytes of text the claims State serves now: the name, source, aliases, boot text and metadata of each object, and the content, details and current key and value writes of each claim, at any status. A claim's earlier wording and replaced writes are history and are not counted",
+            payload_bytes.clone(),
+        );
+        let payload_records = Gauge::default();
+        registry.register(
+            "jojobot_payload_records",
+            "Objects and claims that hold the payload, each counted once and alike",
+            payload_records.clone(),
+        );
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        let resident_to_payload = Gauge::<f64, AtomicU64>::default();
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        registry.register(
+            "jojobot_resident_to_payload_ratio",
+            "Resident bytes of this scrape over the payload bytes of the last read, which can be one read interval older; 0 while the payload is unread or empty",
+            resident_to_payload.clone(),
+        );
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        let resident_per_record = Gauge::<f64, AtomicU64>::default();
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        registry.register(
+            "jojobot_resident_bytes_per_record",
+            "Resident bytes of this scrape over the payload records of the last read, which can be one read interval older; 0 while the payload is unread or empty",
+            resident_per_record.clone(),
+        );
         let sessions_live = Family::<[(&'static str, &'static str); 0], Gauge>::default();
         registry.register(
             "jojobot_sessions_live",
@@ -415,6 +455,12 @@ impl Metrics {
             process_heap_in_use,
             #[cfg(all(target_os = "linux", target_env = "gnu"))]
             process_allocator_retained,
+            payload_bytes,
+            payload_records,
+            #[cfg(all(target_os = "linux", target_env = "gnu"))]
+            resident_to_payload,
+            #[cfg(all(target_os = "linux", target_env = "gnu"))]
+            resident_per_record,
             sessions_live,
             mail,
             things,
@@ -423,6 +469,7 @@ impl Metrics {
             shadow_comparisons,
             shadow_disagreements,
             shadow: std::sync::OnceLock::new(),
+            claims: std::sync::OnceLock::new(),
             scraping: tokio::sync::Mutex::new(None),
             refresh_every: REFRESH_EVERY,
         }
@@ -436,6 +483,12 @@ impl Metrics {
             refresh_every: every,
             ..self
         }
+    }
+
+    /// **Count the payload of this State on every read of the gauges.** Set once, when
+    /// the store is wired; a second call changes nothing.
+    pub fn watch_claims(&self, lender: Arc<dyn jojobot_domain::log::claims::ClaimsLender>) {
+        let _ = self.claims.set(lender);
     }
 
     /// **Report this shadow's counts on every scrape**, per family. Set once,
@@ -493,6 +546,14 @@ impl Metrics {
         if last_read.is_none_or(|at| at.elapsed() >= self.refresh_every) {
             self.read_gauges(ports).await;
             *last_read = Some(Instant::now());
+        }
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        {
+            let resident = self.process_resident.get() as f64;
+            let over = |of: i64| if of > 0 { resident / of as f64 } else { 0.0 };
+            self.resident_to_payload.set(over(self.payload_bytes.get()));
+            self.resident_per_record
+                .set(over(self.payload_records.get()));
         }
         // **The shadow's counts are in memory**, so they are read on every scrape
         // and not on the store's interval.
@@ -576,6 +637,30 @@ impl Metrics {
             _ => false,
         };
         self.answered(READ_THINGS, read);
+
+        let payload = self
+            .claims
+            .get()
+            .cloned()
+            .or_else(|| ports.memory.claims_lender())
+            .and_then(|lender| Self::payload_of(lender.as_ref()));
+        self.payload_bytes
+            .set(payload.map_or(0, |held| i64::try_from(held.bytes).unwrap_or(i64::MAX)));
+        self.payload_records
+            .set(payload.map_or(0, |held| i64::try_from(held.records).unwrap_or(i64::MAX)));
+        self.answered(READ_PAYLOAD, payload.is_some());
+    }
+
+    /// **The State's own count of what it holds**, or `None` when it cannot answer:
+    /// a store with no State to lend, or one that is behind the log.
+    fn payload_of(
+        lender: &dyn jojobot_domain::log::claims::ClaimsLender,
+    ) -> Option<jojobot_domain::log::claims::Payload> {
+        let mut payload = None;
+        lender
+            .lend(&mut |state| payload = Some(state.payload()))
+            .then_some(payload)
+            .flatten()
     }
 
     fn answered(&self, read: &'static str, ok: bool) {
@@ -687,6 +772,32 @@ pub fn router(metrics: Arc<Metrics>, ports: Ports) -> Router {
     Router::new()
         .route(PATH, get(serve_metrics))
         .with_state(Scrape { metrics, ports })
+}
+
+/// **What the process holds beside what the State must hold**, read once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Overhead {
+    pub payload: jojobot_domain::log::claims::Payload,
+    /// Zero where the platform gives no resident figure.
+    pub resident_bytes: u64,
+    /// **How long the walk held the State's lock**, in microseconds: the time every
+    /// write waits while the payload is counted.
+    pub walk_micros: u64,
+}
+
+/// **The overhead now**, or `None` when the State cannot answer.
+pub fn overhead(lender: &dyn jojobot_domain::log::claims::ClaimsLender) -> Option<Overhead> {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    let resident_bytes = resident_bytes().unwrap_or_default();
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    let resident_bytes = 0;
+    let began = Instant::now();
+    let payload = Metrics::payload_of(lender)?;
+    Some(Overhead {
+        payload,
+        resident_bytes,
+        walk_micros: u64::try_from(began.elapsed().as_micros()).unwrap_or(u64::MAX),
+    })
 }
 
 #[cfg(test)]
@@ -847,6 +958,147 @@ mod tests {
             Some("1"),
             "{differed}"
         );
+    }
+
+    /// **The scrape says what the process holds against what the State must hold.**
+    /// The payload and its records are the State's own count; the ratio and the
+    /// bytes per record are the resident bytes of the same scrape over them.
+    #[tokio::test]
+    async fn a_scrape_says_the_payload_beside_the_resident_bytes() {
+        let memory = Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+        let ports = Ports {
+            memory: memory.clone(),
+            sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            mailboxes: Arc::new(
+                jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
+            ),
+        };
+        let subject = EntityId("person:milhouse".into());
+        memory
+            .add_entity(NewEntity::new(subject.clone(), "Milhouse", "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+        memory
+            .capture(jojobot_domain::memory::NewFact::about(
+                subject,
+                "plays the recorder",
+                jiff::civil::date(2026, 1, 1),
+            ))
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked");
+        let mut held = jojobot_domain::log::claims::Payload::default();
+        memory
+            .claims_lender()
+            .expect("the fake lends its State")
+            .lend(&mut |state| held = state.payload());
+        assert!(held.bytes > 0 && held.records >= 2, "{held:?}");
+
+        let text = Metrics::new().scrape(&ports).await;
+        let value = |name: &str| -> f64 {
+            text.lines()
+                .find(|line| line.starts_with(&format!("{name} ")))
+                .and_then(|line| line.rsplit(' ').next())
+                .and_then(|number| number.parse().ok())
+                .unwrap_or_else(|| panic!("no {name} on the scrape:\n{text}"))
+        };
+        assert_eq!(value("jojobot_payload_bytes"), held.bytes as f64, "{text}");
+        assert_eq!(
+            value("jojobot_payload_records"),
+            held.records as f64,
+            "{text}"
+        );
+        assert!(
+            text.lines()
+                .any(|line| line == "jojobot_scrape_read_ok{read=\"payload\"} 1"),
+            "{text}"
+        );
+        let resident = value("process_resident_memory_bytes");
+        let close = |got: f64, want: f64| (got - want).abs() <= want.abs() * 1e-9;
+        assert!(
+            close(
+                value("jojobot_resident_to_payload_ratio"),
+                resident / held.bytes as f64
+            ),
+            "{text}"
+        );
+        assert!(
+            close(
+                value("jojobot_resident_bytes_per_record"),
+                resident / held.records as f64
+            ),
+            "{text}"
+        );
+    }
+
+    /// **A State the process says it serves from is the one a scrape counts**, whatever
+    /// the store lends: a served store lends none of its own, and its State is the
+    /// writer's.
+    #[tokio::test]
+    async fn a_scrape_counts_the_state_the_process_watches() {
+        let served = Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+        served
+            .add_entity(NewEntity::new(
+                EntityId("person:milhouse".into()),
+                "Milhouse",
+                "fixture",
+            ))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+        let ports = Ports {
+            memory: Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
+            sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            mailboxes: Arc::new(
+                jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
+            ),
+        };
+        let count = |lender: Arc<dyn jojobot_domain::log::claims::ClaimsLender>| {
+            let mut held = jojobot_domain::log::claims::Payload::default();
+            lender.lend(&mut |state| held = state.payload());
+            held
+        };
+        let watched = count(served.claims_lender().expect("the fake lends"));
+        let ports_own = count(ports.memory.claims_lender().expect("the fake lends"));
+        assert_ne!(watched.records, ports_own.records, "the two States differ");
+
+        let metrics = Metrics::new();
+        metrics.watch_claims(served.claims_lender().expect("the fake lends"));
+        let text = metrics.scrape(&ports).await;
+        assert!(
+            text.lines()
+                .any(|line| line == format!("jojobot_payload_records {}", watched.records)),
+            "{text}"
+        );
+    }
+
+    /// **The ready line carries the same measure the scrape does**: the State's
+    /// payload and the resident bytes of the process, read when the server is ready.
+    #[tokio::test]
+    async fn memory_overhead_at_ready_is_the_states_payload_beside_the_resident_bytes() {
+        let memory = Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+        memory
+            .add_entity(NewEntity::new(
+                EntityId("person:milhouse".into()),
+                "Milhouse",
+                "fixture",
+            ))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+        let mut held = jojobot_domain::log::claims::Payload::default();
+        let lender = memory.claims_lender().expect("the fake lends its State");
+        lender.lend(&mut |state| held = state.payload());
+        let overhead = overhead(lender.as_ref()).expect("the State answers");
+        assert_eq!(overhead.payload, held);
+        assert!(held.bytes > 0, "{held:?}");
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        assert!(overhead.resident_bytes > 0, "{overhead:?}");
     }
 
     /// **A scrape inside the interval reads nothing**: it serves the gauges of

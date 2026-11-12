@@ -165,6 +165,16 @@ impl Writer {
         self.0.seam.get().cloned()
     }
 
+    /// **The claims State the ledgers hold, lent to a reader**, once they are open.
+    /// A store that serves through this writer lends no State of its own.
+    ///
+    /// ⚠️ **A lend holds the ledgers' lock for as long as the reader runs**, which is
+    /// the time every write waits. A reader must be short.
+    pub fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        self.seam()
+            .map(|seam| seam as Arc<dyn jojobot_domain::log::claims::ClaimsLender>)
+    }
+
     /// **Open the ledgers over the store on the first call and hand them back.**
     /// It runs as a job of this writer and before any transaction of the caller
     /// begins: the writer holds one connection, so the open (a replay, and the

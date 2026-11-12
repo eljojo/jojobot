@@ -208,6 +208,15 @@ async fn run() -> anyhow::Result<()> {
     if let Some(metrics) = &metrics {
         metrics.watch_shadow(booted.shadow.clone());
     }
+    // **The claims State this process serves from**: the ledgers of the shared writer,
+    // which is where the writes land, else the store's own when it lends one (a fake).
+    let claims = booted
+        .writer
+        .claims_lender()
+        .or_else(|| booted.memory.claims_lender());
+    if let (Some(metrics), Some(lender)) = (&metrics, &claims) {
+        metrics.watch_claims(lender.clone());
+    }
     let scraped = jojobot::metrics::Ports {
         sessions: booted.sessions.clone(),
         mailboxes: booted.mailboxes.clone(),
@@ -285,6 +294,21 @@ async fn run() -> anyhow::Result<()> {
             apps = apps.len(),
             revoked = apps.iter().filter(|a| a.revoked).count(),
             "apps registered: the app route is mounted"
+        );
+    }
+    // **What the process holds beside what the State must hold, stated at the ready
+    // line** so a boot's log carries the measure the scrape serves. A separate line,
+    // before the serving line, which callers read for its address.
+    if let Some(overhead) = claims
+        .as_ref()
+        .and_then(|lender| jojobot::metrics::overhead(lender.as_ref()))
+    {
+        tracing::info!(
+            payload_bytes = overhead.payload.bytes,
+            payload_records = overhead.payload.records,
+            resident_bytes = overhead.resident_bytes,
+            walk_micros = overhead.walk_micros,
+            "memory at ready"
         );
     }
     // **The address the listener holds, not the one configured.** A bind on port 0
