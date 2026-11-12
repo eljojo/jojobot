@@ -853,9 +853,9 @@ async fn calibrate_the_store(state: &Scratch) {
         super::PRODUCTION_PRE_IMPORT_BATCHES,
     )
     .await;
-    let padded = super::pad_the_text(store.pool(), super::FITTED_PAD_FACTOR).await;
+    super::pad_the_text(store.pool(), super::FITTED_PAD_FACTOR).await;
     store.stop().await;
-    record(&calibration_line(&earlier, &padded));
+    record(&calibration_line(&earlier, super::FITTED_PAD_FACTOR));
 }
 
 /// **A first boot, as production's is on a new build**: the dump the last deployed
@@ -1016,16 +1016,17 @@ async fn no_snapshot_boot(state: Scratch) -> Running {
 /// **What the calibration did, and whose bytes they are.** Production's per-table
 /// byte totals are unread while `PRODUCTION_BYTES_READ_ON` is none, so the line says
 /// the bytes are fitted and the comparison it supports does not discharge the card.
-fn calibration_line(earlier: &str, padded: &str) -> String {
-    calibration_line_for(super::PRODUCTION_BYTES_READ_ON, earlier, padded)
+fn calibration_line(earlier: &str, factor: i64) -> String {
+    calibration_line_for(super::PRODUCTION_BYTES_READ_ON, earlier, factor)
 }
 
-fn calibration_line_for(read_on: Option<&str>, earlier: &str, padded: &str) -> String {
-    let bytes = match read_on {
-        Some(day) => format!("production's totals read on {day}"),
-        None => "bytes fitted, production's totals unread".to_string(),
+fn calibration_line_for(read_on: Option<&str>, earlier: &str, factor: i64) -> String {
+    let bytes = match (read_on, factor) {
+        (Some(day), _) => format!("production's totals read on {day}"),
+        (None, 0) => "unpadded, production's totals unread".to_string(),
+        (None, _) => "bytes fitted, production's totals unread".to_string(),
     };
-    format!("memory-report calibration: {earlier} {padded}; {bytes}")
+    format!("memory-report calibration: {earlier} pad_factor={factor}; {bytes}")
 }
 
 /// What the boot's log said it held, for the per-thing division.
@@ -1430,16 +1431,26 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         assert!(line.contains("(1101580 kB)"), "{line}");
     }
 
-    /// **The calibration line says whether the bytes are production's or fitted.** The
-    /// grown store's bytes are fitted until production's per-table totals are read, and
-    /// a reader of the line must not take the store for production's.
+    /// **The calibration line says whether the bytes are production's, fitted or
+    /// unpadded.** The grown store's bytes are fitted only when a factor padded them, and
+    /// are the tool-written text as it is while the factor is zero; a reader of the line
+    /// must not take either for production's, and must not read "fitted" on a store
+    /// nothing was fitted to.
     #[test]
-    fn memory_report_says_in_its_calibration_line_that_the_bytes_are_fitted() {
-        let line = calibration_line("pre_import_events=7 pre_import_batches=3", "pad_factor=20");
-        assert!(line.starts_with("memory-report calibration: "), "{line}");
-        assert!(line.contains("fitted"), "{line}");
-        assert!(line.contains("pad_factor=20"), "{line}");
-        let read = calibration_line_for(Some("2026-12-01"), "x", "y");
+    fn memory_report_says_in_its_calibration_line_whose_bytes_the_store_holds() {
+        let events = "pre_import_events=7 pre_import_batches=3";
+        let fitted = calibration_line(events, 20);
+        assert!(
+            fitted.starts_with("memory-report calibration: "),
+            "{fitted}"
+        );
+        assert!(fitted.contains("fitted"), "{fitted}");
+        assert!(fitted.contains("pad_factor=20"), "{fitted}");
+        let none = calibration_line(events, 0);
+        assert!(none.contains("unpadded"), "{none}");
+        assert!(none.contains("pad_factor=0"), "{none}");
+        assert!(!none.contains("fitted"), "{none}");
+        let read = calibration_line_for(Some("2026-12-01"), "x", 0);
         assert!(
             read.contains("production's totals read on 2026-12-01"),
             "{read}"

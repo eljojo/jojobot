@@ -956,12 +956,82 @@ fn memory_day_verdict_fails_a_report_with_no_second_boot() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+/// A report written by the case itself, to the file the script reads, with the import boot's
+/// resident memory after boot (`None` leaves it out) and fixed numbers for the rest.
+fn bundle_with_boot_resident(resident: Option<&str>) -> PathBuf {
+    let after = resident.map_or(String::new(), |mib| {
+        format!(", server resident after boot {mib} MiB")
+    });
+    let boot = format!("memory-report boot: server peak 3000.0 MiB{after}");
+    let second = "memory-report second boot: server peak 900.0 MiB";
+    let nosnap = "memory-report no-snapshot boot: server peak 950.0 MiB";
+    let day = "memory-report day: server resident 1500.0 MiB at the end, 1500.0 MiB at the most; \
+               peak 1500.0 MiB";
+    bundle(&format!(
+        "{PASSED}; printf '%s\\n%s\\n%s\\n%s\\n' '{boot}' '{second}' '{nosnap}' '{day}' > \
+         ../../target/bar/boot-measures.log"
+    ))
+}
+
+/// **An ok on a store far smaller than production's cannot be read as the proof.** The
+/// bound is on boots of a store the size CI holds; when the import boot is under 75
+/// percent of production's first-boot reading, the verdict leads with that share and says
+/// it does not show that production fits in 4 GiB.
+#[test]
+fn memory_day_verdict_leads_with_the_share_and_says_a_small_store_proves_nothing() {
+    let dir = bundle_with_boot_resident(Some("1300.0"));
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(
+        verdict.starts_with("memory-day: ok after "),
+        "an ok stays an ok: {verdict}"
+    );
+    assert!(
+        verdict.contains("but the store is at 37% of production's first-boot reading"),
+        "{verdict}"
+    );
+    assert!(
+        verdict.contains("does not show that production fits in 4 GiB"),
+        "{verdict}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{said}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// A store at or over 75 percent of production's reading is a store the bound can speak
+/// for: the verdict does not warn.
+#[test]
+fn memory_day_verdict_does_not_warn_for_a_store_near_production_size() {
+    let dir = bundle_with_boot_resident(Some("2800.0"));
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: ok after "), "{verdict}");
+    assert!(!verdict.contains("does not show"), "{verdict}");
+    assert!(verdict.contains("79%"), "{verdict}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// A boot line with no resident memory leaves the share unread, and the verdict says so
+/// where a reader looks, not by leaving the words out.
+#[test]
+fn memory_day_verdict_says_when_the_import_boots_share_was_not_read() {
+    let dir = bundle_with_boot_resident(None);
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: ok after "), "{verdict}");
+    assert!(verdict.contains("import boot share: not read"), "{verdict}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
 /// **The deadline leaves room for the case on a loaded runner and stays under the
 /// job's own timeout.** The day took 1,756 to 2,000 s on a free runner and about 3,450 s
-/// on a loaded one, with the boots before it under 300 s; the memory job is stopped at 90
+/// on a loaded one, with the boots before it under 300 s; the memory job is stopped at 100
 /// minutes. Nothing outside the script declares its default, so the value is pinned here.
 #[test]
-fn memory_day_default_deadline_is_4800_seconds_under_the_jobs_ninety_minutes() {
+fn memory_day_default_deadline_is_4800_seconds_under_the_jobs_hundred_minutes() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/memory-day");
     let out = support::output_fenced(
         Command::new("python3")

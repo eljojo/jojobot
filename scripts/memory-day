@@ -35,7 +35,7 @@ CASES = [
 ]
 # Room for the case on a loaded runner: the day took 1,756 to 2,000 s on a free runner and
 # about 3,450 s (1.5 entries a second) on a loaded one, and the three boots and the import
-# before it under 300 s. The memory job is stopped at 90 minutes, which stays above it.
+# before it under 300 s. The memory job is stopped at 100 minutes, which leaves 20 for the runner cleanup, the downloads and the verdict.
 DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "4800"))
 # Rule 800's bound on the server's own memory, 4 GiB. It is not the unit's memoryMax,
 # which a later rule moves.
@@ -47,6 +47,9 @@ PRODUCTION_FIRST_BOOT_MIB = 3553.0
 # The grown store's bytes are fitted until production's per-table byte totals are read, and
 # the comparison says so; a fitted comparison does not discharge the card.
 COMPARISON = "fitted: production's byte totals are unread"
+# The share of production's first-boot reading under which the store is too small for the bound
+# to speak for production: the verdict says so.
+SIZED_SHARE = 75
 
 
 def command():
@@ -208,10 +211,13 @@ def main():
         # The import boot prepares the store and is the calibration pair beside
         # production's own reading; it is not bound. The boots production can pay are.
         beside = ""
+        share = None
         if boot is not None and boot_resident is not None:
             share = round(100 * float(boot_resident) / PRODUCTION_FIRST_BOOT_MIB)
             beside = (f"import boot resident {boot_resident} MiB (peak {boot} MiB), {share}% of "
                       f"production's {PRODUCTION_FIRST_BOOT_MIB:.0f} MiB ({COMPARISON}), ")
+        elif boot is not None:
+            beside = f"import boot {boot} MiB, import boot share: not read, "
         numbers = (f"{beside}no-snapshot boot {no_snapshot} MiB, second-boot peak {second} MiB, "
                    f"resident after the day {day} MiB, highest in the day {highest} MiB")
         if missing:
@@ -220,6 +226,13 @@ def main():
         elif any(float(number) >= LIMIT_MIB for number in (no_snapshot, second, day, highest)):
             verdict = f"memory-day: OVER {LIMIT_MIB:.0f} MiB (4 GiB) after {wall} s: {numbers}"
             code = 3
+        elif share is not None and share < SIZED_SHARE:
+            # The bound speaks for boots of a store the size CI holds. A green line on a store
+            # far smaller than production's must not read as the proof that production fits.
+            verdict = (f"memory-day: ok after {wall} s, but the store is at {share}% of "
+                       f"production's first-boot reading (under {SIZED_SHARE}%), so this does not "
+                       f"show that production fits in 4 GiB: {numbers}, all under "
+                       f"{LIMIT_MIB:.0f} MiB (4 GiB)")
         else:
             verdict = f"memory-day: ok after {wall} s: {numbers}, all under {LIMIT_MIB:.0f} MiB (4 GiB)"
     print(verdict)
