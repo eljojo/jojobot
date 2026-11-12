@@ -13,6 +13,14 @@ use jojobot::auth::Validator;
 use jojobot::config::{Config, origin_of};
 use jojobot::{AppState, build_app};
 
+/// **The server allocates through jemalloc.** After a replayed day over one store the
+/// system allocator held 2119.9 MiB and jemalloc 741.9 MiB (the memory job, run 5155),
+/// because glibc keeps freed pages in its arenas. Rule 800 bounds the memory the
+/// server holds, so the binary installs the allocator that gives it back.
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 /// **How long what the cut left open is given to end**, after the drain window.
 /// The process ends either way; this only lets a connection that closes at once
 /// do so cleanly.
