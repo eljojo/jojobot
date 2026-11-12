@@ -15,121 +15,64 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use jojobot_domain::memory::boot_reader::{BootReader, Parts, ThingParts};
+use jojobot_domain::memory::boot_reader::{BootReader, FieldsVersioned};
 use jojobot_domain::memory::claim_walk::{MergeLoop, follow_claim, moves_in};
 use jojobot_domain::memory::numbered::{
     NUMBERS_BY, derived_formers, nearest_numbers, numbered_handle,
 };
 use jojobot_domain::memory::{
-    ClaimWrite, Entity, EntityId, EntityKind, EntityVersion, FactAddress, FactId, FieldAges,
-    FormerHandle, KeyTrails, Memory, MemoryError, guard,
+    Entity, EntityId, EntityKind, FactAddress, FormerHandle, Memory, MemoryError, guard,
     search::DocScan,
     types::{DeclaredType, ValueType},
 };
 
 pub(super) mod patch;
 
-/// What the image holds for one thing, each part as the store answered it.
+/// What the image holds for one thing: its document and what it holds. The
+/// histories, ages, trails and versions of a thing are answered by the claims
+/// State at read time and are no part of it.
 #[derive(Clone)]
 pub(super) struct Doc {
     /// The thing's document: its row, its prose, its records and its fields.
     /// `recall` answers with its records: a scan and a recall are one read of
     /// the same rows, which the battery asserts on every store.
     pub scan: DocScan,
-    /// `fields_versioned` of the thing: what it holds, and the marker of the
-    /// writes behind it.
+    /// What the thing holds, folded.
     pub fields: BTreeMap<String, String>,
-    /// `field_ages` of the thing.
-    pub ages: FieldAges,
-    /// `claim_histories` of the thing.
-    pub histories: HashMap<FactId, Vec<ClaimWrite>>,
-    /// `history` of every key and `keys_kept_off_the_thing` of every record.
-    pub trails: KeyTrails,
-    /// **The writes of each claim this thing cannot serve**, read when the
-    /// document is filled. The claim sits under a folded key and no event maps
-    /// it, so no ordinary history holds it; its address reads it. A claim whose
-    /// chain could not be read is absent here, and a read of it goes to the
-    /// store, which answers as it can.
-    pub unmapped_histories: HashMap<FactAddress, Vec<ClaimWrite>>,
-    /// **Every version of the thing's own row**, the store's `entity_history`:
-    /// the name, aliases, prose and archive state it held before each change, the
-    /// session that made it, and the versions of every thing folded into it.
-    /// Read when the document is filled and read again with it, so a write to the
-    /// thing keeps it current as a claim write keeps the claims. `None` when the
-    /// store could not answer at the fill, and a read of it goes to the store.
-    pub entity_versions: Option<Vec<EntityVersion>>,
 }
 
 impl Doc {
-    /// Read everything held for one thing, given its scanned document. A part
-    /// the bulk reads already hold for the thing is taken from them; any other
-    /// part is read of the thing on its own.
+    /// Read what is held for one thing, given its scanned document. What the
+    /// bulk read already holds for the thing is taken from it; otherwise the
+    /// thing is read on its own.
     async fn read(
         inner: &dyn Memory,
         scan: DocScan,
-        taken: ThingParts,
+        taken: Option<FieldsVersioned>,
     ) -> Result<Doc, MemoryError> {
         let handle = scan
             .entity
             .as_ref()
             .map(|e| e.id.clone())
             .ok_or_else(|| MemoryError::Store("a scanned document names no thing".into()))?;
-        let (fields, _version) = match taken.fields {
+        let (fields, _version) = match taken {
             Some(held) => held,
             None => inner.fields_versioned(&handle).await?,
         };
-        let ages = match taken.ages {
-            Some(held) => held,
-            None => inner.field_ages(&handle).await?,
-        };
-        let histories = match taken.histories {
-            Some(held) => held,
-            None => inner.claim_histories(&handle).await?,
-        };
-        let trails = match taken.trails {
-            Some(held) => held,
-            None => inner.key_trails(&handle).await?,
-        };
-        let entity_versions = match taken.versions {
-            Some(held) => Some(held),
-            None => inner.entity_history(&handle).await.ok(),
-        };
-        let mut unmapped_histories = HashMap::new();
-        for claim in &scan.unmapped {
-            if let Ok(chain) = inner.claim_history(&claim.address).await {
-                unmapped_histories.insert(claim.address.clone(), chain);
-            }
-        }
-        Ok(Doc {
-            scan,
-            fields,
-            ages,
-            histories,
-            trails,
-            unmapped_histories,
-            entity_versions,
-        })
+        Ok(Doc { scan, fields })
     }
 
     /// **The document of one thing, read from the claims State alone**: the
-    /// domain's scan and value parts of the thing stored under `object`. `None`
-    /// when the State holds no such thing.
+    /// domain's scan and what the thing holds, of the thing stored under `object`.
+    /// `None` when the State holds no such thing.
     pub fn from_state(
         state: &jojobot_domain::log::claims::State,
         object: &jojobot_domain::log::ObjectId,
         declared: &[DeclaredType],
     ) -> Option<Doc> {
         let scan = state.document_scan(object, declared)?;
-        let parts = state.document_parts(object, declared)?;
-        Some(Doc {
-            scan,
-            fields: parts.fields,
-            ages: parts.ages,
-            histories: parts.histories,
-            trails: parts.trails,
-            unmapped_histories: parts.unmapped_histories,
-            entity_versions: Some(parts.entity_versions),
-        })
+        let fields = state.scan(object, declared)?.fields;
+        Some(Doc { scan, fields })
     }
 
     /// The document of one thing, read from the store: the incremental half of
@@ -140,7 +83,7 @@ impl Doc {
                 "{handle} was written and then read back as nothing"
             )));
         };
-        Doc::read(inner, scan, ThingParts::default()).await
+        Doc::read(inner, scan, None).await
     }
 }
 
@@ -215,12 +158,12 @@ impl Image {
         // **What the store can answer for many things at once is asked once.** A
         // thing it leaves out is read the way it always was.
         let started = std::time::Instant::now();
-        let mut parts = match reader {
+        let mut bulk: HashMap<EntityId, FieldsVersioned> = match reader {
             Some(reader) => {
                 let handles: Vec<EntityId> = entities.iter().map(|e| e.id.clone()).collect();
-                Parts::read(reader, &handles).await?
+                reader.fields_versioned_many(&handles).await?
             }
-            None => Parts::default(),
+            None => HashMap::new(),
         };
         fill_phase("bulk-parts", started, entities.len());
         let started = std::time::Instant::now();
@@ -244,7 +187,7 @@ impl Image {
                 };
                 let inner = inner.clone();
                 let id = entity.id.clone();
-                let taken = parts.take(&id);
+                let taken = bulk.remove(&id);
                 batch.spawn(crate::writer::sql::inherit_read(async move {
                     (id, Doc::read(&*inner, scan, taken).await)
                 }));

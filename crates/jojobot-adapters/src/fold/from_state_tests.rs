@@ -339,17 +339,32 @@ async fn compare(merged: bool) {
                     .1
             ),
         );
+        // What the store answers of the thing's other parts, read once; the State's
+        // parts are held to these.
+        let stored_ages = memory.field_ages(handle).await.expect("the store's ages");
+        let stored_histories = memory
+            .claim_histories(handle)
+            .await
+            .expect("the store's histories");
+        let stored_trails = memory.key_trails(handle).await.expect("the store's trails");
+        let stored_versions = memory.entity_history(handle).await.ok();
+        let mut stored_unmapped = std::collections::HashMap::new();
+        for claim in &stored.scan.unmapped {
+            if let Ok(chain) = memory.claim_history(&claim.address).await {
+                stored_unmapped.insert(claim.address.clone(), chain);
+            }
+        }
         differ(
             "ages",
-            held.ages == stored.ages,
+            held.ages == stored_ages,
             format!("{:?}", held.ages),
-            format!("{:?}", stored.ages),
+            format!("{:?}", stored_ages),
         );
         differ(
             "histories",
-            held.histories == stored.histories,
+            held.histories == stored_histories,
             format!("{:?}", held.histories),
-            format!("{:?}", stored.histories),
+            format!("{:?}", stored_histories),
         );
         differ(
             "backing",
@@ -362,23 +377,23 @@ async fn compare(merged: bool) {
         );
         differ(
             "trails",
-            held.trails == stored.trails,
+            held.trails == stored_trails,
             format!("{:?}", held.trails),
-            format!("{:?}", stored.trails),
+            format!("{:?}", stored_trails),
         );
         differ(
             "entity versions",
-            Some(&held.entity_versions) == stored.entity_versions.as_ref(),
+            Some(&held.entity_versions) == stored_versions.as_ref(),
             format!("{:?}", held.entity_versions),
-            format!("{:?}", stored.entity_versions),
+            format!("{:?}", stored_versions),
         );
         let assembled = Doc::from_state(&state, &ObjectId(stored.scan.doc_id.clone()), &declared)
             .unwrap_or_else(|| panic!("{handle}: the State assembles a document"));
         differ(
             "unmapped histories",
-            assembled.unmapped_histories == stored.unmapped_histories,
-            format!("{:?}", assembled.unmapped_histories),
-            format!("{:?}", stored.unmapped_histories),
+            held.unmapped_histories == stored_unmapped,
+            format!("{:?}", held.unmapped_histories),
+            format!("{:?}", stored_unmapped),
         );
         differ(
             "assembled scan and fields",

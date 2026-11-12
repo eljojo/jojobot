@@ -65,17 +65,7 @@ impl Image {
         let mut found = Vec::new();
         for (handle, doc) in &self.docs {
             spelled.clear();
-            let _ = write!(
-                spelled,
-                "{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
-                doc.scan,
-                doc.fields,
-                doc.ages,
-                doc.histories,
-                doc.trails,
-                doc.unmapped_histories,
-                doc.entity_versions,
-            );
+            let _ = write!(spelled, "{:?}{:?}", doc.scan, doc.fields,);
             if needles
                 .iter()
                 .any(|needle| spelled.contains(needle.as_str()))
