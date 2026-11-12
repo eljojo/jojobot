@@ -30,7 +30,12 @@ fn a_thing_of_two_thousand_claims() -> State {
         let record = format!("r{n}");
         events.push(created(
             &record,
-            claim(&format!("f{n}"), "work:alpha", "a claim", 3),
+            claim(
+                &format!("f{n}"),
+                "work:alpha",
+                &format!("claim number {n}"),
+                3,
+            ),
         ));
         events.push(write(&record, "work:alpha", "k", n as u64, &n.to_string()));
     }
