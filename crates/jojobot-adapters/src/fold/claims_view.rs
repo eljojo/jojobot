@@ -4,10 +4,10 @@
 
 use jojobot_domain::log::claims::{ClaimsLender, State};
 
-/// The seam of the shared writer lends its State when the log is read to its end
-/// and the import is in it.
+/// The seam of the shared writer lends its State to a served read once the import
+/// is in it, at its last applied batch while the seam is behind the log.
 impl ClaimsLender for crate::ledger_seam::Seam {
     fn lend(&self, read: &mut dyn FnMut(&State)) -> bool {
-        self.read_claims_if_current(read)
+        self.read_claims_served(read)
     }
 }

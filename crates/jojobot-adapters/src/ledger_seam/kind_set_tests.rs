@@ -333,18 +333,21 @@ async fn while_the_claims_are_behind_ledger_writes_land_and_claims_writes_are_re
     opened.finish().await;
 }
 
-/// **The seam lends its claims state only while it is current**: not before the
-/// import is in the log, and not after a commit whose outcome was not known, which
-/// may have left the State without the write. The control is the lend in between.
+/// **A served read is lent the State at its last applied batch while the seam is
+/// behind.** A commit whose outcome was not known may have left the State without
+/// the write: a read then answers with the document from before it, and never
+/// crosses the rail into the store. Not before the import is in the log, and not
+/// while a claims member cannot be read, which leaves the State short.
 #[tokio::test]
-async fn the_seam_lends_its_claims_state_only_while_it_is_current() {
+async fn the_seam_lends_a_served_read_the_state_while_it_is_behind() {
+    use jojobot_domain::log::claims::ClaimsLender;
     let _kinds = KINDS.lock().await;
     let opened = open_over(vec![vec![declaration_member()]])
         .await
         .expect("a declaration of kinds the process holds opens");
     let lend = |seam: &Seam| {
         let mut ran = false;
-        let lent = seam.read_claims_if_current(&mut |_| ran = true);
+        let lent = seam.lend(&mut |_| ran = true);
         (lent, ran)
     };
     assert_eq!(
@@ -353,12 +356,11 @@ async fn the_seam_lends_its_claims_state_only_while_it_is_current() {
         "no import is in the log"
     );
     opened.seam.lock().claims_import = true;
-    assert_eq!(lend(&opened.seam), (true, true), "current and imported");
     opened.seam.lock().behind = true;
     assert_eq!(
         lend(&opened.seam),
-        (false, false),
-        "a commit of unknown outcome leaves the State untrusted"
+        (true, true),
+        "a commit of unknown outcome leaves the last applied State to read"
     );
     opened.finish().await;
 }

@@ -643,16 +643,18 @@ impl Seam {
         read(&self.lock().state)
     }
 
-    /// **Lend the claims state to `read` when it can answer**: the import is in
-    /// the log and no member of the log is unread. `false` runs nothing.
-    pub(crate) fn read_claims_if_current(
+    /// **Lend the claims state to a served read, at its last applied batch**, while
+    /// the seam is behind as well: a commit whose outcome was not known may have
+    /// left the State without the write, and a read then answers with the document
+    /// from before it rather than crossing the rail into the store. `false` runs
+    /// nothing: not before the import is in the log, and not while a claims member
+    /// cannot be read, which leaves the State short.
+    pub(crate) fn read_claims_served(
         &self,
         read: &mut dyn FnMut(&jojobot_domain::log::claims::State),
     ) -> bool {
         let held = self.lock();
-        // A commit whose outcome was not known may have left the State without the
-        // write: it then answers with the document from before it.
-        if held.behind || held.claims_unreadable.is_some() || !held.claims_import {
+        if held.claims_unreadable.is_some() || !held.claims_import {
             return false;
         }
         read(&held.claims);
