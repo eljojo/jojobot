@@ -384,6 +384,20 @@ impl Filter {
         self.holds_in(&subject, &Nothing(BTreeMap::new()))
     }
 
+    /// **Whether a leaf on a key holds, given only the value the key holds**, `None`
+    /// for a key the thing does not hold: the same answer as [`Filter::holds`] over
+    /// a bag with that one key, with no bag built. For a pass over every thing that
+    /// asks one key of each. A filter that is no leaf on a key is never held.
+    pub fn holds_the_value_of_its_key(&self, held: Option<&str>) -> bool {
+        match self {
+            Filter::Leaf(Leaf { key: Some(_), test }) => match (test, held) {
+                (Test::Exists, held) => held.is_some(),
+                (test, held) => held.is_some_and(|held| test.passes(held)),
+            },
+            _ => false,
+        }
+    }
+
     /// **Does this thing satisfy the filter, given the things a reference list
     /// can name.**
     pub fn holds_in(&self, subject: &Subject<'_>, lookup: &dyn Lookup) -> bool {

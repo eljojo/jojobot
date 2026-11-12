@@ -49,6 +49,8 @@ impl State {
         if self.redirects.contains_key(object) {
             return None;
         }
+        #[cfg(test)]
+        State::note_build();
         let id = self.handle_of(object)?;
         let mut row = self.entity_row(body, id)?;
         row.folded_names = self

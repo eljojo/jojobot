@@ -18,6 +18,50 @@ impl State {
             .unwrap_or_else(|| EntityId(object.0.clone()))
     }
 
+    /// **Whether a thing's page holds anything**, read off the thing's own row: no
+    /// document is built for the question. `false` for a thing the State does not
+    /// hold.
+    pub fn has_prose(&self, object: &ObjectId) -> bool {
+        self.objects
+            .get(self.survivor(object))
+            .and_then(|body| body.metadata.get("prose"))
+            .is_some_and(|prose| !prose.trim().is_empty())
+    }
+
+    /// **The claims of a thing that cannot be served**, listed in no event of the
+    /// merge that left them under it: only these are built, and no claim of the
+    /// thing is.
+    pub fn unmapped_claims_of(&self, object: &ObjectId) -> Vec<UnmappedClaim> {
+        let subject = self.survivor(object);
+        let mut unmapped: Vec<_> = self
+            .records_homed_on(subject)
+            .into_iter()
+            .filter_map(|id| self.records.get(id).map(|held| (id, held)))
+            .filter(|(_, held)| held.claim.home != *subject)
+            .collect();
+        unmapped.sort_by(|a, b| {
+            crate::memory::claim_label_order(&a.1.claim.label, &b.1.claim.label)
+                .then_with(|| a.0.cmp(b.0))
+        });
+        unmapped
+            .into_iter()
+            .map(|(_, held)| {
+                let home = &held.claim.home;
+                UnmappedClaim {
+                    address: FactAddress::new(
+                        self.handle_worn_by(home),
+                        FactId(held.claim.label.clone()),
+                    ),
+                    merge_no: self
+                        .merge_log
+                        .iter()
+                        .find(|entry| &entry.folded == home)
+                        .map_or(0, |entry| entry.number),
+                }
+            })
+            .collect()
+    }
+
     /// **The document of one thing as its scan serves it**, from the State
     /// alone. `None` when the State holds no such thing.
     pub fn document_scan(&self, object: &ObjectId, declared: &[DeclaredType]) -> Option<DocScan> {

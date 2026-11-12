@@ -449,6 +449,7 @@ thread_local! {
     static FOLDS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static SCANS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static VISITS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BUILDS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// **What the events so far say.**
@@ -1208,6 +1209,8 @@ impl State {
         subject: &ObjectId,
         declared: &[DeclaredType],
     ) -> BTreeMap<String, String> {
+        #[cfg(test)]
+        State::note_build();
         if std::ptr::eq(declared.as_ptr(), self.declared_snapshot.as_ptr())
             && declared.len() == self.declared_snapshot.len()
         {
@@ -1270,6 +1273,20 @@ impl State {
         FOLDS_COUNTED.with(|n| n.set(0));
         SCANS_COUNTED.with(|n| n.set(0));
         VISITS_COUNTED.with(|n| n.set(0));
+        BUILDS_COUNTED.with(|n| n.set(0));
+    }
+
+    /// The count of entities, field maps and scans a read built on this thread,
+    /// for a case: what a read returns is built, and nothing else should be.
+    #[cfg(test)]
+    pub(crate) fn builds_counted() -> usize {
+        BUILDS_COUNTED.with(std::cell::Cell::get)
+    }
+
+    /// Note one thing built.
+    #[cfg(test)]
+    pub(super) fn note_build() {
+        BUILDS_COUNTED.with(|n| n.set(n.get() + 1));
     }
 
     /// The count of things a read built a scan of on this thread, for a case.

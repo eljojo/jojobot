@@ -1010,12 +1010,12 @@ impl Memory for Folded {
         entity: &EntityId,
     ) -> Result<Vec<jojobot_domain::memory::unmapped::UnmappedClaim>, MemoryError> {
         self.readable()?;
-        let stated = self.stated(entity, |state, found, declared| {
+        let stated = self.stated(entity, |state, found, _declared| {
             if found.id != *entity {
                 return Some(Vec::new());
             }
             let object = state.resolve(&found.id.0)?;
-            Some(state.document_scan(object, declared)?.unmapped)
+            Some(state.unmapped_claims_of(object))
         });
         match stated {
             Some(unmapped) => Ok(unmapped),
@@ -1153,7 +1153,7 @@ impl Memory for Folded {
         self.readable()?;
         let stated = self.stated(entity, |state, found, declared| {
             let object = state.resolve(&found.id.0)?;
-            Some(state.scan(object, declared)?.fields)
+            Some(state.fields_served(object, declared))
         });
         match stated {
             Some(fields) => Ok(fields),
@@ -1175,7 +1175,7 @@ impl Memory for Folded {
         let stated = self.stated(entity, |state, found, declared| {
             let object = state.resolve(&found.id.0)?;
             Some((
-                state.scan(object, declared)?.fields,
+                state.fields_served(object, declared),
                 state.write_marker(object),
             ))
         });
@@ -1482,13 +1482,12 @@ impl Memory for Folded {
 
     async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
         self.readable()?;
-        let stated = self.stated(entity, |state, found, declared| {
+        let stated = self.stated(entity, |state, found, _declared| {
             if found.id != *entity {
                 return Some(false);
             }
             let object = state.resolve(&found.id.0)?;
-            let doc = state.document_scan(object, declared)?;
-            Some(!doc.prose.trim().is_empty())
+            Some(state.has_prose(object))
         });
         match stated {
             Some(has) => Ok(has),
@@ -1624,7 +1623,7 @@ impl Memory for Folded {
             return self.inner.thought_writers(thread).await;
         };
         jojobot_domain::memory::validate_subject_in(&kinds, thread)?;
-        match self.claims(|state| state.thought_writers(thread, &state.declared_types_shared())) {
+        match self.claims(|state| state.thought_writers(thread)) {
             Ok(writers) => Ok(writers),
             Err(_) => {
                 self.unheld()?;

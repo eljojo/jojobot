@@ -4,8 +4,8 @@
 //! bots that wrote into one thread, and every read the fold serves from the State.
 //!
 //! The counts are the cost model the architect asked for: a read of one thing costs
-//! one lookup or one scan; a browse looks at every thing once and folds none; the
-//! writers of a thread build a document for each bot and for no other thing.
+//! one lookup or one scan; a browse looks at every thing once, folds none and builds
+//! only what it returns; the writers of a thread build no document.
 
 use super::super::tests::{body, claim, key, object, record, under};
 use super::super::{ClaimEvent, FieldValue, State};
@@ -117,6 +117,17 @@ fn field_write(home: &str, k: &str, ordinal: u64, value: &str) -> ClaimEvent {
     }
 }
 
+/// What a read cost on this thread: the things folded, the scans built, the things
+/// looked at and the things built (an entity, a field map, a scan).
+fn costs() -> (usize, usize, usize, usize) {
+    (
+        State::folds_counted(),
+        State::scans_counted(),
+        State::visits_counted(),
+        State::builds_counted(),
+    )
+}
+
 #[test]
 fn a_read_of_one_thing_costs_one_lookup_or_one_scan_and_folds_nothing() {
     let state = a_state_of_the_calibration_size();
@@ -126,13 +137,9 @@ fn a_read_of_one_thing_costs_one_lookup_or_one_scan_and_folds_nothing() {
     State::reset_folds_counted();
     assert_eq!(state.fields(&thing, &declared).len(), 2);
     assert_eq!(
-        (
-            State::folds_counted(),
-            State::scans_counted(),
-            State::visits_counted()
-        ),
-        (0, 0, 0),
-        "fields is one lookup of the held fold"
+        costs(),
+        (0, 0, 0, 1),
+        "fields is one lookup of the held fold and builds the one map it returns"
     );
 
     State::reset_folds_counted();
@@ -144,32 +151,34 @@ fn a_read_of_one_thing_costs_one_lookup_or_one_scan_and_folds_nothing() {
             .len(),
         1
     );
+    let (folds, scans, visits, _) = costs();
     assert_eq!(
-        (
-            State::folds_counted(),
-            State::scans_counted(),
-            State::visits_counted()
-        ),
+        (folds, scans, visits),
         (0, 1, 0),
         "recall and scan_entity build the scan of the one thing"
+    );
+
+    State::reset_folds_counted();
+    assert!(!state.has_prose(&thing));
+    assert_eq!(
+        costs(),
+        (0, 0, 0, 0),
+        "has_prose reads the thing's row and builds no document"
     );
 }
 
 #[test]
-fn a_browse_looks_at_every_thing_once_and_folds_none() {
+fn a_browse_looks_at_every_thing_once_and_builds_only_what_it_returns() {
     let state = a_state_of_the_calibration_size();
 
     State::reset_folds_counted();
     let calm = state.keys_holding("mood", &Test::Equals("calm".to_string()), None);
     assert_eq!(calm.len(), THINGS / 2, "half the things are calm");
     assert_eq!(
-        (
-            State::folds_counted(),
-            State::scans_counted(),
-            State::visits_counted()
-        ),
-        (0, 0, THINGS + BOTS + 1),
-        "keys_holding looks at every thing once and folds none"
+        costs(),
+        (0, 0, THINGS + BOTS + 1, 0),
+        "keys_holding looks at every thing once, folds none and builds no entity or map; \
+         the ids it returns are built and counted by the answer"
     );
 
     State::reset_folds_counted();
@@ -183,31 +192,22 @@ fn a_browse_looks_at_every_thing_once_and_folds_none() {
     );
     assert!(first.head.len() >= 5, "the front of the order is placed");
     assert_eq!(
-        (
-            State::folds_counted(),
-            State::scans_counted(),
-            State::visits_counted()
-        ),
-        (0, 0, THINGS + BOTS + 1),
-        "ordered_first_k looks at every thing once and folds none"
+        costs(),
+        (0, 0, THINGS + BOTS + 1, 0),
+        "ordered_first_k looks at every thing once, folds none and builds no entity or map"
     );
 }
 
 #[test]
-fn the_writers_of_a_thread_build_a_document_for_each_bot_and_no_other_thing() {
+fn the_writers_of_a_thread_build_no_document_and_look_at_every_thing_once() {
     let state = a_state_of_the_calibration_size();
-    let declared = state.declared_types_shared();
 
     State::reset_folds_counted();
-    let writers = state.thought_writers(&EntityId("thread:alpha".to_string()), &declared);
+    let writers = state.thought_writers(&EntityId("thread:alpha".to_string()));
     assert_eq!(writers.len(), BOTS, "each bot wrote into the thread");
     assert_eq!(
-        (
-            State::folds_counted(),
-            State::scans_counted(),
-            State::visits_counted()
-        ),
-        (0, BOTS, 0),
-        "a document is built for each bot, none for the three thousand things"
+        costs(),
+        (0, 0, THINGS + BOTS + 1, 1),
+        "one pass over the things, no document, and one entity built: the thread asked for"
     );
 }

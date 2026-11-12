@@ -234,12 +234,19 @@ impl State {
     /// Spellings retain their original owner, so this reads the same binding
     /// before and after a merge without following the redirect.
     pub(super) fn own_handle_of(&self, object: &ObjectId) -> Option<crate::memory::EntityId> {
+        self.own_handle_str(object)
+            .map(|address| crate::memory::EntityId(address.to_string()))
+    }
+
+    /// **The handle an object wore itself, borrowed**: the same answer as
+    /// [`Self::own_handle_of`] with nothing built, for a pass over every thing.
+    pub(super) fn own_handle_str(&self, object: &ObjectId) -> Option<&str> {
         self.indexes
             .spellings
             .get(object)?
             .iter()
             .find(|address| handle_shaped(address))
-            .map(|address| crate::memory::EntityId(address.clone()))
+            .map(String::as_str)
     }
 
     pub(super) fn bind_spelling(&mut self, object: &ObjectId, address: &str) {
