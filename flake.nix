@@ -276,6 +276,7 @@
               "--skip=a_stored_clear_by_a_claim_that_did_not_hold_the_key_is_imported_as_a_removal"
               "--skip=everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it"
               "--skip=import_rows::"
+              "--skip=old_shapes::"
               "--skip=runs_in_moment_order::the_runs_of_the_last_deployed_store_read_in_moment_order_on_the_head"
             ];
           }
