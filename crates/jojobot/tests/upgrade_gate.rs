@@ -44,12 +44,14 @@ fn fixture_dir() -> String {
 async fn the_current_binary_boots_on_the_last_deployed_store() {
     boots_on_a_store_filled_by(&fixture_dir(), "last-deployed").await;
 }
-/// **The boot the next release really makes**: the recording keeps its log and its
-/// snapshot, so the head loads them, imports nothing and serves. Every other case
-/// restores a store the claims import has not read, which is the store the cases
-/// were written for; this is the one that boots over what the last deployed build
-/// left. The boot is held to the gate's account of itself: no unexpected warning
-/// and no error.
+/// **The boot the next release really makes, and what it serves**: the recording
+/// keeps the log and the snapshot the last deployed build left, with the restore's
+/// seeds appended after them, so the head loads them, imports nothing and serves.
+/// Every other case restores a store the claims import has not read, which is the
+/// store those cases were written for; this one boots over what production has. The
+/// boot is held to the gate's account of itself (no unexpected warning, no error, a
+/// storage check that ran and found nothing), and every value the old store held is
+/// read back through the served surface, as the headline cases read them.
 #[tokio::test]
 async fn the_current_binary_boots_quiet_over_the_recording_with_its_log_and_snapshot() {
     let Restored {
@@ -57,9 +59,31 @@ async fn the_current_binary_boots_quiet_over_the_recording_with_its_log_and_snap
         state_dir,
         store_port,
         git_ref,
+        held_before,
         ..
     } = restore_a_fixture_keeping_the_log(&fixture_dir(), "log-and-snapshot").await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    assert!(
+        booted
+            .log
+            .iter()
+            .any(|line| line.contains("storage check:")),
+        "the boot over the kept log did not report the storage check: {:?}",
+        booted.log
+    );
+    assert!(
+        !booted
+            .log
+            .iter()
+            .any(|line| line.contains("STORAGE CHECK NOT RUN") || line.contains("STORAGE DAMAGE")),
+        "the storage check found damage or did not run over the kept log: {:?}",
+        booted.log
+    );
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
+    surface.finish().await;
     booted.stop().await;
     drop(scratch);
 }
@@ -4174,8 +4198,9 @@ async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_ov
 /// rows planted afterwards are never read into the State and the served surface
 /// does not know them. This removes the log's batches and snapshots and keeps its
 /// identity row, so the head boot imports the store as the planted rows leave it.
-/// The cases that only boot the recording leave the log alone: they measure the
-/// upgrade a deployed 9.3.3 store takes. The same removal is in `boot_measures.rs`.
+/// Only the case that restores with the log kept (see
+/// [`restore_a_fixture_keeping_the_log`]) leaves it alone: it measures the upgrade a
+/// deployed 9.3.3 store takes. The same removal is in `boot_measures.rs`.
 pub(crate) async fn leave_the_claims_import_to_the_head_boot(pool: &sqlx::MySqlPool) {
     sqlx::query("DELETE FROM event_log WHERE slot <> 'validity'")
         .execute(pool)
