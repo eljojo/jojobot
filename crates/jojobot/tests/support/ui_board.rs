@@ -268,9 +268,25 @@ pub struct Board {
     /// Whether the spawn fills the image. Off only for a case that injects a
     /// store failure and reads the fallback on purpose.
     pub filled: bool,
+    /// A decorator the spawn puts around the served memory, for a case that
+    /// counts what the page asks of the layer it reads through.
+    pub serving: Option<ServedWrap>,
 }
 
+/// What [`Board::serving_through`] takes.
+pub type ServedWrap = Arc<dyn Fn(Arc<dyn Memory>) -> Arc<dyn Memory> + Send + Sync>;
+
 impl Board {
+    /// **Count or observe at the layer the page reads through**, above the fold,
+    /// where a filled image answers without the store.
+    pub fn serving_through(
+        mut self,
+        wrap: impl Fn(Arc<dyn Memory>) -> Arc<dyn Memory> + Send + Sync + 'static,
+    ) -> Self {
+        self.serving = Some(Arc::new(wrap));
+        self
+    }
+
     /// **The degraded path, chosen by name**: the image is never filled, so a
     /// read falls through to the store, as it does before the first fill or
     /// after a refresh that failed. A case that makes the store fail asks for it.
@@ -388,6 +404,7 @@ pub async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
         mailboxes,
         sessions,
         filled: true,
+        serving: None,
     }
 }
 
@@ -558,6 +575,10 @@ pub async fn spawn_jojobot_clocked(
         reqwest::Client::new(),
     );
 
+    let served = match &board.serving {
+        Some(wrap) => wrap(indexed.memory()),
+        None => indexed.memory(),
+    };
     let registry = if board.filled {
         jojobot::wiring::run_startup_passes(
             &(board.sessions.clone() as Arc<dyn Sessions>),
@@ -576,7 +597,7 @@ pub async fn spawn_jojobot_clocked(
         issuer: Some(support::ISS.to_string()),
         validator: mcp,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.memory(),
+        memory: served.clone(),
         search,
         mailboxes: board.mailboxes.clone() as Arc<dyn Mailboxes>,
         sessions: board.sessions.clone() as Arc<dyn Sessions>,
@@ -598,7 +619,7 @@ pub async fn spawn_jojobot_clocked(
             .unwrap();
     });
     let board = Board {
-        memory: indexed.memory(),
+        memory: served,
         ..board
     };
     (addr, ct, board)

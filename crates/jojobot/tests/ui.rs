@@ -1121,6 +1121,7 @@ async fn otto_with_nothing_yet() -> Board {
         mailboxes,
         sessions: Arc::new(InMemorySessions::new()),
         filled: true,
+        serving: None,
     }
 }
 

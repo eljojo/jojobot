@@ -156,10 +156,10 @@ async fn an_unreadable_backing_marks_its_section_and_leaves_the_page() {
     ct.cancel();
 }
 
-/// A store that counts the reads of a decision's claims.
+/// The memory the page reads through, counting the reads of a decision's claims.
 struct CountingDecisionReads {
     inner: Arc<dyn Memory>,
-    reads: AtomicUsize,
+    reads: Arc<AtomicUsize>,
 }
 
 #[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
@@ -178,14 +178,11 @@ impl Memory for CountingDecisionReads {
 /// own, so each decision's claims are read once for the whole page.
 #[tokio::test]
 async fn a_threads_decisions_come_with_the_pages_one_answer() {
-    let memory = Arc::new(CountingDecisionReads {
-        inner: seeded_memory().await,
-        reads: AtomicUsize::new(0),
-    });
+    let memory = seeded_memory().await;
+    let reads = Arc::new(AtomicUsize::new(0));
     let day = jiff::civil::Date::constant(2026, 3, 10);
     let thread = EntityId("thread:simpson-kitchen".into());
     memory
-        .inner
         .add_entity(NewEntity::new(
             thread.clone(),
             "The kitchen renovation",
@@ -196,18 +193,18 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
     let mut numbered = NewFact::about(thread.clone(), "its decisions are numbered", day);
     numbered.fields = [("numbers_by".to_string(), "number".to_string())].into();
     numbered.sets = ["numbers_by".to_string()].into();
-    memory.inner.capture(numbered).await.unwrap();
+    memory.capture(numbered).await.unwrap();
     for (handle, number, said) in [
         ("decision:cabinets-oak", "10", "The bridge is oak"),
         ("decision:floor-tile", "2", "The roof is slate"),
     ] {
         let mut new = NewEntity::new(EntityId(handle.into()), handle, "the fixture roster");
         new.parent = Some(thread.clone());
-        memory.inner.add_entity(new).await.unwrap();
+        memory.add_entity(new).await.unwrap();
         let mut fact = NewFact::about(EntityId(handle.into()), said, day);
         fact.fields = [("number".to_string(), number.to_string())].into();
         fact.sets = ["number".to_string()].into();
-        memory.inner.capture(fact).await.unwrap();
+        memory.capture(fact).await.unwrap();
     }
     let mut replaced = NewEntity::new(
         EntityId("decision:paint-cream".into()),
@@ -215,9 +212,8 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
         "the fixture roster",
     );
     replaced.parent = Some(thread.clone());
-    memory.inner.add_entity(replaced).await.unwrap();
+    memory.add_entity(replaced).await.unwrap();
     memory
-        .inner
         .capture(NewFact::about(
             EntityId("decision:paint-cream".into()),
             "The walls are cream",
@@ -226,7 +222,6 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
         .await
         .unwrap();
     memory
-        .inner
         .archive_entity(
             &EntityId("decision:paint-cream".into()),
             "replaced by a later choice",
@@ -234,7 +229,15 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
         )
         .await
         .unwrap();
-    let board = seeded_board_over(memory.clone()).await.unfilled();
+    let counting = reads.clone();
+    let board = seeded_board_over(memory.clone())
+        .await
+        .serving_through(move |inner| {
+            Arc::new(CountingDecisionReads {
+                inner,
+                reads: counting.clone(),
+            })
+        });
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, _) =
@@ -242,7 +245,7 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    memory.reads.store(0, Ordering::SeqCst);
+    reads.store(0, Ordering::SeqCst);
     let page = read(&client, addr, "/thread:simpson-kitchen/", &cookie)
         .await
         .text()
@@ -267,7 +270,7 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
     // The children listing is a question of the graph too, and its walk scans
     // each child once more. The number is the answers', so it moves when a pass
     // is added.
-    assert_eq!(memory.reads.load(Ordering::SeqCst), 3 * 3 + 3);
+    assert_eq!(reads.load(Ordering::SeqCst), 3 * 3 + 3);
     ct.cancel();
 }
 
