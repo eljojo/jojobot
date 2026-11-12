@@ -958,3 +958,86 @@ fn the_state_serves_each_thing_as_an_entity() {
             .is_none()
     );
 }
+
+/// **The payload is everything the State serves now, at any status, and nothing
+/// that is history.** An object counts its name, source, aliases, boot text and
+/// metadata, archived or folded or not. A claim counts its content, its details and
+/// the key and value of its current write of each key, at any status. A claim's
+/// earlier wording, and a write of a key that a later write of the same claim
+/// replaced, count for nothing.
+#[test]
+fn the_payload_counts_what_the_state_serves_now_and_no_history() {
+    let mut detailed = claim("f2", "alpha", "calm", 2);
+    detailed.details = Some("slow".into());
+    let events = [
+        ClaimEvent::ObjectCreated {
+            object: object("alpha"),
+            body: body("thing", "Alpha"),
+        },
+        created("r1", claim("f1", "alpha", "tense", 1)),
+        created("r2", detailed),
+        created("r3", claim("f3", "alpha", "gone", 3)),
+        write("r1", "alpha", "mood", 1, "tense"),
+        // The same claim writes the key again: the first write is history.
+        write("r1", "alpha", "mood", 2, "wired"),
+        write("r3", "alpha", "colour", 3, "red"),
+        // r3 then clears the key: its current write holds no value.
+        clear("r3", "alpha", "colour", 4),
+        // r1 is revised: its first wording is history.
+        ClaimEvent::RecordRevised {
+            record: record("r1"),
+            claim: claim("f1", "alpha", "stressed", 1),
+        },
+        // r3 is archived with the wording it had.
+        ClaimEvent::RecordRevised {
+            record: record("r3"),
+            claim: ClaimBody {
+                status: FactStatus::Archived,
+                ..claim("f3", "alpha", "gone", 3)
+            },
+        },
+    ];
+    let payload = replay(&events).payload();
+    // alpha: "Alpha" 5 + "user-named" 10. r1: "stressed" 8 + "mood" 4 + "wired" 5.
+    // r2: "calm" 4 + "slow" 4. r3, archived: "gone" 4, its cleared key holds nothing.
+    assert_eq!(payload.bytes, 15 + 17 + 8 + 4, "{payload:?}");
+    assert_eq!(payload.records, 4, "one object and three claims");
+}
+
+/// **Archiving changes nothing a reader is served as payload**: the claim and the
+/// object stay in the State with the text they had.
+#[test]
+fn archiving_a_claim_or_an_object_leaves_the_payload_unchanged() {
+    let before = [
+        ClaimEvent::ObjectCreated {
+            object: object("alpha"),
+            body: body("thing", "Alpha"),
+        },
+        created("r1", claim("f1", "alpha", "tense", 1)),
+        write("r1", "alpha", "mood", 1, "tense"),
+    ];
+    let mut state = replay(&before);
+    let held = state.payload();
+    assert!(held.bytes > 0 && held.records == 2, "{held:?}");
+    apply(
+        &mut state,
+        &ClaimEvent::RecordRevised {
+            record: record("r1"),
+            claim: ClaimBody {
+                status: FactStatus::Archived,
+                ..claim("f1", "alpha", "tense", 1)
+            },
+        },
+    );
+    apply(
+        &mut state,
+        &ClaimEvent::ObjectRevised {
+            object: object("alpha"),
+            body: ObjectBody {
+                archived: true,
+                ..body("thing", "Alpha")
+            },
+        },
+    );
+    assert_eq!(state.payload(), held);
+}

@@ -374,6 +374,14 @@ impl ClaimsLender for std::sync::Mutex<State> {
     }
 }
 
+/// **The bytes of text the State serves now, and the records that hold them**: every
+/// object and claim at any status, and no history. An overhead measure divides what the process holds by this.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Payload {
+    pub records: u64,
+    pub bytes: u64,
+}
+
 /// **What the events so far say.**
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct State {
@@ -854,6 +862,45 @@ impl State {
     /// own; they are read under the key they were written for.
     pub fn observed_writes(&self, object: &ObjectId) -> &[ObservedWrite] {
         self.observed.get(object).map_or(&[], Vec::as_slice)
+    }
+
+    /// **What the State serves now, by its own text** (see [`Payload`]).
+    pub fn payload(&self) -> Payload {
+        let mut payload = Payload::default();
+        let size = |text: &str| text.len() as u64;
+        // Every object the State serves, whatever its status: an archived or folded
+        // one is still held with the text it had.
+        for body in self.objects.values() {
+            payload.records += 1;
+            payload.bytes += size(&body.name) + size(&body.source);
+            payload.bytes += body.aliases.iter().map(|alias| size(alias)).sum::<u64>();
+            payload.bytes += body.boot.as_deref().map_or(0, size);
+            payload.bytes += body
+                .metadata
+                .iter()
+                .map(|(key, value)| size(key) + size(value))
+                .sum::<u64>();
+        }
+        // Every claim at any status, with the wording it has now.
+        for held in self.records.values() {
+            payload.records += 1;
+            payload.bytes +=
+                size(&held.claim.content) + held.claim.details.as_deref().map_or(0, size);
+        }
+        // The current write of each key by each claim: a later write of the same
+        // claim replaces an earlier one, which is history.
+        for ((_, key), writes) in &self.streams {
+            let mut seen = BTreeSet::new();
+            for write in writes.iter().rev() {
+                if !seen.insert(&write.record) {
+                    continue;
+                }
+                if let FieldValue::Set(value) = &write.write {
+                    payload.bytes += size(&key.0) + size(value);
+                }
+            }
+        }
+        payload
     }
 
     pub fn record(&self, record: &RecordId) -> Option<&Record> {
