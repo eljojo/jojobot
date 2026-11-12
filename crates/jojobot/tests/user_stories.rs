@@ -27,6 +27,8 @@ mod acting_session;
 mod age_of_a_value;
 #[path = "user_stories/amend_beats.rs"]
 mod amend_beats;
+#[path = "user_stories/an_answer_asked_today_is_written_today.rs"]
+mod an_answer_asked_today_is_written_today;
 /// An outside app records a deploy event; a colleague finds it, sees who recorded
 /// it, cannot rewrite it, and a retry writes nothing.
 #[path = "user_stories/app_deploy_events.rs"]

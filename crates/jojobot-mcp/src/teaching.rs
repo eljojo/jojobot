@@ -1813,6 +1813,111 @@ mod tests {
             !taught(&again),
             "the second read does not repeat it: {again}"
         );
+        // **The spelling is stored in the session's ledger and nothing outside this
+        // process declares it**, so the literal is pinned: a rename would leave
+        // every earlier session's row naming a domain nothing reads.
+        let caller = jojobot
+            .caller(Some(sid.as_str()))
+            .expect("the sid resolves")
+            .expect("a caller");
+        assert!(
+            jojobot
+                .teachings
+                .has_contact(&caller.sid, "answer-today")
+                .await
+                .expect("the ledger reads"),
+            "the spend is recorded under the literal domain"
+        );
+    }
+
+    /// **A claim a page holds back does not spend the teaching.** One person holds a
+    /// claim from the session's day and one from an earlier day; a `limit` of one
+    /// returns a single claim per page. The page that returns the earlier claim
+    /// carries the teaching and the page that returns the current one does not,
+    /// whichever order the two come in.
+    #[tokio::test]
+    async fn a_page_that_holds_back_the_earlier_claim_leaves_the_teaching_for_the_page_that_shows_it()
+     {
+        let memory = Arc::new(InMemoryMemory::booted());
+        let jojobot = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        make_bot(&jojobot, "gamma").await;
+        let sid = boot_on(&jojobot, "gamma", "2026-11-08").await["session"]["sid"]
+            .as_str()
+            .expect("a sid")
+            .to_string();
+        ensure(&jojobot, "person:alpha").await;
+        for (content, date) in [
+            // **The session's own day is written first**, so with a `limit` of one
+            // the first page shows it and the earlier claim waits on the second.
+            (
+                "has a spare set of keys with a neighbour",
+                jiff::civil::date(2026, 11, 8),
+            ),
+            (
+                "keeps a spare pair in the hall drawer",
+                jiff::civil::date(2026, 1, 5),
+            ),
+        ] {
+            memory
+                .capture(jojobot_domain::memory::NewFact::about(
+                    EntityId::person("person:alpha"),
+                    content,
+                    date,
+                ))
+                .await
+                .expect("capture ok")
+                .written()
+                .expect("not blocked");
+        }
+        let page = |offset: u32| {
+            let jojobot = &jojobot;
+            let sid = sid.clone();
+            async move {
+                json_of(
+                    &jojobot
+                        .recall(rmcp::handler::server::wrapper::Parameters(RecallArgs {
+                            sid: Some(sid),
+                            limit: Some(1),
+                            offset: Some(offset),
+                            ..recall_args("person:alpha")
+                        }))
+                        .await
+                        .expect("recall ok"),
+                )
+            }
+        };
+        let taught = |answer: &serde_json::Value| {
+            answer["teaching"]
+                .as_array()
+                .is_some_and(|taught| taught.contains(&serde_json::json!(ANSWER_TODAY_TEACHING)))
+        };
+        let shown = |answer: &serde_json::Value| -> Vec<String> {
+            answer["objects"][0]["facts"]
+                .as_array()
+                .expect("the page holds facts")
+                .iter()
+                .map(|fact| fact["recorded_at"].as_str().expect("a day").to_string())
+                .collect()
+        };
+        let first = page(0).await;
+        let second = page(1).await;
+        assert_eq!(shown(&first).len(), 1, "one claim per page: {first}");
+        assert_eq!(shown(&second).len(), 1, "one claim per page: {second}");
+        assert_ne!(shown(&first), shown(&second), "the pages differ");
+        for answer in [&first, &second] {
+            assert_eq!(
+                taught(answer),
+                shown(answer) == ["2026-01-05"],
+                "the teaching rides the page that shows the January claim: {answer}"
+            );
+        }
     }
 
     /// **A run picked up by its name is taught again, and once.** The pick-up

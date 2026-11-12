@@ -4743,9 +4743,28 @@ impl Jojobot {
         // **A claim from an earlier day than the session's own is told, once, to be
         // an earlier day's record**, so a question asked today is answered by a
         // capture and not by the old claim.
+        // **Judged on the page the caller receives, not on the claims the call
+        // selected**: a claim a `limit`, an `offset` or the ceiling holds back is not
+        // read yet, and spending the teaching on it would leave the page that
+        // shows it untaught. The copy is fitted as the answer is; the first test
+        // keeps a read with no earlier claim from paying for it.
         if returns_an_active_claim(&body)
             && let Ok(today) = self.dated_as(caller.as_ref(), None).await
             && returns_a_claim_before(&body, &today.to_string())
+            && {
+                let mut page = body.clone();
+                crate::memory::ready::fit_under_ceiling(&mut page);
+                fit_recall(
+                    &mut page,
+                    if pages_history { 0 } else { offset - skipped },
+                    args.limit.map_or(usize::MAX, |limit| limit as usize),
+                    Outside {
+                        before: skipped,
+                        after: left_over,
+                    },
+                );
+                returns_a_claim_before(&page, &today.to_string())
+            }
             && self
                 .first_contact(crate::teaching::ANSWER_TODAY_DOMAIN, caller.as_ref())
                 .await
