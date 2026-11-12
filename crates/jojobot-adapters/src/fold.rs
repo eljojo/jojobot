@@ -78,8 +78,8 @@ pub struct Folded {
     wanted: Arc<AtomicBool>,
     /// **Set while the boot's repair passes write, before the claims import.** The
     /// log holds no State then, so a refresh after such a write reads the store, as
-    /// every refresh did. TEMPORARY(9.3.8): the passes go when their data is read
-    /// from the log.
+    /// every refresh did. TEMPORARY(9.3.3.1) `q-9331-no-memory-image`: the passes
+    /// go when their data is read from the log.
     before_the_import: Arc<AtomicBool>,
     /// **How many times the image has changed**, bumped under the same lock
     /// that installs the change, so a reader that sees a number sees at least the
