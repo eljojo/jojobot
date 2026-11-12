@@ -811,6 +811,28 @@ struct FirstBoot {
     events: Option<u64>,
 }
 
+/// **Make the replayed store as long and as heavy as production's**, on this case's
+/// own copy: production's log before the claims import (its events and batches,
+/// read from its boot lines) and the copied text padded by the fitted factor. Both
+/// are applied here and not in the shared recorder, so the store the check lane
+/// boots over is unchanged and a factor change costs one memory job and no regrow.
+/// The line names what was done, so a reading is read beside its factor.
+async fn calibrate_the_store(state: &Scratch) {
+    jojobot_domain::memory::kinds::load_shipped();
+    let mut store = Dolt::start(&state.0.join("db"), free_port())
+        .await
+        .expect("the store comes up to be calibrated");
+    let earlier = super::add_the_pre_import_log(
+        store.pool(),
+        super::PRODUCTION_PRE_IMPORT_EVENTS,
+        super::PRODUCTION_PRE_IMPORT_BATCHES,
+    )
+    .await;
+    let padded = super::pad_the_text(store.pool(), super::FITTED_PAD_FACTOR).await;
+    store.stop().await;
+    record(&calibration_line(&earlier, &padded));
+}
+
 /// **A first boot, as production's is on a new build**: the dump the last deployed
 /// build recorded and the case grew to the instance's counts, with no binary
 /// booted over it yet, so the boot imports the claims and takes the first
@@ -819,6 +841,7 @@ async fn first_boot() -> FirstBoot {
     let fixture = std::env::var("BOOT_STORE_DIR")
         .expect("CI supplies BOOT_STORE_DIR, the store this case starts from");
     let state = replay_dump("jojobot-memory-report", &fixture).await;
+    calibrate_the_store(&state).await;
     // **The claims the boot reads are counted before it**, so a growth at boot is
     // divided by what the boot held and not by what a replay made of it.
     let shape = shape_of(&state).await;
@@ -915,14 +938,69 @@ fn second_boot_line(server_peak: u64, store_peak: u64, after_boot: Memory) -> St
 }
 
 /// **Boot the server again over the store the first boot left**, as production
-/// boots at its next release, and record what the boot held.
-fn second_boot(state: Scratch) {
+/// boots at its next release, and record what the boot held. The stop is orderly,
+/// so the store it hands back holds a snapshot again.
+fn second_boot(state: Scratch) -> Scratch {
     let mut run = spawn(state);
     let boot = watch_boot(&mut run);
     let (server_peak, store_peak) = boot.peak;
     let after_boot = memory_of_pid(run.pid).expect("the second boot's server runs");
     record(&second_boot_line(server_peak, store_peak, after_boot));
-    run.stopped();
+    run.stopped().0
+}
+
+/// **The line for the boot with no usable snapshot**: the import is done and the
+/// snapshot rows are gone, as when the next release is deployed over the build that
+/// imported. It is its own line, so the verdict reads it as the boot it is.
+fn no_snapshot_boot_line(server_peak: u64, store_peak: u64, after_boot: Memory) -> String {
+    format!(
+        "memory-report no-snapshot boot: the store held the claims import and no snapshot; \
+         server peak {} ({server_peak} kB), store peak {} ({store_peak} kB), server resident \
+         after boot {}, of which anonymous {}",
+        mib(server_peak),
+        mib(store_peak),
+        mib(after_boot.resident),
+        mib(after_boot.anonymous),
+    )
+}
+
+/// **Remove the snapshot the last stop took**, so the next boot has none to load.
+async fn without_the_snapshot(state: &Scratch) {
+    let mut store = Dolt::start(&state.0.join("db"), free_port())
+        .await
+        .expect("the store comes up to lose its snapshot");
+    sqlx::query("DELETE FROM event_log WHERE slot LIKE 'snapshot%'")
+        .execute(store.pool())
+        .await
+        .expect("the snapshot rows are removed");
+    store.stop().await;
+}
+
+/// **Boot over the import-done store with no snapshot**, record what the boot held
+/// and hand back the running server: the replayed day runs on it.
+async fn no_snapshot_boot(state: Scratch) -> Running {
+    without_the_snapshot(&state).await;
+    let mut run = spawn(state);
+    let boot = watch_boot(&mut run);
+    let (server_peak, store_peak) = boot.peak;
+    let after_boot = memory_of_pid(run.pid).expect("the no-snapshot boot's server runs");
+    record(&no_snapshot_boot_line(server_peak, store_peak, after_boot));
+    run
+}
+
+/// **What the calibration did, and whose bytes they are.** Production's per-table
+/// byte totals are unread while `PRODUCTION_BYTES_READ_ON` is none, so the line says
+/// the bytes are fitted and the comparison it supports does not discharge the card.
+fn calibration_line(earlier: &str, padded: &str) -> String {
+    calibration_line_for(super::PRODUCTION_BYTES_READ_ON, earlier, padded)
+}
+
+fn calibration_line_for(read_on: Option<&str>, earlier: &str, padded: &str) -> String {
+    let bytes = match read_on {
+        Some(day) => format!("production's totals read on {day}"),
+        None => "bytes fitted, production's totals unread".to_string(),
+    };
+    format!("memory-report calibration: {earlier} {padded}; {bytes}")
 }
 
 /// What the boot's log said it held, for the per-thing division.
@@ -1012,10 +1090,13 @@ async fn the_servers_memory_across_a_first_boot() {
         mib(super::memory_bound_kib()),
         mib(boot.store_peak),
     ));
-    // **The orderly stop takes a snapshot, so the next boot is the one production
-    // pays at its next release**: no import, and a snapshot to load.
+    // **The orderly stop takes a snapshot, so the next boot loads it**: no import,
+    // the boot over the store's own snapshot. Its stop takes another, which the
+    // last boot removes: a boot with none to load is the one the deploy of the next
+    // release makes. These two, not the import boot, are the bound's.
     let (state, _) = boot.run.stopped();
-    second_boot(state);
+    let state = second_boot(state);
+    no_snapshot_boot(state).await.stopped();
 }
 
 /// **The replay half of the report: a whole day of calls through the server
@@ -1030,7 +1111,13 @@ async fn the_servers_memory_after_a_replayed_day() {
     let began = Instant::now();
     let boot = first_boot().await;
     record_per_thing(&boot);
-    let (pid, port) = (boot.run.pid, boot.run.http_port);
+    // **The import boot prepares the store and is not the server of the day.** Its
+    // peaks are kept for the summary; the day runs on the boot with no snapshot,
+    // which is the boot production pays when the next release is deployed.
+    let (server_peak, store_peak) = (boot.server_peak, boot.store_peak);
+    let (prepared, _) = boot.run.stopped();
+    let served = no_snapshot_boot(prepared).await;
+    let (pid, port) = (served.pid, served.http_port);
     let replayed = replay_day(pid, port, 0, Duration::MAX).await;
     let samples = replayed.samples;
     let last = samples.last().expect("a replay has samples").2;
@@ -1040,7 +1127,7 @@ async fn the_servers_memory_after_a_replayed_day() {
         day().len(),
         "the replay stopped before it made the whole day"
     );
-    let (server_peak_after, store_peak_after) = boot.run.peaks_kib();
+    let (server_peak_after, store_peak_after) = served.peaks_kib();
     record(&format!(
         "memory-report day: all {} entries of a day made, which is {} tool calls before any \
          retry, in {} s; server resident {} at the end, {} at the most; peak {}",
@@ -1051,13 +1138,12 @@ async fn the_servers_memory_after_a_replayed_day() {
         mib(top),
         mib(server_peak_after),
     ));
-    let store_resident: u64 = descendants_of(boot.run.pid)
+    let store_resident: u64 = descendants_of(served.pid)
         .into_iter()
         .filter_map(memory_of_pid)
         .map(|memory| memory.resident)
         .sum();
-    let (server_peak, store_peak) = (boot.server_peak, boot.store_peak);
-    let (state, _) = boot.run.stopped();
+    let (state, _) = served.stopped();
     let shape_after = shape_of(&state).await;
     record(&shape_line("after the day", &shape_after));
     let claims_after = shape_after.claims;
@@ -1320,6 +1406,44 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         assert!(!line.starts_with("memory-report boot: "), "{line}");
         assert!(line.contains("(1001580 kB)"), "{line}");
         assert!(line.contains("(1221188 kB)"), "{line}");
+    }
+
+    /// **The no-snapshot boot has a line of its own**: the import is done and the
+    /// snapshot rows are gone, as at the deploy of the next release. Its prefix is
+    /// neither the import boot's nor the second boot's, so the verdict reads each as
+    /// what it is.
+    #[test]
+    fn memory_report_gives_the_no_snapshot_boot_its_own_line() {
+        let after = Memory {
+            resident: 950_000,
+            anonymous: 850_000,
+            peak: 0,
+        };
+        let line = no_snapshot_boot_line(1_101_580, 1_321_188, after);
+        assert!(
+            line.starts_with("memory-report no-snapshot boot: "),
+            "{line}"
+        );
+        assert!(!line.starts_with("memory-report boot: "), "{line}");
+        assert!(!line.starts_with("memory-report second boot: "), "{line}");
+        assert!(line.contains("(1101580 kB)"), "{line}");
+    }
+
+    /// **The calibration line says whether the bytes are production's or fitted.** The
+    /// grown store's bytes are fitted until production's per-table totals are read, and
+    /// a reader of the line must not take the store for production's.
+    #[test]
+    fn memory_report_says_in_its_calibration_line_that_the_bytes_are_fitted() {
+        let line = calibration_line("pre_import_events=7 pre_import_batches=3", "pad_factor=20");
+        assert!(line.starts_with("memory-report calibration: "), "{line}");
+        assert!(line.contains("fitted"), "{line}");
+        assert!(line.contains("pad_factor=20"), "{line}");
+        let read = calibration_line_for(Some("2026-12-01"), "x", "y");
+        assert!(
+            read.contains("production's totals read on 2026-12-01"),
+            "{read}"
+        );
+        assert!(!read.contains("fitted"), "{read}");
     }
 
     /// **The per-thing line divides each projection's growth by what it holds, and

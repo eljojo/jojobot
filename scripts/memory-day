@@ -38,6 +38,12 @@ DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "3300"))
 # which a later rule moves.
 LIMIT_MIB = 4096.0
 BAR = Path("target/bar")
+# Production's first boot at 9.3.3: the Rust process's resident memory the first sample after
+# serving began (3.47 GiB, VictoriaMetrics process_resident_memory_bytes, 2026-11-12).
+PRODUCTION_FIRST_BOOT_MIB = 3553.0
+# The grown store's bytes are fitted until production's per-table byte totals are read, and
+# the comparison says so; a fitted comparison does not discharge the card.
+COMPARISON = "fitted: production's byte totals are unread"
 
 
 def command():
@@ -129,22 +135,29 @@ def report_lines(measures, start):
 
 
 def measured(lines):
-    """The numbers rule 800 bounds, in MiB as the report writes them: the server's peak
-    through a first boot (the larger of the two the job makes, the first-boot case's
-    and the day case's own), its resident memory at the end of the day, and the most it
-    held in the day. Production is killed at its peak and not where it settles, so the
+    """The numbers rule 800 bounds, in MiB as the report writes them, and the import
+    boot beside them. The import boot (the larger of the two the job makes) prepares
+    the store and is printed beside production's reading, not bound. Bound are the
+    boots production can pay on the import-done store: the no-snapshot boot (the larger
+    of the two the job makes; the day runs on the second), and the second boot over the
+    snapshot the first one left; and its resident memory at the end of the day, and the
+    most it held in the day. Production is killed at its peak and not where it settles, so the
     last is the larger of the day's highest sample and the process's own peak. None for
     a number these lines do not hold."""
-    boot = day = highest = None
+    boot = second = no_snapshot = day = highest = None
     for line in lines:
         found = re.search(r"^memory-report boot: .*?server peak ([0-9.]+) MiB", line)
         boot = larger(boot, found.group(1) if found else None)
+        found = re.search(r"^memory-report second boot: .*?server peak ([0-9.]+) MiB", line)
+        second = larger(second, found.group(1) if found else None)
+        found = re.search(r"^memory-report no-snapshot boot: .*?server peak ([0-9.]+) MiB", line)
+        no_snapshot = larger(no_snapshot, found.group(1) if found else None)
         found = re.search(r"^memory-report day: .*?server resident ([0-9.]+) MiB at the end", line)
         day = found.group(1) if found else day
         for pattern in (r"([0-9.]+) MiB at the most", r"; peak ([0-9.]+) MiB"):
             found = re.search(r"^memory-report day: .*?" + pattern, line)
             highest = larger(highest, found.group(1) if found else None)
-    return boot, day, highest
+    return boot, second, no_snapshot, day, highest
 
 
 def main():
@@ -177,17 +190,26 @@ def main():
         verdict = f"memory-day: FAILED, not every case ran: {' and '.join(CASES)} were not all found in the binary"
         code = 1
     else:
-        boot, day, highest = measured(lines)
-        missing = [name for name, number in (("first-boot peak", boot),
+        boot, second, no_snapshot, day, highest = measured(lines)
+        missing = [name for name, number in (("import-boot peak", boot),
+                                             ("no-snapshot-boot peak", no_snapshot),
+                                             ("second-boot peak", second),
                                              ("resident memory after the day", day),
                                              ("highest memory in the day", highest))
                    if number is None]
-        numbers = (f"first-boot peak {boot} MiB, resident after the day {day} MiB, "
-                   f"highest in the day {highest} MiB")
+        # The import boot prepares the store and is the calibration pair beside
+        # production's own reading; it is not bound. The boots production can pay are.
+        beside = ""
+        if boot is not None:
+            share = round(100 * float(boot) / PRODUCTION_FIRST_BOOT_MIB)
+            beside = (f"import boot {boot} MiB, {share}% of production's "
+                      f"{PRODUCTION_FIRST_BOOT_MIB:.0f} MiB ({COMPARISON}), ")
+        numbers = (f"{beside}no-snapshot boot {no_snapshot} MiB, second-boot peak {second} MiB, "
+                   f"resident after the day {day} MiB, highest in the day {highest} MiB")
         if missing:
             verdict = f"memory-day: FAILED after {wall} s: the report holds no {' and no '.join(missing)}"
             code = 1
-        elif any(float(number) >= LIMIT_MIB for number in (boot, day, highest)):
+        elif any(float(number) >= LIMIT_MIB for number in (no_snapshot, second, day, highest)):
             verdict = f"memory-day: OVER {LIMIT_MIB:.0f} MiB (4 GiB) after {wall} s: {numbers}"
             code = 3
         else:

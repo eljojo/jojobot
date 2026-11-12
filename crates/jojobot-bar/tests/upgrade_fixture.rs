@@ -504,15 +504,27 @@ fn bundle(body: &str) -> PathBuf {
 /// the first boot and its resident memory at the end of the day, which is also the
 /// most it held in the day. The lines are the shapes a run of the case wrote.
 fn bundle_with(body: &str, boot_peak: &str, day_resident: &str) -> PathBuf {
-    bundle_report(body, &[boot_peak], day_resident, day_resident, day_resident)
+    bundle_report(
+        body,
+        &[boot_peak],
+        "900.0",
+        "1000.0",
+        day_resident,
+        day_resident,
+        day_resident,
+    )
 }
 
 /// The full report: one `memory-report boot:` line for each first boot the job made (the
-/// first-boot case's, then the day case's own), and a day that held `day_highest` at the
-/// most and settled at `day_resident`.
+/// first-boot case's, then the day case's own), one `memory-report second boot:` line
+/// holding `second_peak` (none when it is empty), one `memory-report no-snapshot boot:`
+/// line holding `no_snapshot_peak` (none when it is empty), and a day that held
+/// `day_highest` at the most and settled at `day_resident`.
 fn bundle_report(
     body: &str,
     boot_peaks: &[&str],
+    second_peak: &str,
+    no_snapshot_peak: &str,
     day_resident: &str,
     day_highest: &str,
     day_peak: &str,
@@ -528,6 +540,26 @@ fn bundle_report(
             )
         })
         .collect();
+    let second_line = if second_peak.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "echo 'memory-report second boot: the store held the claims import and a snapshot; \
+             server peak {second_peak} MiB (921600 kB), store peak 1243.0 MiB (1272832 kB), \
+             server resident after boot 846.2 MiB, of which anonymous 804.5 MiB' >> \
+             \"$ROOT/target/bar/boot-measures.log\"\n"
+        )
+    };
+    let no_snapshot_line = if no_snapshot_peak.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "echo 'memory-report no-snapshot boot: the store held the claims import and no \
+             snapshot; server peak {no_snapshot_peak} MiB (1024000 kB), store peak 1343.0 MiB \
+             (1375244 kB), server resident after boot 946.2 MiB, of which anonymous 904.5 MiB' \
+             >> \"$ROOT/target/bar/boot-measures.log\"\n"
+        )
+    };
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-memory-day"));
     let deps = dir.join("cargo-target/debug/deps");
     fs::create_dir_all(&deps).unwrap();
@@ -543,6 +575,8 @@ fn bundle_report(
              echo \"$CARGO_MANIFEST_DIR $JOJOBOT_BIN\" > \"{root}/seen-env\"\n\
              ROOT=\"{root}\"\n\
              {boot_lines}\
+             {second_line}\
+             {no_snapshot_line}\
              echo 'memory-report day: all 5300 entries of a day made, which is 6179 tool calls \
              before any retry, in 1682 s; server resident {day_resident} MiB at the end, \
              {day_highest} MiB at the most; peak {day_peak} MiB' >> \
@@ -666,12 +700,8 @@ fn memory_day_verdict_states_both_numbers_and_reads_ok_when_both_are_under_4_gib
 }
 
 #[test]
-fn memory_day_verdict_reads_over_when_the_day_or_the_boot_reaches_4_gib() {
-    for (boot, day) in [
-        ("1237.4", "5120.0"),
-        ("4500.0", "1625.9"),
-        ("1237.4", "4096.0"),
-    ] {
+fn memory_day_verdict_reads_over_when_the_day_reaches_4_gib() {
+    for (boot, day) in [("1237.4", "5120.0"), ("1237.4", "4096.0")] {
         let dir = bundle_with(PASSED, boot, day);
         let out = run(&dir, "60");
         let said = String::from_utf8_lossy(&out.stdout);
@@ -695,7 +725,15 @@ fn memory_day_verdict_reads_over_when_the_day_or_the_boot_reaches_4_gib() {
 /// under.
 #[test]
 fn memory_day_verdict_reads_over_for_a_day_that_peaked_over_and_settled_under() {
-    let dir = bundle_report(PASSED, &["1237.4"], "1625.9", "4300.0", "4300.0");
+    let dir = bundle_report(
+        PASSED,
+        &["1237.4"],
+        "900.0",
+        "1000.0",
+        "1625.9",
+        "4300.0",
+        "4300.0",
+    );
     let out = run(&dir, "60");
     let said = String::from_utf8_lossy(&out.stdout);
     let verdict = said.lines().last().unwrap();
@@ -715,7 +753,15 @@ fn memory_day_verdict_reads_over_for_a_day_that_peaked_over_and_settled_under() 
 /// samples, which are half a second apart; it counts as the most the day held too.
 #[test]
 fn memory_day_verdict_counts_the_process_peak_as_the_most_the_day_held() {
-    let dir = bundle_report(PASSED, &["1237.4"], "1625.9", "3000.0", "4200.0");
+    let dir = bundle_report(
+        PASSED,
+        &["1237.4"],
+        "900.0",
+        "1000.0",
+        "1625.9",
+        "3000.0",
+        "4200.0",
+    );
     let out = run(&dir, "60");
     let said = String::from_utf8_lossy(&out.stdout);
     let verdict = said.lines().last().unwrap();
@@ -727,7 +773,15 @@ fn memory_day_verdict_counts_the_process_peak_as_the_most_the_day_held() {
 /// An `ok` names the most the day held beside where it settled.
 #[test]
 fn memory_day_verdict_names_the_most_the_day_held_when_it_reads_ok() {
-    let dir = bundle_report(PASSED, &["1237.4"], "1625.9", "2100.5", "2100.5");
+    let dir = bundle_report(
+        PASSED,
+        &["1237.4"],
+        "900.0",
+        "1000.0",
+        "1625.9",
+        "2100.5",
+        "2100.5",
+    );
     let out = run(&dir, "60");
     let said = String::from_utf8_lossy(&out.stdout);
     let verdict = said.lines().last().unwrap();
@@ -736,23 +790,161 @@ fn memory_day_verdict_names_the_most_the_day_held_when_it_reads_ok() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-/// **The job makes two first boots, and the larger peak is the one compared.** The
-/// first-boot case's boot comes first in the report and the day case's own boot after it;
-/// a reader that kept the last line would never compare the first with 4 GiB.
+/// **The job makes two import boots, and the verdict names the larger.** The import
+/// boot is the calibration pair printed beside production's reading; it prepares the
+/// store and no longer gates, so even a larger peak over 4 GiB reads ok when every boot
+/// production can pay is under.
 #[test]
-fn memory_day_verdict_takes_the_larger_of_the_two_first_boot_peaks() {
+fn memory_day_verdict_names_the_larger_of_the_two_import_boot_peaks_and_does_not_gate_on_it() {
     for peaks in [["4500.0", "1237.4"], ["1237.4", "4500.0"]] {
-        let dir = bundle_report(PASSED, &peaks, "1625.9", "1625.9", "1625.9");
+        let dir = bundle_report(
+            PASSED, &peaks, "900.0", "1000.0", "1625.9", "1625.9", "1625.9",
+        );
         let out = run(&dir, "60");
         let said = String::from_utf8_lossy(&out.stdout);
         let verdict = said.lines().last().unwrap();
         assert!(
-            verdict.starts_with("memory-day: OVER"),
+            verdict.starts_with("memory-day: ok"),
             "{peaks:?}: {verdict}"
         );
         assert!(verdict.contains("4500.0"), "{peaks:?}: {verdict}");
+        assert_eq!(out.status.code(), Some(0), "{said}");
         fs::remove_dir_all(dir).unwrap();
     }
+}
+
+/// **The import boot is printed beside production's reading, as fitted.** Production's
+/// first boot at 9.3.3 held 3.47 GiB (3,553 MiB); the verdict names it and the share
+/// this run's import boot is of it, and says the comparison is fitted while production's
+/// byte totals are unread.
+#[test]
+fn memory_day_verdict_prints_the_import_boot_beside_production_as_fitted() {
+    let dir = bundle_with(PASSED, "1776.5", "1625.9");
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: ok"), "{verdict}");
+    for word in ["1776.5", "3553", "50%", "fitted"] {
+        assert!(
+            verdict.contains(word),
+            "the verdict lacks {word}: {verdict}"
+        );
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// **The boot with no usable snapshot is held to the bound.** Production's own deploy
+/// of the next release is one: the import is done and there is no snapshot to load. A
+/// no-snapshot peak that reaches 4 GiB reads OVER however low the import boot, the
+/// second boot and the day stayed.
+#[test]
+fn memory_day_verdict_reads_over_when_the_no_snapshot_boot_reaches_4_gib() {
+    let dir = bundle_report(
+        PASSED,
+        &["1237.4"],
+        "900.0",
+        "4300.0",
+        "1625.9",
+        "1625.9",
+        "1625.9",
+    );
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: OVER"), "{verdict}");
+    assert_eq!(out.status.code(), Some(3), "{said}");
+    assert!(verdict.contains("4300.0"), "{verdict}");
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// A report with no no-snapshot line is a failed run, not an ok one.
+#[test]
+fn memory_day_verdict_fails_a_report_with_no_no_snapshot_boot() {
+    let dir = bundle_report(
+        PASSED,
+        &["1237.4"],
+        "900.0",
+        "",
+        "1625.9",
+        "1625.9",
+        "1625.9",
+    );
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: FAILED"), "{verdict}");
+    assert!(verdict.contains("no-snapshot"), "{verdict}");
+    assert_ne!(out.status.code(), Some(0), "{said}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// **The boot production pays at its next release is held to the bound too.** The
+/// import is done by then and a snapshot is loaded, so that boot is the second one
+/// the job makes. A second-boot peak that reaches 4 GiB reads OVER however low the
+/// first boot and the day stayed, and the verdict names it.
+#[test]
+fn memory_day_verdict_reads_over_when_the_second_boot_reaches_4_gib() {
+    let dir = bundle_report(
+        PASSED,
+        &["1237.4"],
+        "4400.0",
+        "1000.0",
+        "1625.9",
+        "1625.9",
+        "1625.9",
+    );
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: OVER"), "{verdict}");
+    assert_eq!(out.status.code(), Some(3), "{said}");
+    assert!(verdict.contains("4400.0"), "{verdict}");
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// An `ok` names the second boot's peak beside the first's.
+#[test]
+fn memory_day_verdict_names_the_second_boot_when_it_reads_ok() {
+    let dir = bundle_report(
+        PASSED,
+        &["1237.4"],
+        "950.5",
+        "1000.0",
+        "1625.9",
+        "1625.9",
+        "1625.9",
+    );
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: ok"), "{verdict}");
+    assert!(verdict.contains("950.5"), "{verdict}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// **A report with no second-boot line is a failed run**, not an ok one: the job
+/// would otherwise pass without measuring the boot production pays.
+#[test]
+fn memory_day_verdict_fails_a_report_with_no_second_boot() {
+    let dir = bundle_report(
+        PASSED,
+        &["1237.4"],
+        "",
+        "1000.0",
+        "1625.9",
+        "1625.9",
+        "1625.9",
+    );
+    let out = run(&dir, "60");
+    let said = String::from_utf8_lossy(&out.stdout);
+    let verdict = said.lines().last().unwrap();
+    assert!(verdict.starts_with("memory-day: FAILED"), "{verdict}");
+    assert!(verdict.contains("second-boot"), "{verdict}");
+    assert_ne!(out.status.code(), Some(0), "{said}");
+    the_verdict_file_is_the_last_line(&dir, &said);
+    fs::remove_dir_all(dir).unwrap();
 }
 
 /// **The deadline leaves room for both cases and stays under the job's own timeout.**
@@ -840,14 +1032,17 @@ fn memory_day_verdict_ignores_what_an_earlier_invocation_wrote() {
 #[test]
 fn memory_day_verdict_reads_a_report_replaced_by_a_shorter_file_whole() {
     let boot = "memory-report boot: server peak 1200.0 MiB";
+    let second = "memory-report second boot: server peak 900.0 MiB";
+    let nosnap = "memory-report no-snapshot boot: server peak 950.0 MiB";
     let day = "memory-report day: server resident 1500.0 MiB at the end, 1500.0 MiB at the most; \
                peak 1500.0 MiB";
     assert!(
-        boot.len() + day.len() < STALE_REPORT.len(),
+        boot.len() + second.len() + nosnap.len() + day.len() < STALE_REPORT.len(),
         "the file must be shorter"
     );
     let dir = bundle(&format!(
-        "{PASSED}; printf '%s\\n%s\\n' '{boot}' '{day}' > ../../target/bar/boot-measures.log"
+        "{PASSED}; printf '%s\\n%s\\n%s\\n%s\\n' '{boot}' '{second}' '{nosnap}' '{day}' > \
+         ../../target/bar/boot-measures.log"
     ));
     seed_the_report(&dir);
     let out = run(&dir, "60");

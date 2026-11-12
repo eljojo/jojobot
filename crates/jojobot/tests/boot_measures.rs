@@ -101,7 +101,7 @@ const PRODUCTION_TOOL_CALLS: i64 = 116_258;
 /// Writing the instance's whole count that way takes more than an hour, so
 /// [`scale_to_production`] reaches the counts above by copying rows the server
 /// wrote. A copy shares its parent's shape: the row counts are production's and the
-/// text is padded to a fitted length ([`PAD_FACTOR`]); the variety of content is
+/// text is padded to a fitted length ([`FITTED_PAD_FACTOR`]); the variety of content is
 /// not production's. Copied messages stay in the state they were posted in (new),
 /// where production's are nearly all processed.
 const SETS_PER_CLAIM: usize = 4;
@@ -571,16 +571,9 @@ async fn record_the_grown_store() {
         "the recorder's log holds no claims events before the first head boot"
     );
     drop(log);
-    let earlier = add_the_pre_import_log(
-        store.pool(),
-        PRODUCTION_PRE_IMPORT_EVENTS,
-        PRODUCTION_PRE_IMPORT_BATCHES,
-    )
-    .await;
     let counts = scale_to_production(store.pool()).await;
-    let padded = pad_the_text(store.pool(), PAD_FACTOR).await;
     store.stop().await;
-    dump_grown_store(&grown, &out, &format!("{counts} {earlier} {padded}"));
+    dump_grown_store(&grown, &out, &counts);
 }
 
 /// **Leave the log of a store the claims import has not run on**, which is what a
@@ -595,13 +588,19 @@ async fn remove_the_recorders_log(pool: &sqlx::MySqlPool) {
         .expect("the recorder's events and snapshots are removed");
 }
 
-/// **How much longer the copied text is made, in units.** One unit adds 100 bytes
+/// **How much longer the copied text is made, in units**, by the memory case on its
+/// own copy of the grown store, so the store the check lane boots over is not changed. One unit adds 100 bytes
 /// to every write of a claim, 10 to every plain field value and 75 to every mail.
 /// The counts of the grown store are production's, measured; the bytes are not:
 /// production's totals were never read, so this factor is fitted. It is the one
 /// number the memory job's first-boot peak is set against production's reading
 /// (3.47 GiB at 9.3.3's first boot), and the card says it is an estimate.
-const PAD_FACTOR: i64 = 20;
+const FITTED_PAD_FACTOR: i64 = 20;
+
+/// **The day production's per-table byte totals and claim-revision depth were read**, and
+/// the constants above are replaced by them. None while they are unread: the report
+/// then says the bytes are fitted and the comparison does not discharge the card.
+const PRODUCTION_BYTES_READ_ON: Option<&str> = None;
 
 /// **Production's log before the claims import**, read from its boot lines: 31,388
 /// events in 14,974 batches. The log CI's store held was 34 events.
@@ -616,7 +615,7 @@ fn filler(bytes: i64) -> String {
 }
 
 /// **Make the copied text longer**, for the claims, the plain field values and the
-/// mails the grower copied, by [`PAD_FACTOR`]-style units (see there). Only text
+/// mails the grower copied, by [`FITTED_PAD_FACTOR`]-style units (see there). Only text
 /// that is read as text is padded: a key whose value holds an id stays whole.
 /// Returns what it did, for the record the dump keeps.
 async fn pad_the_text(pool: &sqlx::MySqlPool, factor: i64) -> String {
