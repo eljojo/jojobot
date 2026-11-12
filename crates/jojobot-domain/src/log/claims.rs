@@ -450,6 +450,8 @@ thread_local! {
     static SCANS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static VISITS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BUILDS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CHAINS_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TRAIL_WRITES_COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// **What the events so far say.**
@@ -1274,6 +1276,8 @@ impl State {
         SCANS_COUNTED.with(|n| n.set(0));
         VISITS_COUNTED.with(|n| n.set(0));
         BUILDS_COUNTED.with(|n| n.set(0));
+        CHAINS_COUNTED.with(|n| n.set(0));
+        TRAIL_WRITES_COUNTED.with(|n| n.set(0));
     }
 
     /// The count of entities, field maps and scans a read built on this thread,
@@ -1287,6 +1291,30 @@ impl State {
     #[cfg(test)]
     pub(super) fn note_build() {
         BUILDS_COUNTED.with(|n| n.set(n.get() + 1));
+    }
+
+    /// The count of claim chains a read built on this thread, for a case.
+    #[cfg(test)]
+    pub(crate) fn chains_counted() -> usize {
+        CHAINS_COUNTED.with(std::cell::Cell::get)
+    }
+
+    /// The count of key writes a read built on this thread, for a case.
+    #[cfg(test)]
+    pub(crate) fn trail_writes_counted() -> usize {
+        TRAIL_WRITES_COUNTED.with(std::cell::Cell::get)
+    }
+
+    /// Note the build of one claim's chain.
+    #[cfg(test)]
+    pub(super) fn note_chain() {
+        CHAINS_COUNTED.with(|n| n.set(n.get() + 1));
+    }
+
+    /// Note the build of one key write.
+    #[cfg(test)]
+    pub(super) fn note_trail_write() {
+        TRAIL_WRITES_COUNTED.with(|n| n.set(n.get() + 1));
     }
 
     /// The count of things a read built a scan of on this thread, for a case.

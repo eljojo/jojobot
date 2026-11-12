@@ -696,9 +696,16 @@ impl State {
     /// that does not reach it. A write whose claim the State does not hold is
     /// left out. The home of an address is the thing's permanent key.
     pub fn key_trails(&self, subject: &ObjectId) -> KeyTrails {
+        self.trails_of(subject, None)
+    }
+
+    /// **[`key_trails`](State::key_trails), for one key when `only` names it**: the
+    /// writes of the other keys are not read or built.
+    pub(super) fn trails_of(&self, subject: &ObjectId, only: Option<&str>) -> KeyTrails {
         let subject = self.survivor(subject);
         let mut writes: Vec<(&KeyId, &Write)> = self
             .streams_of(subject)
+            .filter(|(key, _)| only.is_none_or(|wanted| key.0 == wanted))
             .flat_map(|(key, stream)| stream.iter().map(move |write| (key, write)))
             .collect();
         writes.sort_by_key(|(_, write)| write.ordinal);
@@ -731,6 +738,8 @@ impl State {
                 });
                 continue;
             }
+            #[cfg(test)]
+            State::note_trail_write();
             trails
                 .history
                 .entry(key.0.clone())
@@ -787,6 +796,8 @@ mod former_handles_tests;
 mod held_fields_tests;
 #[cfg(test)]
 mod histories_tests;
+#[cfg(test)]
+mod history_cost_tests;
 #[cfg(test)]
 mod marker_tests;
 #[cfg(test)]

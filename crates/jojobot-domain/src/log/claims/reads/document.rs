@@ -155,16 +155,7 @@ impl State {
         declared: &[DeclaredType],
     ) -> Option<DocumentParts> {
         let thing = self.scan(object, declared)?;
-        let mut histories = HashMap::new();
-        for (record, held) in &thing.claims {
-            let chain = self
-                .claim_history(record)
-                .iter()
-                .enumerate()
-                .map(|(at, write)| claim_write(self, at + 1, write))
-                .collect();
-            histories.insert(FactId(held.claim.label.clone()), chain);
-        }
+        let histories = self.claim_chains_of(object);
         let mut unmapped_histories = HashMap::new();
         for (record, held) in &thing.unmapped {
             // Read at the address the folded thing's own handle gives the claim.
@@ -172,64 +163,160 @@ impl State {
                 self.handle_worn_by(&held.claim.home),
                 FactId(held.claim.label.clone()),
             );
-            let chain = self
-                .claim_history(record)
-                .iter()
-                .enumerate()
-                .map(|(at, write)| claim_write(self, at + 1, write))
-                .collect();
-            unmapped_histories.insert(address, chain);
+            unmapped_histories.insert(address, self.chain_of(record));
         }
         Some(DocumentParts {
             unmapped_histories,
             fields: thing.fields.clone(),
             version: self.write_marker(object),
-            ages: FieldAges {
-                newest: self.newest_change(object),
-                keys: self.held_since(object, declared).into_iter().collect(),
-            },
+            ages: self.field_ages_of(object, declared),
             histories,
             backing: self.backing(object, declared),
-            trails: {
-                let mut trails = self.key_trails(object);
-                for write in trails.history.values_mut().flatten() {
-                    write.fact.home = served(self, &ObjectId(write.fact.home.0.clone()));
-                }
-                trails
-            },
-            entity_versions: {
-                let mut versions: Vec<EntityVersion> = self
-                    .observed_chain(object)
-                    .into_iter()
-                    .map(|(thing, write)| EntityVersion {
-                        ordinal: 0,
-                        thing: self.handle_worn_by(thing),
-                        written_at: write.source_time,
-                        session: write.run.as_ref().map(|run| run.0.clone()),
-                        snapshot: write
-                            .snapshot
-                            .as_ref()
-                            .map(|snapshot| observed_snapshot(self, snapshot)),
-                    })
-                    .chain(
-                        self.entity_versions(object)
-                            .into_iter()
-                            .map(|version| entity_version(self, 0, version)),
-                    )
-                    .collect();
-                // In the order they happened, the store's own order: a version
-                // nobody stamped sorts first, and equal moments keep the order
-                // they were gathered in. The ordinal is this list's own count.
-                versions.sort_by_key(|version| version.written_at);
-                versions
-                    .into_iter()
-                    .enumerate()
-                    .map(|(at, version)| EntityVersion {
-                        ordinal: at + 1,
-                        ..version
-                    })
-                    .collect()
-            },
+            trails: self.key_trails_served(object),
+            entity_versions: self.entity_versions_of(object),
         })
+    }
+
+    /// **One claim's writes, oldest first**, the last being the claim now.
+    fn chain_of(&self, record: &RecordId) -> Vec<ClaimWrite> {
+        #[cfg(test)]
+        State::note_chain();
+        self.claim_history(record)
+            .iter()
+            .enumerate()
+            .map(|(at, write)| claim_write(self, at + 1, write))
+            .collect()
+    }
+
+    /// **The record of the claim at `label` on `object`**, found among the claims
+    /// homed on the thing and no other.
+    fn record_at(&self, object: &ObjectId, label: &FactId) -> Option<&RecordId> {
+        let subject = self.survivor(object);
+        self.records_homed_on(subject).into_iter().find(|record| {
+            self.records
+                .get(*record)
+                .is_some_and(|held| held.claim.home == *subject && held.claim.label == label.0)
+        })
+    }
+
+    /// **The writes of the one claim at `label` on `object`**, built for that claim
+    /// and for no other. `None` when the thing holds no such claim.
+    pub fn claim_chain_of(&self, object: &ObjectId, label: &FactId) -> Option<Vec<ClaimWrite>> {
+        Some(self.chain_of(self.record_at(object, label)?))
+    }
+
+    /// **The writes of every claim homed on the thing**, each claim by its label:
+    /// one chain for each claim and nothing else built.
+    pub fn claim_chains_of(&self, object: &ObjectId) -> HashMap<FactId, Vec<ClaimWrite>> {
+        let subject = self.survivor(object);
+        self.records_homed_on(subject)
+            .into_iter()
+            .filter_map(|record| Some((record, self.records.get(record)?)))
+            .filter(|(_, held)| held.claim.home == *subject)
+            .map(|(record, held)| (FactId(held.claim.label.clone()), self.chain_of(record)))
+            .collect()
+    }
+
+    /// **A thing's key trails as the port serves them**: the homes of the writes
+    /// are the handles their things answer to now.
+    pub fn key_trails_served(&self, object: &ObjectId) -> KeyTrails {
+        let mut trails = self.key_trails(object);
+        for write in trails.history.values_mut().flatten() {
+            write.fact.home = served(self, &ObjectId(write.fact.home.0.clone()));
+        }
+        trails
+    }
+
+    /// **The writes of one key on a thing**, oldest first, built for that key and
+    /// for no other.
+    pub fn key_history(&self, object: &ObjectId, key: &str) -> Vec<crate::memory::FieldWrite> {
+        let mut writes = self
+            .trails_of(object, Some(key))
+            .history
+            .remove(key)
+            .unwrap_or_default();
+        for write in &mut writes {
+            write.fact.home = served(self, &ObjectId(write.fact.home.0.clone()));
+        }
+        writes
+    }
+
+    /// **The keys the claim at `label` keeps off its thing**: its newest write of
+    /// the key, unless a later one took the key off, was made under a class that
+    /// does not reach the thing. Read from that claim's own writes.
+    pub fn keys_kept_off(
+        &self,
+        object: &ObjectId,
+        label: &FactId,
+    ) -> std::collections::BTreeSet<String> {
+        let Some(record) = self.record_at(object, label) else {
+            return Default::default();
+        };
+        let mut kept = std::collections::BTreeSet::new();
+        for (subject, key) in self.streams_written_by(record) {
+            let Some(stream) = self.streams.get(&(subject, key.clone())) else {
+                continue;
+            };
+            let mut mine: Vec<&super::super::Write> = stream
+                .iter()
+                .filter(|write| &write.record == record)
+                .collect();
+            mine.sort_by_key(|write| write.ordinal);
+            let mut held = None;
+            for write in mine {
+                held = match write.write {
+                    super::super::FieldValue::Set(_) => Some(write.class),
+                    _ => None,
+                };
+            }
+            if held.is_some_and(|class| !crate::memory::reaches_the_thing(class)) {
+                kept.insert(key.0.clone());
+            }
+        }
+        kept
+    }
+
+    /// **A thing's field ages**: the newest change of the thing and when each held
+    /// key was last set. No scan of the thing is built.
+    pub fn field_ages_of(&self, object: &ObjectId, declared: &[DeclaredType]) -> FieldAges {
+        FieldAges {
+            newest: self.newest_change(object),
+            keys: self.held_since(object, declared).into_iter().collect(),
+        }
+    }
+
+    /// **The versions of a thing's own row**, in the order they happened.
+    pub fn entity_versions_of(&self, object: &ObjectId) -> Vec<EntityVersion> {
+        let mut versions: Vec<EntityVersion> = self
+            .observed_chain(object)
+            .into_iter()
+            .map(|(thing, write)| EntityVersion {
+                ordinal: 0,
+                thing: self.handle_worn_by(thing),
+                written_at: write.source_time,
+                session: write.run.as_ref().map(|run| run.0.clone()),
+                snapshot: write
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| observed_snapshot(self, snapshot)),
+            })
+            .chain(
+                self.entity_versions(object)
+                    .into_iter()
+                    .map(|version| entity_version(self, 0, version)),
+            )
+            .collect();
+        // In the order they happened, the store's own order: a version nobody
+        // stamped sorts first, and equal moments keep the order they were gathered
+        // in. The ordinal is this list's own count.
+        versions.sort_by_key(|version| version.written_at);
+        versions
+            .into_iter()
+            .enumerate()
+            .map(|(at, version)| EntityVersion {
+                ordinal: at + 1,
+                ..version
+            })
+            .collect()
     }
 }
