@@ -172,9 +172,15 @@ async fn claims_the_merge_does_not_list(
 /// use an expression, so each claim and field write scanned every thing and the
 /// check's time grew with rows times things. The two tests together hold the same
 /// rows, because a row without a badge is found by its id.
+///
+/// **A supplied record is named by its handle or by its supply identity**, the
+/// handle behind the prefix `supplied/`: the claims import files a link to one by
+/// the identity. The list of supplied handles is a few dozen rows, so the
+/// concatenation costs nothing.
 pub(super) const THING: &str = "(EXISTS (SELECT 1 FROM entity t WHERE t.badge = {v})
      OR EXISTS (SELECT 1 FROM entity t WHERE t.id = {v})
-     OR EXISTS (SELECT 1 FROM supplied_handle s WHERE s.handle = {v}))";
+     OR EXISTS (SELECT 1 FROM supplied_handle s
+                WHERE s.handle = {v} OR CONCAT('supplied/', s.handle) = {v}))";
 
 /// **A link row whose write no later write of the same key on the same record has
 /// replaced.** An edit appends a write beside the old one and leaves the old write

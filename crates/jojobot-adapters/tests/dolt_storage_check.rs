@@ -333,6 +333,13 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         "INSERT INTO supplied_handle (handle) VALUES ('role:dev')",
         "INSERT INTO field_link (entity, `key`, ordinal, target)
            VALUES ('person:krusty', 'k', 2, 'role:dev')",
+        // The claims import files a link to a supplied record by its supply identity,
+        // the handle behind a prefix, and that pointer is whole too. A prefix on a
+        // handle nothing supplies is still dangling.
+        "INSERT INTO field_link (entity, `key`, ordinal, target)
+           VALUES ('person:krusty', 'k', 3, 'supplied/role:dev')",
+        "INSERT INTO field_link (entity, `key`, ordinal, target)
+           VALUES ('person:krusty', 'k', 4, 'supplied/bot:otto')",
     ] {
         run(&pool, sql).await;
     }
@@ -350,6 +357,7 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         "fact.entity: ghostbadge",
         "fact_write.bot: ghostbot",
         "field_link.target: person:ralph",
+        "field_link.target: supplied/bot:otto",
         "field_write.entity: ghosthome",
         "mailbox.owner: bot:nelson",
         "message.mailbox: no-such-box",
@@ -361,7 +369,7 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         ids, want,
         "one id for each column, none for the supplied handle and none for a home keyed by a handle"
     );
-    assert_eq!(dangling.1, 11);
+    assert_eq!(dangling.1, 12);
 
     // The writes homed under a handle are a class of their own, named with the
     // claim's address and the field write's key.
