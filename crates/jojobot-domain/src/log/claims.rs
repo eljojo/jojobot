@@ -1210,7 +1210,7 @@ impl State {
             // Counted where a stream is first looked at, before any filter, so
             // a scan of the whole map cannot hide from the case that counts.
             .inspect(|_| {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "testing"))]
                 reads::STREAMS_EXAMINED.with(|n| n.set(n.get() + 1));
             })
             .take_while(move |((held, _), _)| held == subject)

@@ -197,3 +197,97 @@ fn a_read_of_the_ages_looks_at_no_stream() {
     assert_eq!(newest, Some(at(3)));
     assert_eq!(super::STREAMS_EXAMINED.with(|n| n.get()), 0);
 }
+
+/// **A State built again from the same events holds the same ages and newest
+/// change.** The claims State is in no snapshot: it is replayed from its events, by
+/// the one apply the live State used, so the entries are held again as they were
+/// held the first time. A key write, a clear, a ledger record, a claim revision, an
+/// own-row write and a merge are in the sequence.
+#[test]
+fn a_replayed_state_holds_the_ages_and_newest_change_of_the_live_one() {
+    let mut events: Vec<crate::log::Event<ClaimEvent>> = Vec::new();
+    let mut live = State::default();
+    crate::memory::kinds::load_shipped();
+    let mut say = |day: u32, event: ClaimEvent| {
+        let event = stamped(Some(at(day)), None, event);
+        live.apply(&event);
+        events.push(event);
+    };
+    for (id, handle) in [("k1", "person:alpha"), ("k2", "person:beta")] {
+        say(
+            1,
+            ClaimEvent::ObjectCreated {
+                object: object(id),
+                body: body("person", handle),
+            },
+        );
+        say(
+            1,
+            ClaimEvent::AddressBound {
+                object: object(id),
+                address: handle.to_string(),
+            },
+        );
+    }
+    say(2, created("k1/r1", claim("f1", "k1", "a claim", 1)));
+    say(3, write("k1/r1", "k1", "mood", 1, "glad"));
+    say(4, write("k1/r1", "k1", "due", 2, "2026-05-01"));
+    say(5, clear("k1/r1", "k1", "mood", 3));
+    say(
+        6,
+        created("k1/ledger", claim("f2", "k1", "release notes", 1)),
+    );
+    say(
+        7,
+        write(
+            "k1/ledger",
+            "k1",
+            capacity::ENGINE_RECORD,
+            1,
+            capacity::RELEASE_NOTES_RECORD,
+        ),
+    );
+    say(8, created("k2/r1", claim("f1", "k2", "b", 1)));
+    say(9, write("k2/r1", "k2", "mood", 1, "sour"));
+    say(
+        10,
+        ClaimEvent::RecordRevised {
+            record: record("k1/r1"),
+            claim: claim("f1", "k1", "said again", 1),
+        },
+    );
+    say(
+        11,
+        ClaimEvent::ObjectRevised {
+            object: object("k1"),
+            body: body("person", "person:alpha"),
+        },
+    );
+    say(
+        12,
+        ClaimEvent::ObjectsMerged {
+            folded: object("k2"),
+            survivor: object("k1"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+    );
+
+    let restored = State::replay(events.iter());
+
+    for id in ["k1", "k2"] {
+        let thing = object(id);
+        assert_eq!(
+            restored.held_since(&thing, &restored.declared_types_shared()),
+            live.held_since(&thing, &live.declared_types_shared()),
+            "{id}: the ages"
+        );
+        assert_eq!(
+            restored.newest_change(&thing),
+            live.newest_change(&thing),
+            "{id}: the newest change"
+        );
+    }
+    assert_eq!(live.newest_change(&object("k1")), Some(at(11)));
+    assert_eq!(restored.held_fields_are_what_a_fold_makes(), Ok(()));
+}

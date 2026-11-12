@@ -20,9 +20,22 @@ use crate::memory::{
 
 // **How many streams the reads have looked at on this thread**, so a case can
 // say a read costs the streams of its own thing and not the size of the State.
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 thread_local! {
     pub(super) static STREAMS_EXAMINED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl State {
+    /// The count of streams the reads looked at on this thread, for a case.
+    pub fn streams_examined() -> usize {
+        STREAMS_EXAMINED.with(std::cell::Cell::get)
+    }
+
+    /// Reset that count.
+    pub fn reset_streams_examined() {
+        STREAMS_EXAMINED.with(|n| n.set(0));
+    }
 }
 
 impl State {

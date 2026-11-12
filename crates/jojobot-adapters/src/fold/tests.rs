@@ -1494,3 +1494,47 @@ async fn a_fill_logs_each_phase_with_the_count_it_held() {
     let count = |phase: &str| seen.iter().find(|(name, _)| name == phase).map(|(_, n)| *n);
     assert_eq!(count("lists"), Some(held), "{seen:?}");
 }
+
+/// **A served read of a thing's field ages takes the held entries and looks at no
+/// write.** The fold hands the State the one list the entries were folded under;
+/// a read that handed it an equal list of its own would work the ages out from
+/// every write of the thing, and the answer would not show it.
+#[tokio::test]
+async fn a_served_field_ages_reads_no_stream() {
+    use jojobot_domain::log::claims::State;
+    let folded = Folded::new(Arc::new(InMemoryMemory::booted()));
+    folded.rebuild().await.expect("an empty store fills");
+    // A declared type makes the list the held entries were folded under a list
+    // with something in it: two empty lists share an address and say nothing.
+    folded
+        .declare_type(
+            jojobot_domain::memory::types::DeclaredType::new(
+                "person",
+                vec![jojobot_domain::memory::types::Field::new(
+                    "k",
+                    jojobot_domain::memory::types::ValueType::Text,
+                )],
+            ),
+            None,
+        )
+        .await
+        .expect("the type is declared");
+    seeded(&folded, &alpha(), "Alpha").await;
+    for n in 0..5 {
+        let mut fact = NewFact::about(alpha(), format!("claim {n}"), date(2026, 9, 1));
+        fact.fields = [("k".to_string(), n.to_string())].into();
+        fact.sets = ["k".to_string()].into();
+        folded
+            .capture(fact)
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+    }
+
+    State::reset_streams_examined();
+    let ages = folded.field_ages(&alpha()).await.expect("the ages read");
+
+    assert_eq!(State::streams_examined(), 0, "the ages are looked up");
+    assert!(ages.newest.is_some(), "and the newest change is held");
+}
