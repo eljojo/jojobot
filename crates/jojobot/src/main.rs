@@ -21,6 +21,20 @@ use jojobot::{AppState, build_app};
 #[global_allocator]
 static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+/// **jemalloc's own statistics**, for the two heap series of `/metrics`. The reader sits
+/// beside the allocator: a library that read these in a process whose allocator is another
+/// would report a near-zero heap as fact. The epoch is advanced first, because jemalloc
+/// refreshes its statistics only then.
+#[cfg(not(target_env = "msvc"))]
+fn allocator_bytes() -> Option<jojobot::metrics::AllocatorBytes> {
+    use tikv_jemalloc_ctl::{epoch, stats};
+    epoch::advance().ok()?;
+    Some(jojobot::metrics::AllocatorBytes {
+        allocated: u64::try_from(stats::allocated::read().ok()?).ok()?,
+        resident: u64::try_from(stats::resident::read().ok()?).ok()?,
+    })
+}
+
 /// **How long what the cut left open is given to end**, after the drain window.
 /// The process ends either way; this only lets a connection that closes at once
 /// do so cleanly.
@@ -157,9 +171,12 @@ async fn run() -> anyhow::Result<()> {
     // sequence a restart runs before it can serve anything; see
     // `jojobot::wiring::boot_store`'s own doc for what is fatal in it and why.
     let dir = jojobot::wiring::resolve_store_dir()?;
-    let metrics = config
-        .metrics_bind
-        .map(|_| Arc::new(jojobot::metrics::Metrics::new()));
+    let metrics = config.metrics_bind.map(|_| {
+        let metrics = jojobot::metrics::Metrics::new();
+        #[cfg(not(target_env = "msvc"))]
+        let metrics = metrics.with_allocator(allocator_bytes);
+        Arc::new(metrics)
+    });
     let observation = metrics
         .as_ref()
         .map(|metrics| jojobot_adapters::observe::Observation::new(metrics.clone()))

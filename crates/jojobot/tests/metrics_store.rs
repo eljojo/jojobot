@@ -46,13 +46,11 @@ async fn process_memory_is_on_each_metrics_scrape() {
             sample(&text, "process_resident_memory_bytes", &[]).is_some_and(|bytes| bytes > 0.0),
             "resident bytes on every scrape: {text}"
         );
+        // The heap series are the binary's, read from the allocator it installs; a
+        // library scrape with no reader has neither (metrics.rs of the binary's tests).
         assert!(
-            sample(&text, "process_heap_in_use_bytes", &[]).is_some_and(|bytes| bytes > 0.0),
-            "heap bytes on every scrape: {text}"
-        );
-        assert!(
-            sample(&text, "process_allocator_retained_bytes", &[]).is_some_and(|bytes| bytes > 0.0),
-            "retained allocator bytes on every scrape: {text}"
+            sample(&text, "process_heap_in_use_bytes", &[]).is_none(),
+            "a library registered a heap series with no allocator to read: {text}"
         );
     }
 }

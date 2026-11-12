@@ -79,50 +79,20 @@ fn resident_bytes() -> Option<u64> {
     (size > 0).then(|| pages.saturating_mul(size as u64))
 }
 
-/// The aggregate after the last arena contains all arenas and mmap blocks.
-/// The per-arena lines would undercount a multithreaded server.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn allocator_bytes() -> Option<(u64, u64)> {
-    let mut buffer = std::ptr::null_mut();
-    let mut length = 0;
-    // SAFETY: buffer and length are writable out-pointers kept until fclose.
-    let stream = unsafe { libc::open_memstream(&mut buffer, &mut length) };
-    if stream.is_null() {
-        return None;
-    }
-    // SAFETY: stream is open and non-null; zero is malloc_info's valid option.
-    let wrote = unsafe { libc::malloc_info(0, stream) } == 0;
-    // SAFETY: stream was opened once and has not been closed; closing flushes it.
-    let closed = unsafe { libc::fclose(stream) } == 0;
-    let xml = if wrote && closed && !buffer.is_null() {
-        // SAFETY: successful fclose published length bytes at buffer, which
-        // remains allocated until the free below.
-        Some(unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), length) }.to_vec())
-    } else {
-        None
-    };
-    // SAFETY: libc allocated buffer for open_memstream; the copy above owns
-    // its bytes now. free also accepts a null pointer on the error path.
-    unsafe { libc::free(buffer.cast()) };
-    let xml = String::from_utf8(xml?).ok()?;
-    let totals = xml.rsplit_once("</heap>")?.1;
-    let size = |prefix: &str| {
-        totals
-            .lines()
-            .find(|line| line.trim_start().starts_with(prefix))?
-            .split_once("size=\"")?
-            .1
-            .split_once('"')?
-            .0
-            .parse::<u64>()
-            .ok()
-    };
-    let free = size("<total type=\"fast\"")?.saturating_add(size("<total type=\"rest\"")?);
-    let used = size("<system type=\"current\"")?
-        .saturating_sub(free)
-        .saturating_add(size("<total type=\"mmap\"")?);
-    Some((used, free))
+/// **What the allocator holds, as its own statistics say it**, read by the binary that
+/// installs the allocator and handed to the registry. `None` when the allocator cannot
+/// answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AllocatorBytes {
+    /// Bytes the program has allocated and not freed (jemalloc's `stats.allocated`).
+    pub allocated: u64,
+    /// Bytes in the pages the allocator holds resident (jemalloc's `stats.resident`),
+    /// which count the free space inside them.
+    pub resident: u64,
 }
+
+/// A reader of the allocator's statistics.
+pub type AllocatorReader = fn() -> Option<AllocatorBytes>;
 
 /// The kind a thing is counted under: its own when the build ships it.
 fn kind_label(token: &str) -> String {
@@ -245,10 +215,6 @@ pub struct Metrics {
     uptime: Gauge<f64, AtomicU64>,
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     process_resident: Gauge,
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    process_heap_in_use: Gauge,
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    process_allocator_retained: Gauge,
     /// The bytes of text the claims State holds for the data it serves, and the
     /// records that hold it: the State's own count, read with the store's gauges.
     payload_bytes: Gauge,
@@ -257,6 +223,9 @@ pub struct Metrics {
     resident_to_payload: Gauge<f64, AtomicU64>,
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     resident_per_record: Gauge<f64, AtomicU64>,
+    /// The two heap series and the reader that fills them, present only when the
+    /// binary that installs an allocator handed one ([`Metrics::with_allocator`]).
+    allocator: Option<(Gauge, Gauge, AllocatorReader)>,
     sessions_live: Family<[(&'static str, &'static str); 0], Gauge>,
     mail: Family<BoxState, Gauge>,
     things: Family<Kind, Gauge>,
@@ -337,28 +306,15 @@ impl Metrics {
             "Seconds since this process started",
             uptime.clone(),
         );
-        // Other allocators have no glibc totals; omit these series there.
         #[cfg(all(target_os = "linux", target_env = "gnu"))]
-        let (process_resident, process_heap_in_use, process_allocator_retained) = {
+        let process_resident = {
             let resident = Gauge::default();
             registry.register(
                 "process_resident_memory_bytes",
                 "Resident bytes of this process",
                 resident.clone(),
             );
-            let in_use = Gauge::default();
-            registry.register(
-                "process_heap_in_use_bytes",
-                "Bytes in use across glibc allocator arenas and mmap blocks",
-                in_use.clone(),
-            );
-            let retained = Gauge::default();
-            registry.register(
-                "process_allocator_retained_bytes",
-                "Free bytes retained in glibc allocator arenas",
-                retained.clone(),
-            );
-            (resident, in_use, retained)
+            resident
         };
         let payload_bytes = Gauge::default();
         registry.register(
@@ -451,16 +407,13 @@ impl Metrics {
             uptime,
             #[cfg(all(target_os = "linux", target_env = "gnu"))]
             process_resident,
-            #[cfg(all(target_os = "linux", target_env = "gnu"))]
-            process_heap_in_use,
-            #[cfg(all(target_os = "linux", target_env = "gnu"))]
-            process_allocator_retained,
             payload_bytes,
             payload_records,
             #[cfg(all(target_os = "linux", target_env = "gnu"))]
             resident_to_payload,
             #[cfg(all(target_os = "linux", target_env = "gnu"))]
             resident_per_record,
+            allocator: None,
             sessions_live,
             mail,
             things,
@@ -473,6 +426,30 @@ impl Metrics {
             scraping: tokio::sync::Mutex::new(None),
             refresh_every: REFRESH_EVERY,
         }
+    }
+
+    /// **Report the allocator's own heap statistics.** The binary that installs an
+    /// allocator hands its reader here, and two series appear: the bytes in use
+    /// (`stats.allocated`) and the bytes the allocator holds beyond them
+    /// (`stats.resident` less it). A process that hands none, such as a test binary or a
+    /// build on another allocator, registers neither: a library that read the statistics
+    /// of an allocator the process does not run would report a near-zero heap as fact.
+    #[must_use]
+    pub fn with_allocator(mut self, reader: AllocatorReader) -> Self {
+        let in_use = Gauge::default();
+        self.registry.register(
+            "process_heap_in_use_bytes",
+            "Bytes the program has allocated and not freed, from the allocator's own statistics",
+            in_use.clone(),
+        );
+        let retained = Gauge::default();
+        self.registry.register(
+            "process_allocator_retained_bytes",
+            "Resident bytes the allocator holds beyond what is allocated, from its own statistics",
+            retained.clone(),
+        );
+        self.allocator = Some((in_use, retained, reader));
+        self
     }
 
     /// **The same, reading the store at most once per `every`**, for a case
@@ -531,11 +508,16 @@ impl Metrics {
                     .and_then(|bytes| i64::try_from(bytes).ok())
                     .unwrap_or_default(),
             );
-            let (in_use, retained) = allocator_bytes().unwrap_or_default();
-            self.process_heap_in_use
-                .set(i64::try_from(in_use).unwrap_or_default());
-            self.process_allocator_retained
-                .set(i64::try_from(retained).unwrap_or_default());
+        }
+        if let Some((in_use, retained, reader)) = &self.allocator {
+            let held = reader().unwrap_or(AllocatorBytes {
+                allocated: 0,
+                resident: 0,
+            });
+            in_use.set(i64::try_from(held.allocated).unwrap_or(i64::MAX));
+            retained.set(
+                i64::try_from(held.resident.saturating_sub(held.allocated)).unwrap_or(i64::MAX),
+            );
         }
         // Read from the process, not the store: every scrape serves them.
         for (reason, count) in jojobot_adapters::log_snapshot::skip_counts() {

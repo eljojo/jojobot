@@ -474,3 +474,45 @@ async fn with_a_metrics_address_the_binary_reaches_its_serving_line() {
         served.printed
     );
 }
+
+/// **The heap series describe jemalloc's heap, in the binary that runs on it.** The
+/// server allocates through jemalloc, so the bytes in use and the bytes the allocator
+/// keeps beyond them are jemalloc's own statistics (`stats.allocated`, and
+/// `stats.resident` less it). glibc's totals described an idle arena there: a heap of a
+/// few kilobytes that read as healthy. A booted server's live heap is megabytes, and it
+/// cannot exceed what the process holds resident, nor can heap plus retained.
+/// TODO when `jojobot_payload_bytes` is on the trunk: assert heap in use is at least it,
+/// because the live heap holds at least what the State must hold (the architect's ruling
+/// on the allocator gauges).
+#[tokio::test]
+async fn the_binary_reports_the_heap_jemalloc_holds_and_what_it_keeps_beyond_it() {
+    let metrics_port = free_port();
+    let _server = running("jojobot-metrics-heap", Some(metrics_port)).await;
+    let text = reqwest::get(format!("http://127.0.0.1:{metrics_port}/metrics"))
+        .await
+        .expect("the metrics listener answers")
+        .text()
+        .await
+        .expect("a body");
+    let value = |name: &str| -> f64 {
+        text.lines()
+            .find(|line| line.starts_with(&format!("{name} ")))
+            .and_then(|line| line.split_whitespace().last()?.parse().ok())
+            .unwrap_or_else(|| panic!("no {name} on the scrape:\n{text}"))
+    };
+    let heap = value("process_heap_in_use_bytes");
+    let retained = value("process_allocator_retained_bytes");
+    let resident = value("process_resident_memory_bytes");
+    assert!(
+        heap > 2.0 * 1024.0 * 1024.0,
+        "a booted server's live heap is more than 2 MiB, the reading is {heap}"
+    );
+    assert!(
+        heap <= resident,
+        "the live heap {heap} exceeds the resident bytes {resident}"
+    );
+    assert!(
+        heap + retained <= resident,
+        "heap {heap} and what the allocator keeps beyond it {retained} exceed resident {resident}"
+    );
+}
