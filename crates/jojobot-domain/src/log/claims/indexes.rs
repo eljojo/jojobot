@@ -593,6 +593,17 @@ impl State {
             .collect()
     }
 
+    /// **The records whose newest write of a key names this object itself**, with
+    /// nothing folded into it and no survivor followed.
+    pub(super) fn records_naming_exactly(&self, object: &ObjectId) -> BTreeSet<&RecordId> {
+        self.indexes
+            .referred
+            .get(object)
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
     /// Before a merge changes anything: the claims it moves give up the number
     /// and label they hold under the home they are on.
     pub(super) fn index_before_merge(&mut self, records: &[MovedRecord]) {

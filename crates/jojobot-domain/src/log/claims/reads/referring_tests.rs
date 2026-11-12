@@ -281,3 +281,38 @@ fn a_holders_records_are_listed_by_the_number_in_their_labels() {
         .collect();
     assert_eq!(labels, ["f2", "f10", "f11"]);
 }
+
+/// **A spelling a merge folded away is pointed at by no holder.** What a holder
+/// wrote before the merge names the survivor now: the folded spelling answers
+/// for none of it, and the survivor's spelling answers for all of it.
+#[test]
+fn a_folded_spelling_is_pointed_at_by_no_holder_and_its_survivor_by_all() {
+    let state = state_of(
+        made("k1", "person:alpha")
+            .into_iter()
+            .chain(made("k2", "person:beta"))
+            .chain(made("k3", "person:gamma"))
+            .chain([
+                claim_on("k3", "k3/f1"),
+                writes(
+                    "k3/f1",
+                    "k3",
+                    "friend",
+                    1,
+                    FieldValue::Set("@#k2".into()),
+                    &["k2"],
+                ),
+                ClaimEvent::ObjectsMerged {
+                    folded: object("k2"),
+                    survivor: object("k1"),
+                    records: Vec::new(),
+                    writes: Vec::new(),
+                },
+            ]),
+    );
+    assert_eq!(
+        holders(&state, "person:alpha"),
+        vec![("person:gamma".to_string(), "f1".to_string())]
+    );
+    assert!(holders(&state, "person:beta").is_empty());
+}

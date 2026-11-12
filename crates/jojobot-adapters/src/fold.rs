@@ -1358,14 +1358,7 @@ impl Memory for Folded {
             return self.inner.referring_to(target).await;
         };
         jojobot_domain::memory::validate_subject_in(&kinds, target)?;
-        // **A spelling no thing wears now (a folded or renamed handle) is a
-        // merge-touched read**: the State follows it to the thing that wears the
-        // handle now, and the store answers for the spelling itself. TEMPORARY(9.3.4)
-        // `q-934-merge-version-row-in-state`, with the other merge-touched reads.
-        let Ok(Some(mine)) = self.claims(|state| {
-            let worn = state.resolve(&target.0).is_none() || state.entity(target).is_some();
-            worn.then(|| state.referring(target))
-        }) else {
+        let Ok(mine) = self.claims(|state| state.referring(target)) else {
             return self.inner.referring_to(target).await;
         };
         // **Shadowed: the store is asked as well and the two are compared**; the

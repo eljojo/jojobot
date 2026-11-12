@@ -165,15 +165,29 @@ impl State {
 
     /// **Which records point at a thing through a field**, whatever key they
     /// used, of every status, holders in the order of their keys.
+    ///
+    /// **A spelling a merge folded away is pointed at by no holder.** Every record
+    /// that named the folded thing before the merge names its survivor now, so
+    /// only the merge's own account, an engine record, still names the folded side.
     pub fn referring(&self, target: &EntityId) -> Vec<memory::Fact> {
-        let Some(object) = self.resolve(&target.0) else {
-            return Vec::new();
+        let folded = self
+            .addresses
+            .get(&target.0)
+            .filter(|own| self.redirects.contains_key(*own));
+        let named = match folded {
+            Some(own) => self.records_naming_exactly(own),
+            None => match self.resolve(&target.0) {
+                Some(object) => self.records_naming(object),
+                None => return Vec::new(),
+            },
         };
-        let mut facts: Vec<(&str, memory::Fact)> = self
-            .records_naming(object)
+        let mut facts: Vec<(&str, memory::Fact)> = named
             .into_iter()
             .filter(|record| self.has_served_address(record))
             .filter_map(|record| Some((self.filed_under(record)?, self.fact(record)?)))
+            .filter(|(_, fact)| {
+                folded.is_none() || fact.fields.contains_key(memory::capacity::ENGINE_RECORD)
+            })
             .collect();
         // The holders in the order of the key their records are filed under, and a
         // holder's claims in the order it serves them.
