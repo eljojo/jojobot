@@ -470,3 +470,45 @@ fn a_lineage_follows_the_label_a_merge_gave_the_claim() {
     assert_eq!(write.derived_from, Some(moved.clone()), "the history");
     assert_eq!(write.stands_for, Some(vec![moved]), "the stand-in");
 }
+
+/// **A child a merge moved is a merge-touched thing**: the store appends a version
+/// of the child for the move, which the State does not hold yet, so a read of the
+/// child's versions and ages is the store's. A child of a thing no merge folded,
+/// and the survivor's other holders, are not touched.
+/// TEMPORARY(9.3.4) `q-934-merge-version-row-in-state`.
+#[test]
+fn a_child_of_a_folded_thing_is_a_merge_touched_thing() {
+    let mut state = State::default();
+    let child = |name: &str, parent: &str| {
+        [
+            ClaimEvent::ObjectCreated {
+                object: object(name),
+                body: ObjectBody {
+                    parent: Some(object(parent)),
+                    ..body("work", name)
+                },
+            },
+            ClaimEvent::AddressBound {
+                object: object(name),
+                address: name.to_string(),
+            },
+        ]
+    };
+    let mut events = things();
+    events.extend(child("work:delta", "work:beta"));
+    events.extend(child("work:epsilon", "work:alpha"));
+    events.push(ClaimEvent::ObjectsMerged {
+        folded: object("work:beta"),
+        survivor: object("work:alpha"),
+        records: Vec::new(),
+        writes: Vec::new(),
+    });
+    for event in events {
+        state.apply(&stamped(None, None, event));
+    }
+    assert!(state.was_merged(&object("work:delta")), "the moved child");
+    assert!(
+        !state.was_merged(&object("work:epsilon")),
+        "a child of the survivor"
+    );
+}

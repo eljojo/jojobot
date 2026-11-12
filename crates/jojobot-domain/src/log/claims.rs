@@ -1016,11 +1016,31 @@ impl State {
             .is_some_and(|body| body.kind.0 == crate::memory::EntityKind::ROLE.as_token())
     }
 
-    /// **Whether a merge touched this object**: it was folded into another, or
-    /// something was folded into it.
+    /// **Whether a merge touched this object**: it was folded into another,
+    /// something was folded into it, or its own row, at any version the State
+    /// holds, names a folded thing as its parent. The store appends a version of
+    /// such a child for the move, naming the survivor, which the State does not
+    /// hold yet. TEMPORARY(9.3.4) `q-934-merge-version-row-in-state`.
     pub fn was_merged(&self, object: &ObjectId) -> bool {
         let survivor = self.survivor(object);
-        survivor != object || self.folded_under.contains_key(survivor)
+        survivor != object
+            || self.folded_under.contains_key(survivor)
+            || self.names_a_folded_parent(object)
+    }
+
+    /// Whether the row of `object`, now or at an earlier version, names a thing a
+    /// merge folded away as its parent.
+    fn names_a_folded_parent(&self, object: &ObjectId) -> bool {
+        let folded = |parent: &ObjectId| self.redirects.contains_key(parent);
+        self.object(object)
+            .and_then(|body| body.parent.as_ref())
+            .is_some_and(folded)
+            || self
+                .versions
+                .get(object)
+                .into_iter()
+                .flatten()
+                .any(|version| version.body.parent.as_ref().is_some_and(folded))
     }
 
     /// **The spellings an object answers to now**, in order.
