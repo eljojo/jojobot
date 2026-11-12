@@ -581,6 +581,20 @@ impl Folded {
         .flatten()
     }
 
+    /// **One part of a thing's document, worked out from the claims State at read
+    /// time**: the histories, ages, trails and versions the port serves. `None`
+    /// under the same declines as [`stated`](Folded::stated).
+    fn part_of<T>(
+        &self,
+        id: &EntityId,
+        pick: impl FnOnce(jojobot_domain::log::claims::DocumentParts) -> T,
+    ) -> Option<T> {
+        self.stated(id, |state, found, declared| {
+            let object = state.resolve(&found.id.0)?;
+            Some(pick(state.document_parts(object, declared)?))
+        })
+    }
+
     /// **The miss of a read of a spelling nothing answers to**, made from the
     /// claims State, so a miss reaches no store either. `None` when the spelling
     /// answers to a thing, or there is no image or State to say it does not, or the
@@ -1045,9 +1059,14 @@ impl Memory for Folded {
         address: &FactAddress,
     ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.kept_off(address)) {
-            Some(answer) => answer,
-            None => self.inner.keys_kept_off_the_thing(address).await,
+        match self.part_of(&address.home, |parts| {
+            parts.trails.kept_off.get(&address.local).cloned()
+        }) {
+            Some(kept) => Ok(kept.unwrap_or_default()),
+            None => match self.missed(&address.home) {
+                Some(unknown) => Err(unknown),
+                None => self.inner.keys_kept_off_the_thing(address).await,
+            },
         }
     }
 

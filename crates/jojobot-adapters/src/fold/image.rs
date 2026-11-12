@@ -607,20 +607,6 @@ impl Image {
             .unwrap_or_default())
     }
 
-    /// `keys_kept_off_the_thing`.
-    pub fn kept_off(
-        &self,
-        address: &FactAddress,
-    ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
-        Ok(self
-            .doc(&address.home)?
-            .trails
-            .kept_off
-            .get(&address.local)
-            .cloned()
-            .unwrap_or_default())
-    }
-
     /// **Where an address went when its thing was merged away**, followed
     /// through a survivor merged later; `None` when no event moved it.
     pub fn moved(&self, address: &FactAddress) -> Result<Option<FactAddress>, MergeLoop> {
