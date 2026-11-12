@@ -1178,6 +1178,133 @@ fn verdict(kib: u64) -> &'static str {
     }
 }
 
+/// Publish only after the measured server stops: its held image must never
+/// share a store with this test-only payload, which no server can boot from.
+async fn record_snapshot_growth(state: &Scratch) {
+    use jojobot_adapters::claims_log::LoggedClaims;
+    use jojobot_domain::log::LogStore;
+    use sha2::{Digest, Sha256};
+    use std::sync::Arc;
+
+    let path = state.0.join("db");
+    let mut store = Dolt::start(&path, free_port())
+        .await
+        .expect("the store opens");
+    let log = Arc::new(
+        super::WriterLog::open(store.pool().clone(), super::Writer::default())
+            .await
+            .expect("the log opens"),
+    );
+    let claims = LoggedClaims::open(log.clone())
+        .await
+        .expect("claims replay");
+    let mut held = claims.state().await;
+    let claim_count = shape_in(store.pool()).await.claims;
+    assert!(
+        held.import_completed(),
+        "the reading needs the imported State"
+    );
+    let mut snapshot = log
+        .load_snapshot()
+        .await
+        .expect("snapshot reads")
+        .expect("the boot left a snapshot envelope");
+    snapshot.blob = serde_json::to_vec(&held).expect("the actual State serializes");
+    snapshot.serialized_length = snapshot.blob.len() as u64;
+    snapshot.checksum = Sha256::digest(&snapshot.blob).into();
+    snapshot.created_at = jiff::Timestamp::now();
+    drop(claims);
+    drop(log);
+    store.stop().await;
+    let mut before = store_bytes(&path);
+
+    for publication in ["first-publication", "same-payload", "small-change"] {
+        if publication == "small-change" {
+            use jojobot_domain::log::{Event, claims::ClaimEvent};
+
+            let object = held
+                .declared_names()
+                .next()
+                .expect("the imported State holds a declared type")
+                .clone();
+            let mut body = held.object(&object).expect("the type has a body").clone();
+            body.name.push_str(" alpha");
+            held.apply(&Event {
+                event_kind: "claim".into(),
+                meaning_version: 1,
+                actor: None,
+                run: None,
+                session_card: None,
+                request: None,
+                part: None,
+                occurred_at: None,
+                written_at: None,
+                imported_source_time: None,
+                payload: ClaimEvent::ObjectRevised { object, body },
+            });
+            snapshot.blob = serde_json::to_vec(&held).expect("the revised State serializes");
+            snapshot.serialized_length = snapshot.blob.len() as u64;
+            snapshot.checksum = Sha256::digest(&snapshot.blob).into();
+        }
+
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store reopens");
+        let log = super::WriterLog::open(store.pool().clone(), super::Writer::default())
+            .await
+            .expect("the publication log opens");
+        log.store_snapshot(&snapshot)
+            .await
+            .expect("one publication lands");
+        log.load_snapshot()
+            .await
+            .expect("publication reads")
+            .expect("the publication left a snapshot");
+        drop(log);
+        store.stop().await;
+        let after = store_bytes(&path);
+        let allocated = i128::from(after.0) - i128::from(before.0);
+        let apparent = i128::from(after.1) - i128::from(before.1);
+        record(&format!(
+            "memory-report snapshot growth: {publication}; {claim_count} claims; payload {} bytes; allocated before {} after {} delta {}; apparent before {} after {} delta {}; includes one Dolt restart and flush; SQL transaction only, no session history mark",
+            snapshot.serialized_length, before.0, after.0, allocated, before.1, after.1, apparent,
+        ));
+        if publication != "first-publication" {
+            record(&format!(
+                "memory-report snapshot growth: daily estimate; {publication}; nominal 288/day allocated {} apparent {} bytes/day; extrapolates this publication including restart and flush, not retained history",
+                allocated * 288,
+                apparent * 288,
+            ));
+        }
+        before = after;
+    }
+}
+
+/// Both readings cover the stopped store tree, after buffered writes drain.
+fn store_bytes(path: &std::path::Path) -> (u64, u64) {
+    let read = |apparent: bool| {
+        let mut command = std::process::Command::new("du");
+        command.args(["-s", "--block-size=1"]);
+        if apparent {
+            command.arg("--apparent-size");
+        }
+        let output = command.arg(path).output().expect("du runs");
+        assert!(
+            output.status.success(),
+            "du: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .expect("du writes UTF-8")
+            .split_whitespace()
+            .next()
+            .expect("du writes a size")
+            .parse::<u64>()
+            .expect("du writes bytes")
+    };
+    (read(false), read(true))
+}
+
 /// **The replay half of the report: a whole day of calls through the server
 /// that has just booted.** The day is the kinds of call the live instance makes in
 /// the proportions its metrics show, made with no time budget, so the server's
@@ -1258,6 +1385,7 @@ async fn the_servers_memory_after_a_replayed_day() {
         mib(bound),
         verdict(beside),
     ));
+    record_snapshot_growth(&state).await;
     record(&format!(
         "memory-report wall: {} s from the start of the case to its end",
         began.elapsed().as_secs()
