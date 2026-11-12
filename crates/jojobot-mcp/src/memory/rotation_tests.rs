@@ -48,7 +48,23 @@ async fn a_person_who_comes_back_to_a_key_is_told_where_turns_live() {
     assert_eq!(hint_of(&receipts[0]), None, "{}", receipts[0]);
     assert_eq!(hint_of(&receipts[1]), None, "{}", receipts[1]);
     let line = hint_of(&receipts[2]).unwrap_or_else(|| panic!("no hint: {}", receipts[2]));
-    assert!(line.contains("list"), "{line}");
+    // The served identifiers of a turn-taking list, not the sentence around them.
+    assert!(line.contains("`tick`") && line.contains("`back`"), "{line}");
+    assert!(!line.contains("`after`"), "{line}");
+}
+
+/// **The same person twice running is no change and says nothing.**
+#[tokio::test]
+async fn the_same_person_twice_running_says_nothing() {
+    let receipts = written_in_turn(
+        "last_put_out_by",
+        &["person:homer", "person:homer", "person:homer"],
+    )
+    .await;
+
+    for receipt in &receipts {
+        assert_eq!(hint_of(receipt), None, "{receipt}");
+    }
 }
 
 /// **A, then B, then C is a change of person each time and says nothing.** Paired

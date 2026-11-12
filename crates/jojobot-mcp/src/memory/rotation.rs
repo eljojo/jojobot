@@ -12,14 +12,20 @@ use super::*;
 
 /// The sentence a capture receipt adds when a key has come back to an earlier person.
 const ROTATION_LINE: &str = "This key has come back to an earlier person, which reads as \
-    people taking turns. A list on this thing keeps turns: one entry per turn, ticked with \
-    `after` to say whose go is next.";
+    people taking turns. A list on this thing keeps turns: make it with `tick` set to \
+    `back`, add one entry per turn, and tick each entry `done` when it is taken, so the \
+    list says whose go is next.";
 
 impl Jojobot {
     /// The rotation sentence for a claim just written, or none. None when the claim sets
     /// no key to a person who held it before, or when the thing could not be read: the
     /// write landed, so a sentence that cannot be worked out is left off and logged.
     pub(crate) async fn rotation_line(&self, written: &Fact) -> Option<&'static str> {
+        // **Decided from the write alone first**: most captures set no person, and
+        // each would otherwise read every claim of its thing.
+        if !written.sets.iter().any(|key| sets_a_person(written, key)) {
+            return None;
+        }
         let held = self
             .memory
             .recall(&written.subject)
@@ -42,7 +48,7 @@ fn comes_back(held: &[Fact], written: &Fact, key: &str) -> bool {
     let Some(value) = written.fields.get(key) else {
         return false;
     };
-    if EntityId(value.clone()).kind() != Some(EntityKind::PERSON) {
+    if !sets_a_person(written, key) {
         return false;
     }
     let mut earlier: Vec<(u64, &str)> = held
@@ -60,4 +66,12 @@ fn comes_back(held: &[Fact], written: &Fact, key: &str) -> bool {
         return false;
     };
     current != value && earlier.iter().any(|(_, said)| said == value)
+}
+
+/// Whether `written` sets `key` to a person handle.
+fn sets_a_person(written: &Fact, key: &str) -> bool {
+    written
+        .fields
+        .get(key)
+        .is_some_and(|value| EntityId(value.clone()).kind() == Some(EntityKind::PERSON))
 }
