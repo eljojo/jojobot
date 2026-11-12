@@ -946,6 +946,15 @@ async fn compare_grown_claims(scaled: bool) {
     surface.finish().await;
     let seed = running.stopped().0;
     let mut store = scaling_store(&seed).await;
+    // **The case needs a store the claims import has not run on**, which is what a
+    // recorder that predates the claims log leaves. The recorder is the last deployed
+    // build, and since 9.3.3 that build imports claims on its own first boot, so its
+    // log already holds them. The batches and the snapshots are removed here, and the
+    // log's identity row stays: what is left is the log the head boot imports into.
+    sqlx::query("DELETE FROM event_log WHERE slot <> 'validity'")
+        .execute(store.pool())
+        .await
+        .expect("the recorder's events and snapshots are removed");
     let writer = Writer::default();
     let seed_log = WriterLog::open(store.pool().clone(), writer.clone())
         .await
@@ -954,7 +963,7 @@ async fn compare_grown_claims(scaled: bool) {
     assert_eq!(
         claims_counts(&seed_log.read_from(Position(0), 100_000).await.unwrap()),
         (0, 0),
-        "the deployed recorder leaves claims for the first head boot"
+        "the seed log holds no claims events before the first head boot"
     );
     let other_family = batch("grown-claims-control", head, 1_000_000, 1);
     seed_log
