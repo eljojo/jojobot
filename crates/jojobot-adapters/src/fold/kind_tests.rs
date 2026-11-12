@@ -32,26 +32,3 @@ async fn a_fold_reads_a_kind_its_store_declares_and_refuses_one_it_does_not() {
         "the fold admitted a kind its store does not declare: {refused:?}"
     );
 }
-
-/// **The names a fold reads from the claims State are admitted by the store's own
-/// kinds too.** The State read is a second way to fill the referring lists, and it
-/// asks the same question: a name of a kind the store declares is read, and a name
-/// of a kind it does not is skipped. The process set is not told about `sloth`.
-#[test]
-fn a_read_from_the_claims_state_admits_the_kinds_its_store_declares() {
-    use jojobot_domain::memory::kinds::KindSet;
-    let kinds = KindSet::new(vec![("sloth".to_string(), Origin::Declared)]);
-    let names = vec!["sloth:slow".to_string(), "walrus:tusky".to_string()];
-    let read = image::referring_in(
-        &jojobot_domain::log::claims::State::default(),
-        &kinds,
-        &names,
-    );
-    assert_eq!(
-        read.iter()
-            .map(|(name, _)| name.as_str())
-            .collect::<Vec<_>>(),
-        ["sloth:slow"],
-        "the name of a declared kind is read and the other is skipped"
-    );
-}

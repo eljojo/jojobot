@@ -296,30 +296,22 @@ impl Folded {
     /// document are read again. **Re-reading rather than computing the new value
     /// from the write just made**, so the image holds what the store answers.
     async fn refresh(&self, handle: &EntityId) -> Result<(), MemoryError> {
-        self.refresh_listing(handle, None).await
+        self.refresh_listing(handle, true).await
     }
 
     /// [`refresh`](Self::refresh) for a write that cannot have changed any
     /// thing's own row: a claim written, edited or taken back. The listing is
     /// not read again, so the cost of such a write does not grow with the number
     /// of things.
-    async fn refresh_claims(
-        &self,
-        handle: &EntityId,
-        wrote: image::Wrote,
-    ) -> Result<(), MemoryError> {
-        self.refresh_listing(handle, Some(wrote)).await
+    async fn refresh_claims(&self, handle: &EntityId) -> Result<(), MemoryError> {
+        self.refresh_listing(handle, false).await
     }
 
     /// [`refresh_listing_inner`](Self::refresh_listing_inner), then the change
     /// is published, whatever the image did: a subscriber reads the thing from
     /// the State, which answers from the store when the image could not follow.
-    async fn refresh_listing(
-        &self,
-        handle: &EntityId,
-        wrote: Option<image::Wrote>,
-    ) -> Result<(), MemoryError> {
-        let done = Box::pin(self.refresh_listing_inner(handle, wrote)).await;
+    async fn refresh_listing(&self, handle: &EntityId, relist: bool) -> Result<(), MemoryError> {
+        let done = Box::pin(self.refresh_listing_inner(handle, relist)).await;
         self.publish_things(vec![handle.clone()], false);
         done
     }
@@ -340,9 +332,8 @@ impl Folded {
     async fn refresh_listing_inner(
         &self,
         handle: &EntityId,
-        wrote: Option<image::Wrote>,
+        relist: bool,
     ) -> Result<(), MemoryError> {
-        let relist = wrote.is_none();
         if !self.wanted.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -383,7 +374,7 @@ impl Folded {
             })
         };
         let read = async {
-            let (entities, doc, in_state) = match stated {
+            let (entities, doc) = match stated {
                 Err(unseen) => return Err(Self::without_state(unseen)),
                 Ok(Some((entities, doc))) => {
                     // **A thing the State has never heard of is a record the build
@@ -424,7 +415,7 @@ impl Folded {
                         }
                         None => None,
                     };
-                    (entities, doc, true)
+                    (entities, doc)
                 }
                 Ok(None) => {
                     let entities = if relist {
@@ -432,42 +423,16 @@ impl Folded {
                     } else {
                         None
                     };
-                    (entities, Doc::load(&*self.inner, handle).await?, false)
+                    (entities, Doc::load(&*self.inner, handle).await?)
                 }
             };
-            // **Both entity and claim writes patch who points where from their
-            // old and new documents** ([`Image::install`]). Only a spelling the
-            // entity newly answers to, or a claim's engine-record exception,
-            // needs the store's holders; existing names already have their lists.
-            let names = self
-                .held(|image| {
-                    if relist {
-                        image.names_newly_answered(&doc)
-                    } else {
-                        image.names_to_ask(&doc)
-                    }
-                })
-                .unwrap_or_default();
-            let kinds = self.held(|image| image.kind_set()).unwrap_or_default();
-            let held = if in_state {
-                Some(
-                    self.claims(|state| image::referring_in(state, &kinds, &names))
-                        .map_err(Self::without_state)?,
-                )
-            } else {
-                None
-            };
-            let referring = match held {
-                Some(referring) => referring,
-                None => image::ask_referring(&self.inner, &kinds, names).await?,
-            };
-            Ok::<_, MemoryError>((entities, doc, referring))
+            Ok::<_, MemoryError>((entities, doc))
         }
         .await;
         match read {
-            Ok((entities, doc, referring)) => {
+            Ok((entities, doc)) => {
                 if let Some(image) = self.image.write().expect("fold lock").as_mut() {
-                    image.install(entities, doc, referring, wrote.as_ref());
+                    image.install(entities, doc);
                     self.generation.fetch_add(1, Ordering::SeqCst);
                 }
                 Ok(())
@@ -821,13 +786,9 @@ impl Memory for Folded {
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         owned!(self, this, [], this.capture(fact).await);
-        let sent: Vec<String> = fact.fields.keys().cloned().collect();
         self.scoped(async {
             match self.inner.capture(fact).await? {
-                Guarded::Written(fact) => match self
-                    .refresh_claims(&fact.home, vec![(fact.id.clone(), sent)])
-                    .await
-                {
+                Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
                     Ok(()) => Ok(Guarded::Written(fact)),
                     Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
                 },
@@ -1002,16 +963,9 @@ impl Memory for Folded {
             [address = address.clone(), caller = caller.clone()],
             this.update_fact(&address, patch, &caller).await
         );
-        let sent: Vec<String> = jojobot_domain::memory::writes_of(&patch, &BTreeMap::new())
-            .into_iter()
-            .filter_map(|(key, value)| value.map(|_| key))
-            .collect();
         self.scoped(async {
             match self.inner.update_fact(address, patch, caller).await? {
-                Guarded::Written(fact) => match self
-                    .refresh_claims(&fact.home, vec![(fact.id.clone(), sent)])
-                    .await
-                {
+                Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
                     Ok(()) => Ok(Guarded::Written(fact)),
                     Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
                 },
@@ -1083,10 +1037,7 @@ impl Memory for Folded {
                 .inner
                 .retract(address, reason, date, caller, session)
                 .await?;
-            match self
-                .refresh_claims(&taken_back.retracted.home, Vec::new())
-                .await
-            {
+            match self.refresh_claims(&taken_back.retracted.home).await {
                 Ok(()) => Ok(taken_back),
                 Err(source) => Err(fold_behind(
                     Landed::Retraction(Box::new(taken_back)),
@@ -1113,20 +1064,13 @@ impl Memory for Folded {
             this.update_fact_with_claim(&address, patch, &caller, claim)
                 .await
         );
-        let sent: Vec<String> = jojobot_domain::memory::writes_of(&patch, &BTreeMap::new())
-            .into_iter()
-            .filter_map(|(key, value)| value.map(|_| key))
-            .collect();
         self.scoped(Box::pin(async {
             match self
                 .inner
                 .update_fact_with_claim(address, patch, caller, claim)
                 .await?
             {
-                Guarded::Written((edited, fact)) => match self
-                    .refresh_claims(&edited.home, vec![(edited.id.clone(), sent)])
-                    .await
-                {
+                Guarded::Written((edited, fact)) => match self.refresh_claims(&edited.home).await {
                     Ok(()) => Ok(Guarded::Written((edited, fact))),
                     Err(source) => Err(fold_behind(Landed::Fact(Box::new(edited)), source)),
                 },
@@ -1173,16 +1117,15 @@ impl Memory for Folded {
                 .retract_with_claim(address, reason, date, caller, session, claim)
                 .await?
             {
-                Guarded::Written((taken_back, fact)) => match self
-                    .refresh_claims(&taken_back.retracted.home, Vec::new())
-                    .await
-                {
-                    Ok(()) => Ok(Guarded::Written((taken_back, fact))),
-                    Err(source) => Err(fold_behind(
-                        Landed::Retraction(Box::new(taken_back)),
-                        source,
-                    )),
-                },
+                Guarded::Written((taken_back, fact)) => {
+                    match self.refresh_claims(&taken_back.retracted.home).await {
+                        Ok(()) => Ok(Guarded::Written((taken_back, fact))),
+                        Err(source) => Err(fold_behind(
+                            Landed::Retraction(Box::new(taken_back)),
+                            source,
+                        )),
+                    }
+                }
                 blocked => Ok(blocked),
             }
         }))
@@ -1406,25 +1349,34 @@ impl Memory for Folded {
         self.built_on_here(source).await
     }
 
-    /// **Selected on what a record's fields name, in memory**, not by reading
-    /// every record.
+    /// **Selected on what a record's fields name, from the claims State**, not by
+    /// reading every record. The kind of the target is checked against the store's
+    /// own kinds. With no image, or no State to read, the store answers.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.referring_to(target)) {
-            // **Shadowed: the store is asked as well and the two are compared**;
-            // the image's answer, the old way, is the one served.
-            Some(Ok(mine))
-                if self.shadow.watches(shadow::Family::ReferringTo)
-                    && !self.writer.rail_uncertain("memory") =>
-            {
-                if let Ok(theirs) = self.inner.referring_to(target).await {
-                    self.shadow.compared_referring_to(target, &mine, &theirs);
-                }
-                Ok(mine)
-            }
-            Some(answer) => answer,
-            None => self.inner.referring_to(target).await,
+        let Some(kinds) = self.held(|image| image.kind_set()) else {
+            return self.inner.referring_to(target).await;
+        };
+        jojobot_domain::memory::validate_subject_in(&kinds, target)?;
+        // **A spelling no thing wears now (a folded or renamed handle) is a
+        // merge-touched read**: the State follows it to the thing that wears the
+        // handle now, and the store answers for the spelling itself. TEMPORARY(9.3.4)
+        // `q-934-merge-version-row-in-state`, with the other merge-touched reads.
+        let Ok(Some(mine)) = self.claims(|state| {
+            let worn = state.resolve(&target.0).is_none() || state.entity(target).is_some();
+            worn.then(|| state.referring(target))
+        }) else {
+            return self.inner.referring_to(target).await;
+        };
+        // **Shadowed: the store is asked as well and the two are compared**; the
+        // State's answer is the one served.
+        if self.shadow.watches(shadow::Family::ReferringTo)
+            && !self.writer.rail_uncertain("memory")
+            && let Ok(theirs) = self.inner.referring_to(target).await
+        {
+            self.shadow.compared_referring_to(target, &mine, &theirs);
         }
+        Ok(mine)
     }
 
     /// **Straight through**: the width of a read is the inner store's.

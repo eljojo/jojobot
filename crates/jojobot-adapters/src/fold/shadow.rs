@@ -177,11 +177,10 @@ mod tests {
     }
 
     /// **A forced disagreement is counted and logged with the thing and the
-    /// field, and the image's answer is the one served.** The store takes a claim
-    /// the fold never saw, so the two answer a read differently. **Paired**: the
-    /// read before it agrees and is counted as a read alone.
+    /// field.** The store answers with no holder where the fold answers with one.
+    /// **Paired**: the read before it agrees and is counted as a read alone.
     #[tokio::test]
-    async fn a_forced_disagreement_is_counted_and_logged_and_the_image_is_served() {
+    async fn a_forced_disagreement_is_counted_and_logged() {
         crate::testing::install_store_log_sink();
         let store = Arc::new(InMemoryMemory::booted());
         let folded = Folded::new(store.clone())
@@ -201,10 +200,11 @@ mod tests {
             "an agreeing read is counted as a read and as no disagreement: {counts:?}"
         );
 
-        // A claim written under the fold's feet: the store holds it, the image does not.
-        claim(&*store, "thing:omega", "work:phi", "omega blocks phi again").await;
-        let served = folded.referring_to(&id("work:phi")).await.expect("read");
-        assert_eq!(served.len(), 1, "the image's answer is the one served");
+        // The fold and the fake store share one State, so no write can make them
+        // answer differently here: the store's answer is made to differ instead.
+        folded
+            .shadow()
+            .compared_referring_to(&id("work:phi"), &agreed, &[]);
         let counts = folded.shadow_counts();
         assert_eq!(
             (counts[0].reads, counts[0].disagreements),

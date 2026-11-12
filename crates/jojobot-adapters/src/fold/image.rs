@@ -12,7 +12,7 @@
 //! [`MemoryError::UnknownEntity`], with the same candidates, that the store
 //! gives — so a read of something that is not there makes no call either.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::held::Held;
@@ -24,13 +24,11 @@ use jojobot_domain::memory::numbered::{
     NUMBERS_BY, derived_formers, nearest_numbers, numbered_handle,
 };
 use jojobot_domain::memory::{
-    ClaimWrite, Entity, EntityId, EntityKind, EntityVersion, Fact, FactAddress, FactId, FieldAges,
+    ClaimWrite, Entity, EntityId, EntityKind, EntityVersion, FactAddress, FactId, FieldAges,
     FieldBacking, FormerHandle, KeyTrails, Memory, MemoryError, guard,
     kinds::KindSet,
-    names_in_fact,
     search::DocScan,
     types::{DeclaredType, Origin, ValueType},
-    validate_subject_in,
 };
 
 pub(super) mod patch;
@@ -181,14 +179,6 @@ pub(super) struct Image {
     /// handle resolves through, taken in listing order as the port's own
     /// `resolve_handle` takes it.
     by_badge: HashMap<String, usize>,
-    /// **Who points at what, as the store answers it.** `referring_to` for every
-    /// name some record's fields point at, holders in the order
-    /// [`jojobot_domain::memory::referring_holder_order`] names. The store answers
-    /// from a table of the links its writes drew, which is narrower than "every
-    /// record whose fields name it" — a record it never drew a link for is not in
-    /// its answer — so the list is asked of the store when it is filled and patched
-    /// by a write to a thing's own claims, a holder at a time, in that order.
-    referring: HashMap<String, Vec<Fact>>,
     /// **What the documents hold, by key** (see [`Held`]). Kept current a
     /// document at a time, and filled again with the image.
     held: Held,
@@ -294,27 +284,6 @@ impl Image {
         let mut image = Image::assembled(entities, former, types, kinds, docs);
         fill_phase("assembly", started, image.docs.len());
         let started = std::time::Instant::now();
-        let names = image.names_in(&image.docs.values().collect::<Vec<_>>());
-        let asked = names.len();
-        // **Worked out from the documents the fill holds, as a write works it out**
-        // ([`Image::referring_patch`]); only a name an engine record points at is
-        // asked of the store, which is the one answer the stores disagree on
-        // ([`Image::names_to_ask`]). Asking the store for every name cost a
-        // transaction and a read of each holder's records per name, which grew
-        // with the store until a restart spent minutes in it.
-        let engine: std::collections::BTreeSet<String> = image
-            .docs
-            .values()
-            .flat_map(|doc| image.names_to_ask(doc))
-            .collect();
-        let (from_store, from_documents): (Vec<String>, Vec<String>) =
-            names.into_iter().partition(|name| engine.contains(name));
-        image.referring = image.referring_from_documents(from_documents);
-        image
-            .referring
-            .extend(ask_referring(inner, &image.kind_set, from_store).await?);
-        fill_phase("referring", started, asked);
-        let started = std::time::Instant::now();
         image.events = inner.merge_events(None).await?;
         fill_phase("merge-events", started, image.events.len());
         Ok(image)
@@ -344,7 +313,6 @@ impl Image {
             docs,
             by_id: HashMap::new(),
             by_badge: HashMap::new(),
-            referring: HashMap::new(),
             held: Held::default(),
             events: Vec::new(),
         };
@@ -369,236 +337,14 @@ impl Image {
     /// `None` for the listing leaves it as it was.
     ///
     /// **What is kept beside the documents moves with them**: the values held by
-    /// key and the records worked out from a claim take off what the old document
-    /// held and put on what the new one holds, so a write costs the thing it
-    /// touched and no more.
-    pub fn install(
-        &mut self,
-        entities: Option<Vec<Entity>>,
-        doc: Doc,
-        referring: Vec<(String, Vec<Fact>)>,
-        wrote: Option<&Wrote>,
-    ) {
-        // Entity writes may carry a first or accompanying claim. Only those
-        // new records can add a holder; an edit to the row creates no link.
-        let created;
-        let wrote = match wrote {
-            Some(wrote) => wrote,
-            None => {
-                let previous: HashSet<_> = doc
-                    .scan
-                    .entity
-                    .as_ref()
-                    .and_then(|entity| self.docs.get(&entity.id))
-                    .into_iter()
-                    .flat_map(|old| old.scan.facts.iter().map(|fact| &fact.id))
-                    .collect();
-                created = doc
-                    .scan
-                    .facts
-                    .iter()
-                    .filter(|fact| !previous.contains(&fact.id))
-                    .map(|fact| (fact.id.clone(), fact.field_links.keys().cloned().collect()))
-                    .collect();
-                &created
-            }
-        };
-        let asked: Vec<&str> = referring.iter().map(|(name, _)| name.as_str()).collect();
-        let patch = self.referring_patch(&doc, &asked, wrote);
+    /// key take off what the old document held and put on what the new one holds,
+    /// so a write costs the thing it touched and no more.
+    pub fn install(&mut self, entities: Option<Vec<Entity>>, doc: Doc) {
         self.take_in_doc(doc);
         if let Some(entities) = entities {
             self.take_in_listing(entities);
         }
         self.derive_numbered();
-        self.referring.extend(referring);
-        self.apply_referring_patch(patch);
-    }
-
-    /// A new handle or alias may already be named by another thing's records;
-    /// those holders cannot be inferred from this thing's document alone.
-    pub fn names_newly_answered(&self, doc: &Doc) -> Vec<String> {
-        let Some(entity) = &doc.scan.entity else {
-            return Vec::new();
-        };
-        let previous = self
-            .docs
-            .get(&entity.id)
-            .and_then(|old| old.scan.entity.as_ref());
-        std::iter::once(entity.id.as_str())
-            .chain(entity.aliases.iter().map(String::as_str))
-            .filter(|name| {
-                previous.is_none_or(|old| {
-                    old.id.as_str() != *name && !old.aliases.iter().any(|alias| alias == name)
-                })
-            })
-            .map(str::to_string)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect()
-    }
-
-    /// **The names the patch cannot answer for**: a name an engine record of the
-    /// thing points at. The stores disagree on whether such a record is a holder
-    /// (a merge's account of what it folded is one in the fake and none in the
-    /// real store), so the store is asked for that name.
-    pub fn names_to_ask(&self, doc: &Doc) -> Vec<String> {
-        let mut names = std::collections::BTreeSet::new();
-        for fact in &doc.scan.facts {
-            if fact
-                .fields
-                .contains_key(jojobot_domain::memory::capacity::ENGINE_RECORD)
-            {
-                names.extend(names_in_fact(fact).into_iter().filter(|name| {
-                    validate_subject_in(&self.kind_set, &EntityId(name.clone())).is_ok()
-                }));
-            }
-        }
-        names.into_iter().collect()
-    }
-
-    /// **What the store answers for each of these names, worked out from the
-    /// documents held.** Each record is read once and filed under every name it
-    /// links to; a name's list is the records that link to it, the holders in the
-    /// order every store answers in ([`jojobot_domain::memory::referring_holder_order`])
-    /// and each holder's records in the order its document serves them. A name no
-    /// record links to has an empty list, as the store answers it. A name that is
-    /// no well-formed handle is left out: nothing can ask for it.
-    fn referring_from_documents(&self, names: Vec<String>) -> HashMap<String, Vec<Fact>> {
-        let mut holders: Vec<(String, &Doc)> = self
-            .docs
-            .iter()
-            .map(|(handle, doc)| (self.storage_key(handle), doc))
-            .collect();
-        holders.sort_by(|a, b| jojobot_domain::memory::referring_holder_order(&a.0, &b.0));
-        let mut naming: HashMap<String, Vec<Fact>> = HashMap::new();
-        for (_, doc) in holders {
-            for fact in &doc.scan.facts {
-                let linked: std::collections::BTreeSet<String> =
-                    names_in_fact(fact).into_iter().collect();
-                for name in linked {
-                    naming.entry(name).or_default().push(fact.clone());
-                }
-            }
-        }
-        names
-            .into_iter()
-            .filter(|name| {
-                jojobot_domain::memory::validate_subject_in(&self.kind_set, &EntityId(name.clone()))
-                    .is_ok()
-            })
-            .map(|name| {
-                let list = naming.remove(&name).unwrap_or_default();
-                (name, list)
-            })
-            .collect()
-    }
-
-    /// **What the store would answer for each name this thing's records point at,
-    /// worked out from the thing's own old and new documents.** For each such
-    /// name: the thing's records whose fields name it now. Taken before the new
-    /// document replaces the old one, which is what names the old records' names.
-    ///
-    /// Every name some record points at already has a list, because the image
-    /// asks for each one when it fills and this patch keeps the rule: a name the
-    /// thing's new records introduce has no other holder.
-    fn referring_patch(&self, doc: &Doc, asked: &[&str], wrote: &Wrote) -> Option<ReferringPatch> {
-        let handle = doc.scan.entity.as_ref()?.id.clone();
-        let names: Vec<String> = self
-            .names_touched_by(doc)
-            .into_iter()
-            .filter(|name| {
-                !asked.contains(&name.as_str())
-                    && jojobot_domain::memory::validate_subject_in(
-                        &self.kind_set,
-                        &EntityId(name.clone()),
-                    )
-                    .is_ok()
-            })
-            .collect();
-        // Targets are read from stored marks, one pass over the records: each
-        // record is read once and filed under every name it links to, so a write
-        // costs the records and not the records times the names. The image keeps
-        // each existing holder and adds one when this write sends a key linking
-        // to the target. Sending the same value again links; editing only another
-        // key does not. A declaration changes no list.
-        let mut naming: HashMap<String, Vec<&Fact>> = HashMap::new();
-        for fact in &doc.scan.facts {
-            let linked: std::collections::BTreeSet<String> =
-                names_in_fact(fact).into_iter().collect();
-            for name in linked {
-                naming.entry(name).or_default().push(fact);
-            }
-        }
-        let sent: std::collections::HashSet<String> = doc
-            .scan
-            .facts
-            .iter()
-            .filter_map(|fact| {
-                let (_, keys) = wrote.iter().find(|(id, _)| *id == fact.id)?;
-                Some(
-                    keys.iter()
-                        .filter_map(|key| fact.field_links.get(key.trim()))
-                        .flatten()
-                        .map(|id| id.to_string())
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .flatten()
-            .collect();
-        let patch = names
-            .into_iter()
-            .map(|name| {
-                let holder = self
-                    .referring
-                    .get(&name)
-                    .is_some_and(|list| list.iter().any(|fact| fact.home == handle))
-                    || sent.contains(&name);
-                let holding: Vec<Fact> = match holder {
-                    true => naming
-                        .remove(&name)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .cloned()
-                        .collect(),
-                    false => Vec::new(),
-                };
-                (name, holding)
-            })
-            .collect();
-        Some((handle, patch))
-    }
-
-    /// Take the thing's records off each list they were on, and put on the ones
-    /// that name the target now.
-    fn apply_referring_patch(&mut self, patch: Option<ReferringPatch>) {
-        let Some((handle, patch)) = patch else {
-            return;
-        };
-        for (name, holding) in patch {
-            let mut list = self.referring.remove(&name).unwrap_or_default();
-            // **A list is in the holders' order**
-            // ([`jojobot_domain::memory::referring_holder_order`]). A holder already
-            // on the list keeps its place; a new one goes in before the first
-            // holder that order puts after it.
-            let key = self.storage_key(&handle);
-            let at = list
-                .iter()
-                .position(|fact| fact.home == handle)
-                .or_else(|| {
-                    list.iter().position(|fact| {
-                        jojobot_domain::memory::referring_holder_order(
-                            &self.storage_key(&fact.home),
-                            &key,
-                        )
-                        .is_gt()
-                    })
-                })
-                .unwrap_or(list.len());
-            list.retain(|fact| fact.home != handle);
-            let at = at.min(list.len());
-            list.splice(at..at, holding);
-            self.referring.insert(name, list);
-        }
     }
 
     /// Put one thing's re-read document in the place of the one held, and move
@@ -695,27 +441,6 @@ impl Image {
             &self.types,
             self.docs.iter().map(|(handle, doc)| (handle, &doc.fields)),
         )
-    }
-
-    /// **Every name the records of these documents point at**, which are the
-    /// names `referring_to` has to be asked again after a write to them.
-    fn names_in(&self, docs: &[&Doc]) -> Vec<String> {
-        let mut names = std::collections::BTreeSet::new();
-        for doc in docs {
-            for fact in &doc.scan.facts {
-                names.extend(names_in_fact(fact));
-            }
-        }
-        names.into_iter().collect()
-    }
-
-    /// The names whose lists a document patch touches: those the old records
-    /// named and those the new ones name.
-    pub fn names_touched_by(&self, doc: &Doc) -> Vec<String> {
-        let old = doc.scan.entity.as_ref().and_then(|e| self.docs.get(&e.id));
-        let mut both: Vec<&Doc> = vec![doc];
-        both.extend(old);
-        self.names_in(&both)
     }
 
     // ── who holds a key, and in what order ──────────────────────────────────
@@ -1115,20 +840,6 @@ impl Image {
             .unwrap_or_default())
     }
 
-    /// `referring_to`: the records whose fields name `target`, as the store
-    /// answered it. A name no record's fields point at has no entry, and the
-    /// store's answer for it is the empty list.
-    pub fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        jojobot_domain::memory::validate_subject_in(&self.kind_set, target)?;
-        Ok(self
-            .referring
-            .get(target.as_str())
-            .cloned()
-            .unwrap_or_default())
-    }
-
-    /// `built_on`: the records worked out from one claim, in the order of the
-    /// storage key each is filed under, then by id.
     /// Every merge made, oldest first, or only those that folded `entity` away or
     /// took it in.
     pub fn merge_events(
@@ -1159,16 +870,6 @@ impl Image {
         Ok(moved.map(|(survivor, now)| FactAddress::new(survivor, now)))
     }
 
-    /// The key a thing's rows are filed under: its badge, or its handle when it
-    /// wears none.
-    fn storage_key(&self, handle: &EntityId) -> String {
-        self.by_id
-            .get(handle)
-            .and_then(|at| self.entities.get(*at))
-            .and_then(|e| e.badge.clone())
-            .unwrap_or_else(|| handle.0.clone())
-    }
-
     /// `backing`.
     pub fn backing(
         &self,
@@ -1181,57 +882,4 @@ impl Image {
     pub fn trails(&self, entity: &EntityId) -> Result<KeyTrails, MemoryError> {
         Ok(self.doc(entity)?.trails.clone())
     }
-}
-
-/// The keys a write sent, by the record that carried them.
-pub type Wrote = Vec<(FactId, Vec<String>)>;
-
-/// One thing's records for each name they point at, to put on that name's list.
-type ReferringPatch = (EntityId, Vec<(String, Vec<Fact>)>);
-
-/// **`referring_to` of each name, read from the claims State.** The names the
-/// store would refuse are skipped, as [`ask_referring`] skips them.
-pub(super) fn referring_in(
-    state: &jojobot_domain::log::claims::State,
-    kinds: &KindSet,
-    names: &[String],
-) -> Vec<(String, Vec<Fact>)> {
-    names
-        .iter()
-        .filter(|name| validate_subject_in(kinds, &EntityId((*name).clone())).is_ok())
-        .map(|name| (name.clone(), state.referring(&EntityId(name.clone()))))
-        .collect()
-}
-
-/// **`referring_to` of each name, asked of the store**, a few at a time. A name
-/// that is no well-formed handle is skipped: nothing can ask for it, and the
-/// store would refuse the question.
-pub(super) async fn ask_referring(
-    inner: &Arc<dyn Memory>,
-    kinds: &KindSet,
-    names: Vec<String>,
-) -> Result<Vec<(String, Vec<Fact>)>, MemoryError> {
-    let names: Vec<String> = names
-        .into_iter()
-        .filter(|name| {
-            jojobot_domain::memory::validate_subject_in(kinds, &EntityId(name.clone())).is_ok()
-        })
-        .collect();
-    let mut asked = Vec::with_capacity(names.len());
-    for chunk in names.chunks(inner.read_width().max(1)) {
-        let mut batch = tokio::task::JoinSet::new();
-        for name in chunk {
-            let inner = inner.clone();
-            let name = name.clone();
-            batch.spawn(crate::writer::sql::inherit_read(async move {
-                let answer = inner.referring_to(&EntityId(name.clone())).await;
-                (name, answer)
-            }));
-        }
-        while let Some(done) = batch.join_next().await {
-            let (name, answer) = done.map_err(|e| MemoryError::Store(e.to_string()))?;
-            asked.push((name, answer?));
-        }
-    }
-    Ok(asked)
 }

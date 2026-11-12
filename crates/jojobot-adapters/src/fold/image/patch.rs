@@ -18,14 +18,13 @@
 //! A read that fails leaves the image as it was, and the caller's fallback
 //! replaces it.
 
-use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::sync::atomic::Ordering;
 
 use jojobot_domain::memory::numbered::numbered_handle;
-use jojobot_domain::memory::{Entity, EntityId, Fact, FormerHandle, MemoryError, MergeEvent};
+use jojobot_domain::memory::{Entity, EntityId, FormerHandle, MemoryError, MergeEvent};
 
-use super::{Doc, Image, ask_referring};
+use super::{Doc, Image};
 use crate::fold::Folded;
 
 /// What the store has done, as the image has to follow it.
@@ -47,9 +46,6 @@ pub(in crate::fold) enum Change<'a> {
 struct Plan {
     /// `(handle held, handle to read)` for each document to read again.
     touched: Vec<(EntityId, EntityId)>,
-    /// The names to ask `referring_to` about again, besides those the touched
-    /// documents point at.
-    names: Vec<String>,
 }
 
 /// Everything read from the store for one patch.
@@ -58,10 +54,6 @@ struct Reads {
     former: Vec<FormerHandle>,
     events: Vec<MergeEvent>,
     docs: Vec<Doc>,
-    /// The `referring_to` answers asked again.
-    asked: Vec<(String, Vec<Fact>)>,
-    /// The names that were asked, answered or not.
-    names: Vec<String>,
 }
 
 impl Image {
@@ -120,16 +112,11 @@ impl Image {
                 touched.push((held.clone(), held));
             }
         }
-        Plan {
-            touched,
-            names: needles,
-        }
+        Plan { touched }
     }
 
     /// **Take in what a patch read.** The documents, the listing, the rename
-    /// history and the merge events are put in place of the ones held, and each
-    /// answer of `referring_to` asked again replaces its entry, or takes it off
-    /// when no record points at the name any more.
+    /// history and the merge events are put in place of the ones held.
     fn patched(&mut self, reads: Reads) {
         for doc in reads.docs {
             self.take_in_doc(doc);
@@ -142,18 +129,6 @@ impl Image {
             .collect();
         self.events = reads.events;
         self.derive_numbered();
-        let named: HashSet<String> = self
-            .names_in(&self.docs.values().collect::<Vec<_>>())
-            .into_iter()
-            .collect();
-        for name in &reads.names {
-            self.referring.remove(name);
-        }
-        for (name, facts) in reads.asked {
-            if named.contains(&name) {
-                self.referring.insert(name, facts);
-            }
-        }
     }
 }
 
@@ -186,16 +161,7 @@ impl Folded {
             self.publish_things(Vec::new(), true);
             return Ok(());
         }
-        let Some((plan, old_names)) = self.held(|image| {
-            let plan = image.plan(&change);
-            let old: Vec<&Doc> = plan
-                .touched
-                .iter()
-                .filter_map(|(held, _)| image.docs.get(held))
-                .collect();
-            let names = image.names_in(&old);
-            (plan, names)
-        }) else {
+        let Some(plan) = self.held(|image| image.plan(&change)) else {
             return self.fill().await.map(|_| ());
         };
         let plan_handles: Vec<EntityId> = plan
@@ -223,22 +189,11 @@ impl Folded {
                 docs.push(done.map_err(|e| MemoryError::Store(e.to_string()))??);
             }
         }
-        let mut names = old_names;
-        names.extend(plan.names);
-        if let Some(reread) = self.held(|image| image.names_in(&docs.iter().collect::<Vec<_>>())) {
-            names.extend(reread);
-        }
-        names.sort();
-        names.dedup();
-        let kinds = self.held(|image| image.kind_set()).unwrap_or_default();
-        let asked = ask_referring(&self.inner, &kinds, names.clone()).await?;
         let reads = Reads {
             entities,
             former,
             events,
             docs,
-            asked,
-            names,
         };
         let mut slot = self.image.write().expect("fold lock");
         let Some(image) = slot.as_mut() else {
@@ -394,77 +349,5 @@ mod tests {
                 "a rename over {unrelated} things scanned every document: {seen:?}"
             );
         }
-    }
-
-    /// A fold over targets and one hub whose `records` claims each name one of
-    /// `names` targets, and what one more claim on the hub costs.
-    async fn hub_capture(records: usize, names: usize) -> (usize, Arc<Counted>, Folded) {
-        let counted = Arc::new(Counted::new(Arc::new(InMemoryMemory::booted())));
-        let folded = Folded::new(counted.clone());
-        folded.rebuild().await.expect("the fold fills");
-        let hub = thing(9_999);
-        for id in (0..names).map(thing).chain([hub.clone()]) {
-            folded
-                .add_entity(NewEntity::new(id.clone(), id.to_string(), "user-named"))
-                .await
-                .expect("an entity is added")
-                .written()
-                .expect("not blocked");
-        }
-        let claim = |n: usize| {
-            let mut fact = NewFact::about(hub.clone(), format!("claim {n}"), date(2026, 9, 1));
-            fact.fields
-                .insert("owner".into(), thing(n % names).to_string());
-            fact
-        };
-        for n in 0..records {
-            folded
-                .capture(claim(n))
-                .await
-                .expect("a claim lands")
-                .written()
-                .expect("not blocked");
-        }
-        let before = jojobot_domain::memory::link_reads_on_this_thread();
-        folded
-            .capture(claim(0))
-            .await
-            .expect("a claim lands")
-            .written()
-            .expect("not blocked");
-        let after = jojobot_domain::memory::link_reads_on_this_thread();
-        (after - before, counted, folded)
-    }
-
-    /// **A claim write reads each record's links a fixed number of times, however
-    /// many names the records point at.** The same hub of 30 records over 3 names
-    /// and over 30 names costs the same reads, and both stay within a few passes
-    /// over the records. Paired with the patched list of the first target, which
-    /// must be the store's own answer, so that doing less work cannot pass.
-    #[tokio::test]
-    async fn a_claim_write_reads_the_records_links_as_often_for_many_names_as_for_few() {
-        let (few, _, _) = hub_capture(30, 3).await;
-        let (many, counted, folded) = hub_capture(30, 30).await;
-        assert!(
-            few > 0 && many > 0,
-            "no link read was counted, so the write ran off this thread"
-        );
-        assert!(
-            many <= few,
-            "reads grew with the names: {few} for 3 names, {many} for 30"
-        );
-        assert!(
-            many <= 4 * 31,
-            "more than a few passes over 31 records: {many}"
-        );
-        let target = thing(0);
-        let served = folded.referring_to(&target).await.expect("served");
-        assert_eq!(
-            served.len(),
-            2,
-            "the hub's two records naming the target: {served:?}"
-        );
-        let stored = counted.referring_to(&target).await.expect("stored");
-        assert_eq!(served, stored, "the patched list is not the store's answer");
     }
 }
