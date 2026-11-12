@@ -1186,6 +1186,7 @@ async fn record_snapshot_growth(state: &Scratch) {
     use sha2::{Digest, Sha256};
     use std::sync::Arc;
 
+    jojobot_domain::memory::kinds::load_shipped();
     let path = state.0.join("db");
     let mut store = Dolt::start(&path, free_port())
         .await
