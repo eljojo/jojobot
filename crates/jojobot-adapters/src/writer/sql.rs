@@ -200,19 +200,6 @@ pub(crate) fn fenced_reader() -> Option<MySqlPool> {
     READER.try_with(Clone::clone).ok()
 }
 
-/// Capture before spawning: loader tasks must use the same fenced reader.
-pub(crate) fn inherit_read<F: Future>(read: F) -> impl Future<Output = F::Output> {
-    let pool = READER.try_with(Clone::clone).ok();
-    let is_reading = READING.try_with(|()| ()).is_ok();
-    async move {
-        match pool {
-            Some(pool) => reloading(pool, read).await,
-            None if is_reading => reading(read).await,
-            None => read.await,
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) fn has_fresh_reader() -> bool {
     READER.try_with(|_| ()).is_ok()

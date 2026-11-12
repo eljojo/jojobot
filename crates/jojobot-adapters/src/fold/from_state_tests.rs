@@ -11,7 +11,12 @@ use jojobot_domain::memory::{
     Override, Provenance, guard,
 };
 
-use super::image::Doc;
+/// A thing's scan and what it holds, as the store reads them and as the State
+/// builds them.
+struct Document {
+    scan: jojobot_domain::memory::search::DocScan,
+    fields: std::collections::BTreeMap<String, String>,
+}
 use crate::dolt::Dolt;
 use crate::dolt::memory::DoltMemory;
 use crate::dolt::migrate;
@@ -244,7 +249,18 @@ async fn compare(merged: bool) {
         .filter(|e| e.merged_into.is_none() && (e.id.0 == "person:lisa") == merged)
     {
         let handle = &entity.id;
-        let stored = Doc::load(&memory, handle).await.expect("the store reads");
+        let stored = Document {
+            scan: memory
+                .scan_entity(handle)
+                .await
+                .expect("the store reads")
+                .expect("the store holds the thing"),
+            fields: memory
+                .fields_versioned(handle)
+                .await
+                .expect("the store reads the fields")
+                .0,
+        };
         let held = state
             .document_parts(&ObjectId(stored.scan.doc_id.clone()), &declared)
             .unwrap_or_else(|| panic!("{handle}: the State holds the thing"));
@@ -387,8 +403,16 @@ async fn compare(merged: bool) {
             format!("{:?}", held.entity_versions),
             format!("{:?}", stored_versions),
         );
-        let assembled = Doc::from_state(&state, &ObjectId(stored.scan.doc_id.clone()), &declared)
-            .unwrap_or_else(|| panic!("{handle}: the State assembles a document"));
+        let object = ObjectId(stored.scan.doc_id.clone());
+        let assembled = Document {
+            scan: state
+                .document_scan(&object, &declared)
+                .unwrap_or_else(|| panic!("{handle}: the State assembles a document")),
+            fields: state
+                .scan(&object, &declared)
+                .unwrap_or_else(|| panic!("{handle}: the State scans the thing"))
+                .fields,
+        };
         differ(
             "unmapped histories",
             held.unmapped_histories == stored_unmapped,

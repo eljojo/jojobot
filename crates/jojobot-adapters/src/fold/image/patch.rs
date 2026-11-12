@@ -1,30 +1,23 @@
-//! A merge and a rename patch the image, and read only the things they touch
+//! A merge and a rename follow the image by reading the lists they change
 //! (work: q-merge-patches-image, rule 498).
 //!
-//! A merge or a rename can change the document of any thing that spells the
-//! handle it moves, so the old code read the whole image again behind the write
-//! gate. On a store of some hundreds of things that is thousands of
-//! transactions, and every other write and every poll waits for them.
+//! A merge or a rename moves a handle, so the listing, the rename history and the
+//! merge events are read again from the store. No document is held, so none is
+//! read: the claims State has the write and builds a thing's document when a
+//! read asks for it.
 //!
-//! **The touched set is worked out from the image, not from the store.** Every
-//! document the image holds spells the handles of the things it names, as they
-//! were served before the write. A document that spells the handle a write moves
-//! is a document the write can change; one that does not, cannot. The set is
-//! those documents, the things the write names, and nothing else. It is read
-//! from the store in the way the whole image is, one document at a time, so the
-//! image still holds what the store answers and never arithmetic of its own.
+//! **The things told to the index are the ones the write names and the ones that
+//! point at the handle it moves**, worked out from the State's records and not
+//! from a document held.
 //!
-//! **Where the patch cannot be made, the caller reads the whole image again.**
+//! **Where the lists cannot be read, the caller reads the whole image again.**
 //! A read that fails leaves the image as it was, and the caller's fallback
 //! replaces it.
 
-use std::fmt::Write as _;
 use std::sync::atomic::Ordering;
 
-use jojobot_domain::memory::numbered::numbered_handle;
-use jojobot_domain::memory::{Entity, EntityId, FormerHandle, MemoryError, MergeEvent};
+use jojobot_domain::memory::{EntityId, MemoryError};
 
-use super::{Doc, Image};
 use crate::fold::Folded;
 
 /// What the store has done, as the image has to follow it.
@@ -39,86 +32,6 @@ pub(in crate::fold) enum Change<'a> {
         from: &'a EntityId,
         to: &'a EntityId,
     },
-}
-
-/// The handles the image held before the write that a change can reach, and
-/// the handle each is read under now.
-struct Plan {
-    /// `(handle held, handle to read)` for each document to read again.
-    touched: Vec<(EntityId, EntityId)>,
-}
-
-/// Everything read from the store for one patch.
-struct Reads {
-    entities: Vec<Entity>,
-    former: Vec<FormerHandle>,
-    events: Vec<MergeEvent>,
-    docs: Vec<Doc>,
-}
-
-impl Image {
-    /// **The documents that spell any of `needles`**, in every part the image
-    /// keeps of them. A part is spelled out whole so a handle in a claim's words,
-    /// an edge, a field, a pointer or an earlier wording is found wherever it sits.
-    fn spelling(&self, needles: &[String]) -> Vec<EntityId> {
-        let mut spelled = String::new();
-        let mut found = Vec::new();
-        for (handle, doc) in &self.docs {
-            spelled.clear();
-            let _ = write!(spelled, "{:?}{:?}", doc.scan, doc.fields,);
-            if needles
-                .iter()
-                .any(|needle| spelled.contains(needle.as_str()))
-            {
-                found.push(handle.clone());
-            }
-        }
-        found.sort();
-        found
-    }
-
-    fn plan(&self, change: &Change<'_>) -> Plan {
-        let (needles, named): (Vec<String>, Vec<(EntityId, EntityId)>) = match change {
-            Change::Merged { folded, survivor } => (
-                vec![folded.to_string(), survivor.to_string()],
-                vec![
-                    ((*folded).clone(), (*folded).clone()),
-                    ((*survivor).clone(), (*survivor).clone()),
-                ],
-            ),
-            Change::Renamed { from, to } => {
-                // Holders spell the member's handle, not the number used by the write.
-                let from = self.entity(from).map(|entity| &entity.id).unwrap_or(from);
-                (
-                    vec![from.to_string()],
-                    vec![((*from).clone(), (*to).clone())],
-                )
-            }
-        };
-        let mut touched = named;
-        for held in self.spelling(&needles) {
-            if !touched.iter().any(|(was, _)| *was == held) {
-                touched.push((held.clone(), held));
-            }
-        }
-        Plan { touched }
-    }
-
-    /// **Take in what a patch read.** The documents, the listing, the rename
-    /// history and the merge events are put in place of the ones held.
-    fn patched(&mut self, reads: Reads) {
-        for doc in reads.docs {
-            self.take_in_doc(doc);
-        }
-        self.take_in_listing(reads.entities);
-        self.former = reads
-            .former
-            .into_iter()
-            .filter(|f| numbered_handle(&f.former).is_none())
-            .collect();
-        self.events = reads.events;
-        self.derive_numbered();
-    }
 }
 
 impl Folded {
@@ -142,62 +55,69 @@ impl Folded {
         }
     }
 
+    /// **The things a change names and the things that point at them**, each once.
+    fn touched_by(&self, change: &Change<'_>) -> Vec<EntityId> {
+        let named: Vec<&EntityId> = match change {
+            Change::Merged { folded, survivor } => vec![folded, survivor],
+            Change::Renamed { from, to } => vec![from, to],
+        };
+        let mut touched: Vec<EntityId> = named.iter().map(|id| (*id).clone()).collect();
+        for id in named {
+            if let Ok(holders) = self.claims(|state| state.holders_of(id)) {
+                for holder in holders {
+                    if !touched.contains(&holder) {
+                        touched.push(holder);
+                    }
+                }
+            }
+        }
+        touched
+    }
+
     /// **Bring the image up to date with a merge or a rename the store has
-    /// made**, reading the touched things and nothing else. The caller holds the
+    /// made**, reading the lists it changes and nothing else. The caller holds the
     /// write gate. An error leaves the image as it was.
     pub(in crate::fold) async fn patch(&self, change: Change<'_>) -> Result<(), MemoryError> {
         if !self.wanted.load(Ordering::SeqCst) {
             self.publish_things(Vec::new(), true);
             return Ok(());
         }
-        let Some(plan) = self.held(|image| image.plan(&change)) else {
+        if self.held(|_| ()).is_none() {
             return self.fill().await.map(|_| ());
-        };
-        let plan_handles: Vec<EntityId> = plan
-            .touched
-            .iter()
-            .flat_map(|(held, read)| [held.clone(), read.clone()])
-            .collect();
+        }
         let entities = self.inner.list_entities(None).await?;
         let former = self.inner.former_handles().await?;
         let events = self.inner.merge_events(None).await?;
-        let mut docs = Vec::with_capacity(plan.touched.len());
-        let width = self.inner.read_width().max(1);
-        let mut pending = plan.touched.iter();
-        loop {
-            let mut batch = tokio::task::JoinSet::new();
-            for (_, read) in pending.by_ref().take(width) {
-                let inner = self.inner.clone();
-                let read = read.clone();
-                batch.spawn(async move { Doc::load(&*inner, &read).await });
-            }
-            if batch.is_empty() {
-                break;
-            }
-            while let Some(done) = batch.join_next().await {
-                docs.push(done.map_err(|e| MemoryError::Store(e.to_string()))??);
-            }
-        }
-        let reads = Reads {
-            entities,
-            former,
-            events,
-            docs,
-        };
         let mut slot = self.image.write().expect("fold lock");
         let Some(image) = slot.as_mut() else {
             return Err(MemoryError::Store(
                 "the image went while a patch was read for it".into(),
             ));
         };
-        image.patched(reads);
+        image.patched(entities, former, events);
         self.generation.fetch_add(1, Ordering::SeqCst);
         drop(slot);
-        let mut touched: Vec<EntityId> = plan_handles;
-        touched.sort();
-        touched.dedup();
+        let touched = self.touched_by(&change);
         self.publish_things(touched, true);
         Ok(())
+    }
+}
+
+impl super::Image {
+    /// **Take in what a patch read.** The listing, the rename history and the
+    /// merge events are put in place of the ones held.
+    fn patched(
+        &mut self,
+        entities: Vec<jojobot_domain::memory::Entity>,
+        former: Vec<jojobot_domain::memory::FormerHandle>,
+        events: Vec<jojobot_domain::memory::MergeEvent>,
+    ) {
+        self.install(entities);
+        self.former = former
+            .into_iter()
+            .filter(|f| jojobot_domain::memory::numbered::numbered_handle(&f.former).is_none())
+            .collect();
+        self.events = events;
     }
 }
 

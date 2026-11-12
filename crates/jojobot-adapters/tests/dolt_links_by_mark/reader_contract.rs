@@ -209,9 +209,7 @@ async fn unmarked_person_alpha_links_nowhere_before_and_after_a_store_restart() 
         );
         assert_eq!(stored(&pool, &holder_badge, "legacy").await, legacy);
         readers::assert_links(Arc::new(memory.clone()), &holder, &plain, &marked).await;
-        let folded = Arc::new(
-            Folded::new(Arc::new(memory.clone())).with_boot_reader(Arc::new(memory.boot_reader())),
-        );
+        let folded = Arc::new(Folded::new(Arc::new(memory.clone())));
         folded.rebuild().await.unwrap();
         readers::assert_links(folded, &holder, &plain, &marked).await;
     }

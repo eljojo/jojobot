@@ -95,6 +95,21 @@ impl Probe<'_> {
             .any(|event| event.folded.as_str() == asked || event.survivor.as_str() == asked)
     }
 
+    /// Whether the store answers for any thing it lists.
+    async fn any_store_answers(&self) -> bool {
+        let listed = self
+            .direct
+            .list_entities(None)
+            .await
+            .expect("the store lists");
+        for entity in listed {
+            if self.store_answers(entity.id.as_str()).await {
+                return true;
+            }
+        }
+        false
+    }
+
     /// One read, asked of both, compared as bytes.
     async fn check<T, A, B>(
         &self,
@@ -117,7 +132,14 @@ impl Probe<'_> {
             from_fold, from_store,
             "{when}: {name}({subject}) answered differently from the fold than from the store"
         );
-        if self.switched.contains(&name) && !self.store_answers(subject).await {
+        // The whole scan is each listed thing's own scan, so it reaches the store
+        // for any thing the store answers for.
+        let from_the_store = if name == "scan" {
+            self.any_store_answers().await
+        } else {
+            self.store_answers(subject).await
+        };
+        if self.switched.contains(&name) && !from_the_store {
             assert_eq!(
                 made, 0,
                 "{when}: {name}({subject}) reached the store {made} time(s): {seen:?}"

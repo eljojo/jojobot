@@ -80,9 +80,7 @@ async fn statements_of_a_fill(store: &Dolt, name: &str, things: usize) -> i64 {
         fact.fields.insert("note".into(), format!("n{at}"));
         memory.capture(fact).await.expect("the claim is captured");
     }
-    // **As the binary wires it**: the fold is given the store's boot reader.
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone())))
-        .with_boot_reader(Arc::new(DoltMemory::open(pool.clone()).boot_reader()));
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
     let before = answered(&pool).await;
     folded.rebuild().await.expect("the image fills");
     let after = answered(&pool).await;

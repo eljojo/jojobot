@@ -43,8 +43,7 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 use jiff::civil::Date;
 
-use image::{Doc, Image};
-use jojobot_domain::memory::boot_reader::BootReader;
+use image::Image;
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FieldAges, FieldBacking, FieldWrite, FormerHandle, Guarded, Landed, Memory,
@@ -65,9 +64,6 @@ use jojobot_domain::memory::{
 pub struct Folded {
     writer: crate::writer::Writer,
     inner: Arc<dyn Memory>,
-    /// What the fill asks for many things at once, when the store has it. Used by
-    /// the fill alone: no read reaches it.
-    boot_reader: Option<Arc<dyn BootReader>>,
     /// The image, once a [`rebuild`](Folded::rebuild) has filled it; `None`
     /// sends every read to the store.
     image: Arc<RwLock<Option<Image>>>,
@@ -83,8 +79,8 @@ pub struct Folded {
     kinds: Arc<RwLock<Option<HeldKinds>>>,
     /// **Set while the boot's repair passes write, before the claims import.** The
     /// log holds no State then, so a refresh after such a write reads the store, as
-    /// every refresh did. TEMPORARY(9.3.3.1) `q-9331-no-memory-image`: the passes
-    /// go when their data is read from the log.
+    /// every refresh did. TEMPORARY(9.3.8), architect #f9 item 3, rule 682: the
+    /// import's own boot keeps the flag, and both modes go with `DoltMemory`.
     before_the_import: Arc<AtomicBool>,
     /// **How many times the image has changed**, bumped under the same lock
     /// that installs the change, so a reader that sees a number sees at least the
@@ -140,7 +136,6 @@ impl Folded {
         Folded {
             writer: crate::writer::Writer::default(),
             inner,
-            boot_reader: None,
             image: Arc::new(RwLock::new(None)),
             wanted: Arc::new(AtomicBool::new(false)),
             kinds: Arc::new(RwLock::new(None)),
@@ -231,14 +226,6 @@ impl Folded {
         self.writer.clone()
     }
 
-    /// **Give the fill a reader that answers for many things at once.** The
-    /// fill takes what it holds for a thing and reads anything else of that thing
-    /// as it always did, so a reader that answers for none changes nothing.
-    pub fn with_boot_reader(mut self, reader: Arc<dyn BootReader>) -> Self {
-        self.boot_reader = Some(reader);
-        self
-    }
-
     /// **Shadow the families a configuration value names** (see [`shadow`]), and
     /// refuse a name no family answers to.
     pub fn shadowing(mut self, families: &str) -> Result<Self, String> {
@@ -279,7 +266,7 @@ impl Folded {
     /// runs in the writer task. A failure leaves no image rather than a half one.
     async fn fill(&self) -> Result<usize, MemoryError> {
         let filled = crate::writer::sql::reading(Box::pin(async {
-            let image = Image::load(&self.inner, self.boot_reader.as_deref()).await?;
+            let image = Image::load(&*self.inner).await?;
             let kinds = self.inner.declared_kinds().await?;
             Ok::<_, MemoryError>((image, kinds))
         }))
@@ -386,26 +373,20 @@ impl Folded {
         if self.held(|_| ()).is_none() {
             return self.fill().await.map(|_| ());
         }
-        // **The thing's document, and the listing after an entity write, are built
-        // from the claims State this write has just changed.** A State that cannot
-        // be had fails the refresh ([`Folded::without_state`]). Two things are read
-        // from the store, each a named decline and not a missing State:
+        // **The listing after an entity write is built from the claims State this
+        // write has just changed**, and a claim write changes nothing the image
+        // holds. A State that cannot be had fails the refresh
+        // ([`Folded::without_state`]). Two things are read from the store, each a
+        // named decline and not a missing State:
         // - a thing a merge touched: TEMPORARY(9.3.4), owner card
-        //   `q-934-merge-version-row-in-state`, the merge's own row. The store
-        //   lists that row as a version of the folded handle and the State holds
-        //   no version for it yet, so the entity history of a merge survivor and
-        //   the document of a folded handle come from the store;
+        //   `q-934-merge-version-row-in-state`, the merge's own row, which the
+        //   store lists as a version of the folded handle;
         // - a role: its lease renewals are heartbeats kept off the log, so the State
         //   does not hold what a read of it serves: TEMPORARY(9.3.4), owner card
         //   `q-934-role-lease-read-from-heartbeat-home`.
         // **A record the build supplies is no decline**: the State holds it under its
-        // supply identity and answers its stored half, and the layer over the fold
-        // lays the shipped half on top.
+        // supply identity and the layer over the fold lays the shipped half on top.
         let from_the_store = self.before_the_import.load(Ordering::SeqCst);
-        // **The image holds no document of a supplied record no stored row wears**: its
-        // reads are the State's, or the store's for the one decline above, and the layer
-        // over the fold makes its scan. A claim written on it changes the State and
-        // nothing the image holds.
         if !from_the_store && !relist && self.is_supplied_only(handle) {
             self.generation.fetch_add(1, Ordering::SeqCst);
             return Ok(());
@@ -418,30 +399,24 @@ impl Folded {
                 if state.was_merged(object) || state.holds_a_lease(object) {
                     return None;
                 }
-                let doc = Doc::from_state(state, object, &state.declared_types_shared())?;
-                Some((relist.then(|| state.stored_listing()), doc))
+                Some(relist.then(|| state.stored_listing()))
             })
         };
         let read = async {
-            let (entities, doc) = match stated {
-                Err(unseen) => return Err(Self::without_state(unseen)),
-                Ok(Some((entities, doc))) => (entities, doc),
-                Ok(None) => {
-                    let entities = if relist {
-                        Some(self.inner.list_entities(None).await?)
-                    } else {
-                        None
-                    };
-                    (entities, Doc::load(&*self.inner, handle).await?)
-                }
-            };
-            Ok::<_, MemoryError>((entities, doc))
+            match stated {
+                Err(unseen) => Err(Self::without_state(unseen)),
+                Ok(Some(entities)) => Ok(entities),
+                Ok(None) if relist => Ok(Some(self.inner.list_entities(None).await?)),
+                Ok(None) => Ok(None),
+            }
         }
         .await;
         match read {
-            Ok((entities, doc)) => {
+            Ok(entities) => {
                 if let Some(image) = self.image.write().expect("fold lock").as_mut() {
-                    image.install(entities, doc);
+                    if let Some(entities) = entities {
+                        image.install(entities);
+                    }
                     self.generation.fetch_add(1, Ordering::SeqCst);
                 }
                 Ok(())
@@ -645,11 +620,9 @@ impl Memory for SharedFold {}
 #[async_trait]
 impl Memory for Folded {
     fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
-        self.held(|image| {
-            image
-                .doc(entity)
-                .ok()
-                .and_then(|doc| doc.fields.get(key).cloned())
+        self.stated(entity, |state, found, declared| {
+            let object = state.resolve(&found.id.0)?;
+            Some(state.fields(object, declared).get(key).cloned())
         })
     }
 
@@ -766,9 +739,40 @@ impl Memory for Folded {
 
     async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
         self.readable()?;
-        match self.held(Image::former) {
-            Some(former) => Ok(former),
-            None => self.inner.former_handles().await,
+        let (Some(mut former), Some(listing)) = (
+            self.held(Image::former),
+            self.held(|image| image.list(None)),
+        ) else {
+            return self.inner.former_handles().await;
+        };
+        // **The handles the held numbers make are derived from the State at read
+        // time and stored nowhere**, so a number that moves takes its handle with it.
+        let derived = self.claims(|state| {
+            let declared = state.declared_types_shared();
+            let fields: std::collections::BTreeMap<_, _> = listing
+                .iter()
+                .filter_map(|entity| {
+                    let object = state.resolve(&entity.id.0)?;
+                    Some((entity.id.clone(), state.fields(object, &declared)))
+                })
+                .collect();
+            if !fields
+                .values()
+                .any(|held| held.contains_key(jojobot_domain::memory::numbered::NUMBERS_BY))
+            {
+                return Vec::new();
+            }
+            jojobot_domain::memory::numbered::derived_formers(&listing, &fields)
+        });
+        match derived {
+            Ok(derived) => {
+                former.extend(derived);
+                Ok(former)
+            }
+            Err(_) => {
+                self.unheld()?;
+                self.inner.former_handles().await
+            }
         }
     }
 
@@ -1448,10 +1452,19 @@ impl Memory for Folded {
 
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         self.readable()?;
-        match self.held(Image::scan) {
-            Some(scanned) => Ok(scanned),
-            None => self.inner.scan().await,
+        // **Each listed thing's document is its own scan**, built from the State
+        // and not held; a thing the State declines is read from the store, as its
+        // own scan reads it.
+        let Some(listed) = self.held(|image| image.list(None)) else {
+            return self.inner.scan().await;
+        };
+        let mut scanned = Vec::with_capacity(listed.len());
+        for entity in &listed {
+            if let Some(doc) = self.scan_entity(&entity.id).await? {
+                scanned.push(doc);
+            }
         }
+        Ok(scanned)
     }
 
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
@@ -1684,31 +1697,17 @@ impl Memory for Folded {
             this.declare_type(declared, by_session.as_deref()).await
         );
         self.scoped(async {
+            // **A declaration the State already holds, word for word, changes no
+            // read.** A boot declares every type the build ships, so on a store that
+            // has them each of those must not move the generation.
+            let held_already = self
+                .claims(|state| state.declared_types_shared().contains(&declared))
+                .unwrap_or(false);
             let written = self.inner.declare_type(declared, by_session).await?;
-            // **A declaration the image already holds, word for word, folds nothing
-            // differently.** A boot declares every type the build ships, so on a
-            // store that has them each of those would read the whole image again.
-            if self
-                .held(|image| image.types().contains(&written))
-                .unwrap_or(false)
-            {
-                return Ok(written);
-            }
-            // **A declaration that changes what no thing held reads as needs no
-            // read of the store**: the image takes the type in and builds what it
-            // keeps by key again from the documents it holds. A fold that moves
-            // for a key something holds, or a reference or ordered type given to
-            // one, changes those documents, so that case reads the image again.
-            let patched = match self.image.write().expect("fold lock").as_mut() {
-                Some(image) if !image.declaration_changes_a_read(&written) => {
-                    image.declare(written.clone());
-                    self.generation.fetch_add(1, Ordering::SeqCst);
-                    true
-                }
-                _ => false,
-            };
-            if !patched {
-                Self::follow("declare_type", self.reload().await);
+            // **A declaration reads nothing of the store**: the claims State holds
+            // the types and builds what a thing holds under them when a read asks.
+            if !held_already {
+                self.generation.fetch_add(1, Ordering::SeqCst);
             }
             Ok(written)
         })

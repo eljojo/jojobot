@@ -1273,10 +1273,9 @@ async fn the_record_and_the_fold_link_by_the_marks_and_not_by_the_words() {
         .await
         .expect("and it drew no row");
 
-    let folded = std::sync::Arc::new(
-        jojobot_adapters::fold::Folded::new(std::sync::Arc::new(store_memory.clone()))
-            .with_boot_reader(std::sync::Arc::new(store_memory.boot_reader())),
-    );
+    let folded = std::sync::Arc::new(jojobot_adapters::fold::Folded::new(std::sync::Arc::new(
+        store_memory.clone(),
+    )));
     folded.rebuild().await.expect("the fold loads");
     for (what, claims) in [
         (

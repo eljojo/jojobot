@@ -132,12 +132,12 @@ async fn a_prose_write_is_served_as_a_fold_filled_anew_serves_it() {
     );
 }
 
-/// **A role's document is read from the store after a write**, because a lease
-/// renewal is a heartbeat kept off the log, which the State does not hold. The
-/// case that renews a lease and reads it back is the upgrade gate's
-/// `appended-lease-tail`.
+/// **No document of a role is read after a write**: the fold holds none. A lease
+/// renewal is a heartbeat kept off the log, which the State does not hold, so a
+/// read of a role is the store's; the case that renews a lease and reads it back
+/// is the upgrade gate's `appended-lease-tail`.
 #[tokio::test]
-async fn a_claim_write_on_a_role_reads_its_document_from_the_store() {
+async fn a_claim_write_on_a_role_reads_no_document() {
     let (folded, counted, _store) = folded_over_a_counted_fake().await;
     let role = EntityId("role:sigma".into());
     folded
@@ -155,8 +155,8 @@ async fn a_claim_write_on_a_role_reads_its_document_from_the_store() {
         .expect("not blocked");
     let seen = counted.seen();
     assert!(
-        seen.contains_key("scan_entity"),
-        "the document of a role was not read from the store: {seen:?}"
+        !seen.contains_key("scan_entity") && !seen.contains_key("scan"),
+        "the document of a role was read from the store: {seen:?}"
     );
 }
 

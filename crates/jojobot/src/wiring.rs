@@ -57,7 +57,6 @@ use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::mention as mailbox_mention;
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
 use jojobot_domain::memory::Memory;
-use jojobot_domain::memory::boot_reader::BootReader;
 use jojobot_domain::memory::mention;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::search::Search;
@@ -189,27 +188,20 @@ pub async fn assemble_memory(
     resolved: Arc<dyn Memory>,
     supplied: Provisions,
 ) -> anyhow::Result<(Arc<Folded>, Arc<IndexedMemory>)> {
-    assemble_memory_with(resolved, supplied, Clock::default(), None).await
+    assemble_memory_with(resolved, supplied, Clock::default()).await
 }
 
 /// **[`assemble_memory`], dating the claims the supply layer writes with `clock`**
 /// (the clock the store beneath stamps with, so an instance acting out a day dates
-/// an operator's name on a supplied record with that day), **and with the reader the
-/// fold's fill takes its reads from.** Without one, the fill reads each thing on its
-/// own.
+/// an operator's name on a supplied record with that day).
 pub async fn assemble_memory_with(
     resolved: Arc<dyn Memory>,
     supplied: Provisions,
     clock: Clock,
-    boot_reader: Option<Arc<dyn BootReader>>,
 ) -> anyhow::Result<(Arc<Folded>, Arc<IndexedMemory>)> {
     // The boot registry chooses which families compare image and store reads;
     // the image's answer is served throughout the shadow.
-    let mut folded = crate::features::at_boot(resolved).await?;
-    if let Some(reader) = boot_reader {
-        folded = folded.with_boot_reader(reader);
-    }
-    let folded = Arc::new(folded);
+    let folded = Arc::new(crate::features::at_boot(resolved).await?);
     // **What the build supplies is laid over the fold**, the one place
     // shipped-ness lives. It sits UNDER the index on purpose: the index is a
     // reader, and a reader that saw something no other reader sees would be a
@@ -638,9 +630,6 @@ pub async fn boot_store_observed(
     let bare_memory = DoltMemory::open(store.pool().clone())
         .knowing(supplied.clone())
         .on_clock(clock);
-    // **The fold's fill reads from the store a table at a time**, and holds the
-    // stored half only: what the build ships is laid over the fold, not under it.
-    let boot_reader: Arc<dyn BootReader> = Arc::new(bare_memory.boot_reader());
     let resolved = open_provisioned(bare_memory.clone(), supplied.clone()).await?;
 
     // **A handle the build stopped supplying, or renamed, keeps the writes the
@@ -831,13 +820,8 @@ pub async fn boot_store_observed(
     // scan is not fatal: the store is the truth, and refusing to start
     // because a projection couldn't be built is worse than a thin `search`.
     // It says so loudly instead.
-    let (folded, indexed) = assemble_memory_with(
-        observation.memory(resolved),
-        supplied.clone(),
-        clock,
-        Some(boot_reader),
-    )
-    .await?;
+    let (folded, indexed) =
+        assemble_memory_with(observation.memory(resolved), supplied.clone(), clock).await?;
     fill_memory(&folded, &indexed).await;
     // **A boot write is bare only before the import.** Once the import is done the
     // State exists, so the repair passes below write through a journaled store and

@@ -28,6 +28,27 @@ impl State {
             .is_some_and(|prose| !prose.trim().is_empty())
     }
 
+    /// **The things that hold a record pointing at a thing, or a record worked out
+    /// from one of its claims**, each once, in handle order. What a merge or a
+    /// rename of the thing can change in what those things serve.
+    pub fn holders_of(&self, target: &crate::memory::EntityId) -> Vec<EntityId> {
+        let mut holders: std::collections::BTreeSet<EntityId> = self
+            .referring(target)
+            .into_iter()
+            .map(|fact| fact.address().home)
+            .collect();
+        if let Some(object) = self.resolve(&target.0) {
+            for record in self.records_homed_on(object) {
+                for built in self.records_built_on(record) {
+                    if let Some(fact) = self.fact(built) {
+                        holders.insert(fact.address().home);
+                    }
+                }
+            }
+        }
+        holders.into_iter().collect()
+    }
+
     /// **The claims of a thing that cannot be served**, listed in no event of the
     /// merge that left them under it: only these are built, and no claim of the
     /// thing is.

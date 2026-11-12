@@ -129,10 +129,16 @@ async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
         )
         .await
         .expect("declared differently");
-    assert!(
-        counted.calls() > 1,
-        "a declaration that differs must read the image again: {:?}",
-        counted.seen()
+    assert_eq!(
+        counted.seen(),
+        std::collections::BTreeMap::from([("declare_type", 1)]),
+        "a declaration that differs reads no thing again: the State builds what a thing holds"
+    );
+    let delta = jojobot_domain::memory::EntityId("thing:delta".into());
+    assert_eq!(
+        folded.fields(&delta).await.expect("the fold reads"),
+        store.fields(&delta).await.expect("the store reads"),
+        "the fold serves what a thing holds under the new declaration as the store does"
     );
 }
 
@@ -215,12 +221,12 @@ async fn declaring_a_new_type_reads_the_store_only_for_the_declaration() {
     }
 }
 
-/// **A declaration that changes how a held key reads reads the image again.**
-/// A counter changes what a thing holds, and a reference changes how its value
-/// is served; the image holds both as the store served them. **The negative is
-/// paired above**: the same declaration over an unheld key reads nothing.
+/// **A declaration that changes how a held key reads reads nothing again, and
+/// the thing is served under it.** A counter changes what a thing holds, and a
+/// reference changes how its value is served; the State builds both when a read
+/// asks, so the store is reached for the declaration alone.
 #[tokio::test]
-async fn declaring_what_changes_how_a_held_key_reads_reads_the_image_again() {
+async fn declaring_what_changes_how_a_held_key_reads_no_thing_again() {
     use jojobot_domain::memory::Memory;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 
@@ -242,36 +248,39 @@ async fn declaring_what_changes_how_a_held_key_reads_reads_the_image_again() {
             .declare_type(DeclaredType::new(name, vec![field]), None)
             .await
             .expect("declared");
-        assert!(
-            counted.seen().get("scan").is_some_and(|reads| *reads >= 1),
-            "{name} changes how a held key reads and the image was not read again: {:?}",
-            counted.seen()
+        assert_eq!(
+            counted.seen(),
+            std::collections::BTreeMap::from([("declare_type", 1)]),
+            "{name} changes how a held key reads and a thing was read again"
+        );
+        let delta = jojobot_domain::memory::EntityId("thing:delta".into());
+        assert_eq!(
+            folded.fields(&delta).await.expect("the fold reads"),
+            store.fields(&delta).await.expect("the store reads"),
+            "{name}: the fold serves the thing as the store does"
         );
     }
 }
 
-/// **Re-declaring a held reference key as a list reads the image again.** The
-/// store splits the value of a list of references per item, so the image holds
-/// the value as the store served it under the old declaration and has to read
-/// it again. **The negative is paired**: making a held key that is no reference
-/// a list changes how no value is served, so nothing is read.
+/// **Re-declaring a held key as a list reads no thing again.** The store splits
+/// the value of a list of references per item; the State builds the value under
+/// the declaration in force when a read asks, so the store is reached for the
+/// declaration alone, for a reference and for a text key alike.
 #[tokio::test]
-async fn re_declaring_a_held_reference_as_a_list_reads_the_image_again() {
+async fn re_declaring_a_held_key_as_a_list_reads_no_thing_again() {
     use jojobot_domain::memory::Memory;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 
-    for (name, first, second, reads_again) in [
+    for (name, first, second) in [
         (
             "list-points-held",
             Field::new("weight", ValueType::Reference),
             Field::listing("weight", ValueType::Reference),
-            true,
         ),
         (
             "list-text-held",
             Field::new("weight", ValueType::Text),
             Field::listing("weight", ValueType::Text),
-            false,
         ),
     ] {
         let store = Arc::new(InMemoryMemory::booted());
@@ -289,17 +298,16 @@ async fn re_declaring_a_held_reference_as_a_list_reads_the_image_again() {
             .declare_type(DeclaredType::new(name, vec![second]), None)
             .await
             .expect("declared again");
-        let read_again = counted.seen().get("scan").is_some_and(|reads| *reads >= 1);
         assert_eq!(
-            read_again,
-            reads_again,
-            "{name}: the image {} after the key became a list: {:?}",
-            if read_again {
-                "was read again"
-            } else {
-                "was not read again"
-            },
-            counted.seen()
+            counted.seen(),
+            std::collections::BTreeMap::from([("declare_type", 1)]),
+            "{name}: a thing was read again after the key became a list"
+        );
+        let delta = jojobot_domain::memory::EntityId("thing:delta".into());
+        assert_eq!(
+            folded.fields(&delta).await.expect("the fold reads"),
+            store.fields(&delta).await.expect("the store reads"),
+            "{name}: the fold serves the thing as the store does"
         );
     }
 }
