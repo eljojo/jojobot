@@ -690,6 +690,12 @@ struct Shape {
     runs: i64,
     journal_entries: i64,
     journal_bytes: i64,
+    /// What a write of a claim carries beside its text, which the claims State keeps
+    /// with every write and the images do not: the receipt it was served, the
+    /// application stamp, and the references and claims it stands for.
+    receipt_bytes: i64,
+    stamp_bytes: i64,
+    link_bytes: i64,
 }
 
 async fn shape_in(pool: &sqlx::MySqlPool) -> Shape {
@@ -735,6 +741,21 @@ async fn shape_in(pool: &sqlx::MySqlPool) -> Shape {
             "(SELECT COALESCE(SUM(LENGTH(text)), 0) FROM journal_entry)",
         )
         .await,
+        receipt_bytes: count_of(
+            pool,
+            "(SELECT COALESCE(SUM(LENGTH(receipt)), 0) FROM fact_write)",
+        )
+        .await,
+        stamp_bytes: count_of(
+            pool,
+            "(SELECT COALESCE(SUM(LENGTH(app_stamp)), 0) FROM fact_write)",
+        )
+        .await,
+        link_bytes: count_of(
+            pool,
+            "(SELECT COALESCE(SUM(COALESCE(LENGTH(refs), 0) + COALESCE(LENGTH(stands_for), 0)), 0) FROM fact_write)",
+        )
+        .await,
     }
 }
 
@@ -755,7 +776,8 @@ fn shape_line(when: &str, shape: &Shape) -> String {
     format!(
         "memory-report store: {when}: {} claims, {} claim writes ({} bytes, deepest {} writes), \
          {} field writes ({} bytes), {} event batches ({} bytes), {} messages ({} bytes), \
-         {} runs, {} journal entries ({} bytes)",
+         {} runs, {} journal entries ({} bytes); claim writes also carry {} receipt bytes, {} \
+         stamp bytes and {} link bytes",
         shape.claims,
         shape.claim_writes,
         shape.claim_write_bytes,
@@ -769,6 +791,9 @@ fn shape_line(when: &str, shape: &Shape) -> String {
         shape.runs,
         shape.journal_entries,
         shape.journal_bytes,
+        shape.receipt_bytes,
+        shape.stamp_bytes,
+        shape.link_bytes,
     )
 }
 
@@ -1071,34 +1096,6 @@ fn verdict(kib: u64) -> &'static str {
     }
 }
 
-/// **The first-boot half of the report.** A first boot over the production-sized
-/// store, read as the server's own memory through each projection it builds. The
-/// replay of a day is its own case, which the lane's deadline does not bound.
-/// **It runs in the memory job beside the day** (rule 810: the ship-proof runs are
-/// measurements, and the one-minute limit binds every test but them), so no case in
-/// the check run waits on a first boot over the production-sized store.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "runs in the memory job, which has its own deadline, never in `make check`"]
-async fn the_servers_memory_across_a_first_boot() {
-    let boot = first_boot().await;
-    record_per_thing(&boot);
-    record(&format!(
-        "memory-report summary: the server's peak through the first boot {} ({} {}); the store \
-         beside it peaked at {}",
-        mib(boot.server_peak),
-        verdict(boot.server_peak),
-        mib(super::memory_bound_kib()),
-        mib(boot.store_peak),
-    ));
-    // **The orderly stop takes a snapshot, so the next boot loads it**: no import,
-    // the boot over the store's own snapshot. Its stop takes another, which the
-    // last boot removes: a boot with none to load is the one the deploy of the next
-    // release makes. These two, not the import boot, are the bound's.
-    let (state, _) = boot.run.stopped();
-    let state = second_boot(state);
-    no_snapshot_boot(state).await.stopped();
-}
-
 /// **The replay half of the report: a whole day of calls through the server
 /// that has just booted.** The day is the kinds of call the live instance makes in
 /// the proportions its metrics show, made with no time budget, so the server's
@@ -1112,10 +1109,14 @@ async fn the_servers_memory_after_a_replayed_day() {
     let boot = first_boot().await;
     record_per_thing(&boot);
     // **The import boot prepares the store and is not the server of the day.** Its
-    // peaks are kept for the summary; the day runs on the boot with no snapshot,
-    // which is the boot production pays when the next release is deployed.
+    // peaks are kept for the summary. Its orderly stop takes a snapshot, so the next
+    // boot loads it: no import, the boot over the store's own snapshot. Its stop takes
+    // another, which the last boot removes: a boot with none to load is the one the
+    // deploy of the next release makes, and the day runs on it. These two boots and the
+    // day, not the import boot, are the bound's.
     let (server_peak, store_peak) = (boot.server_peak, boot.store_peak);
     let (prepared, _) = boot.run.stopped();
+    let prepared = second_boot(prepared);
     let served = no_snapshot_boot(prepared).await;
     let (pid, port) = (served.pid, served.http_port);
     let replayed = replay_day(pid, port, 0, Duration::MAX).await;
@@ -1492,13 +1493,16 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
             runs: 21,
             journal_entries: 22,
             journal_bytes: 23,
+            receipt_bytes: 24,
+            stamp_bytes: 25,
+            link_bytes: 26,
         };
         let line = shape_line("before the boot", &shape);
         assert!(
             line.starts_with("memory-report store: before the boot: "),
             "{line}"
         );
-        for number in 11..=23 {
+        for number in 11..=26 {
             let words: Vec<&str> = line.split(|c: char| !c.is_ascii_digit()).collect();
             assert_eq!(
                 words
@@ -1549,6 +1553,15 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
             .await
             .expect("a write of a claim");
         }
+        // The metadata a write carries beside its text: the receipt it was served, the
+        // application stamp, and the links to other claims.
+        sqlx::query(
+            "UPDATE fact_write SET receipt = 'rrrr', app_stamp = 'ss', refs = 'lll', \
+             stands_for = 'mm' WHERE fact_id = 'f1' AND ordinal = 2",
+        )
+        .execute(&pool)
+        .await
+        .expect("a write carries its metadata");
         sqlx::query(
             "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id) \
              VALUES ('person:homer', 'diet', 1, 'donuts', 'f1')",
@@ -1600,6 +1613,12 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         assert!(
             shape.claim_write_bytes >= ("eats donuts".len() + "eats donuts daily".len()) as i64,
             "{shape:?}"
+        );
+        assert_eq!(shape.receipt_bytes, 4, "{shape:?}");
+        assert_eq!(shape.stamp_bytes, 2, "{shape:?}");
+        assert_eq!(
+            shape.link_bytes, 5,
+            "the references and the claims it stands for: {shape:?}"
         );
         assert_eq!(shape.field_writes, 1, "{shape:?}");
         assert_eq!(shape.field_write_bytes, "donuts".len() as i64, "{shape:?}");

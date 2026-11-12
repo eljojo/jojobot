@@ -595,7 +595,14 @@ async fn remove_the_recorders_log(pool: &sqlx::MySqlPool) {
 /// production's totals were never read, so this factor is fitted. It is the one
 /// number the memory job's first-boot peak is set against production's reading
 /// (3.47 GiB at 9.3.3's first boot), and the card says it is an estimate.
-const FITTED_PAD_FACTOR: i64 = 20;
+///
+/// **It is zero.** At 20 the import boot peaked at 3,169 MiB, 89 percent of
+/// production's, but the padding raised the steps that already matched (the images
+/// reached 1,866 MiB where production's were 0.8 to 1.0 GiB) and barely moved the
+/// import step that does not (357 MiB against production's 2.6 GiB). Content bytes
+/// are not the lever. The store line now prints the bytes a write carries beside its
+/// text (receipt, stamp, links); the padding returns when those name the lever.
+const FITTED_PAD_FACTOR: i64 = 0;
 
 /// **The day production's per-table byte totals and claim-revision depth were read**, and
 /// the constants above are replaced by them. None while they are unread: the report

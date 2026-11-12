@@ -979,22 +979,21 @@ fn the_memory_replay_has_a_job_that_cannot_stop_the_check() {
     );
 }
 
-/// **Both memory cases run in the memory job and in no other run** (rule 810: the
+/// **The memory case runs in the memory job and in no other run** (rule 810: the
 /// ship-proof runs are measurements, and rule 651's minute binds every test but
-/// them). Each is ignored in the check lane, and the memory job's script names
-/// each one, so a case that is ignored and named nowhere cannot slip out of both.
-/// **The positive is in the same case**: both cases are found and both are named.
+/// them). It is ignored in the check lane, and the memory job's script names it, so
+/// a case that is ignored and named nowhere cannot slip out of both. It is one case:
+/// the import boot, the boot over the snapshot, the boot with none and the day share
+/// one restored store, so the store is restored and the import is run once.
+/// **The positive is in the same case**: the case is found and it is named.
 #[test]
-fn both_memory_cases_are_ignored_in_the_check_run_and_named_by_the_memory_job() {
+fn the_memory_case_is_ignored_in_the_check_run_and_named_by_the_memory_job() {
     let script = std::fs::read_to_string(root().join("scripts/memory-day")).expect("the script");
     let source =
         std::fs::read_to_string(root().join("crates/jojobot/tests/boot_measures/memory_report.rs"))
             .expect("the memory report");
     let lines: Vec<&str> = source.lines().collect();
-    for case in [
-        "the_servers_memory_across_a_first_boot",
-        "the_servers_memory_after_a_replayed_day",
-    ] {
+    for case in ["the_servers_memory_after_a_replayed_day"] {
         let at = lines
             .iter()
             .position(|line| line.trim_start().starts_with(&format!("async fn {case}(")))

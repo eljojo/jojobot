@@ -635,7 +635,7 @@ fn the_verdict_file_is_the_last_line(dir: &Path, said: &str) {
 #[test]
 fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
     let dir =
-        bundle("echo 'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'");
+        bundle("echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'");
     let out = run(&dir, "60");
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -651,8 +651,8 @@ fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
     };
     assert_eq!(
         seen("seen-args"),
-        "--ignored --exact memory_report::the_servers_memory_across_a_first_boot \
-         memory_report::the_servers_memory_after_a_replayed_day --nocapture --test-threads=1"
+        "--ignored --exact memory_report::the_servers_memory_after_a_replayed_day \
+         --nocapture --test-threads=1"
     );
     let package = dir.join("crates/jojobot");
     assert_eq!(seen("seen-dir"), package.display().to_string());
@@ -675,7 +675,7 @@ fn memory_day_runs_the_checks_boot_measures_binary_where_the_bar_runs_it() {
 }
 
 const PASSED: &str =
-    "echo 'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'";
+    "echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'";
 
 /// **The verdict states both of rule 800's numbers against its 4 GiB, and reads OVER
 /// when either reaches it.** The first-boot peak and the resident memory after the
@@ -814,9 +814,11 @@ fn memory_day_verdict_names_the_larger_of_the_two_import_boot_peaks_and_does_not
 }
 
 /// **The import boot is printed beside production's reading, as fitted.** Production's
-/// first boot at 9.3.3 held 3.47 GiB (3,553 MiB); the verdict names it and the share
-/// this run's import boot is of it, and says the comparison is fitted while production's
-/// byte totals are unread.
+/// first boot at 9.3.3 held 3.47 GiB (3,553 MiB): the Rust process's resident memory at
+/// the first sample after serving began, one instant. The share is therefore taken from
+/// this run's resident memory after the import boot, not from its peak, which is the
+/// most it held at any moment; the verdict names both and says the comparison is fitted
+/// while production's byte totals are unread.
 #[test]
 fn memory_day_verdict_prints_the_import_boot_beside_production_as_fitted() {
     let dir = bundle_with(PASSED, "1776.5", "1625.9");
@@ -824,12 +826,19 @@ fn memory_day_verdict_prints_the_import_boot_beside_production_as_fitted() {
     let said = String::from_utf8_lossy(&out.stdout);
     let verdict = said.lines().last().unwrap();
     assert!(verdict.starts_with("memory-day: ok"), "{verdict}");
-    for word in ["1776.5", "3553", "50%", "fitted"] {
+    // The bundle's import boot line holds a resident memory after boot of 1146.2 MiB,
+    // 32 percent of production's 3,553, and a peak of 1776.5 MiB, which would be 50
+    // percent and is not the share.
+    for word in ["1776.5", "1146.2", "3553", "32%", "fitted"] {
         assert!(
             verdict.contains(word),
             "the verdict lacks {word}: {verdict}"
         );
     }
+    assert!(
+        !verdict.contains("50%"),
+        "the share is taken from the peak: {verdict}"
+    );
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -947,12 +956,12 @@ fn memory_day_verdict_fails_a_report_with_no_second_boot() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-/// **The deadline leaves room for both cases and stays under the job's own timeout.**
-/// The day took 1,756 s and a first boot up to 300 s in the runs so far; the memory job
-/// is stopped at 60 minutes. Nothing outside the script declares its default, so the
-/// value is pinned here.
+/// **The deadline leaves room for the case on a loaded runner and stays under the
+/// job's own timeout.** The day took 1,756 to 2,000 s on a free runner and about 3,450 s
+/// on a loaded one, with the boots before it under 300 s; the memory job is stopped at 90
+/// minutes. Nothing outside the script declares its default, so the value is pinned here.
 #[test]
-fn memory_day_default_deadline_is_3300_seconds_under_the_jobs_hour() {
+fn memory_day_default_deadline_is_4800_seconds_under_the_jobs_ninety_minutes() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/memory-day");
     let out = support::output_fenced(
         Command::new("python3")
@@ -966,7 +975,7 @@ fn memory_day_default_deadline_is_3300_seconds_under_the_jobs_hour() {
     )
     .unwrap();
     let deadline: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
-    assert_eq!(deadline, 3300);
+    assert_eq!(deadline, 4800);
     let workflow = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.forgejo/workflows/pull-request.yml"),
     )
@@ -1031,7 +1040,7 @@ fn memory_day_verdict_ignores_what_an_earlier_invocation_wrote() {
 /// day of its own in less than the earlier report held.
 #[test]
 fn memory_day_verdict_reads_a_report_replaced_by_a_shorter_file_whole() {
-    let boot = "memory-report boot: server peak 1200.0 MiB";
+    let boot = "memory-report boot: server peak 1200.0 MiB, server resident after boot 1100.0 MiB";
     let second = "memory-report second boot: server peak 900.0 MiB";
     let nosnap = "memory-report no-snapshot boot: server peak 950.0 MiB";
     let day = "memory-report day: server resident 1500.0 MiB at the end, 1500.0 MiB at the most; \
@@ -1131,12 +1140,13 @@ fn memory_day_is_red_when_no_test_ran() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-/// A name no test carries selects one case of the two: the binary exits zero and
-/// counts one pass, and the run is still red.
+/// A name no test carries selects none: the binary exits zero and counts no pass, and
+/// the run is still red.
 #[test]
-fn memory_day_is_red_when_only_one_of_the_two_cases_ran() {
-    let dir =
-        bundle("echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out'");
+fn memory_day_is_red_when_the_case_did_not_run() {
+    let dir = bundle(
+        "echo 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out'",
+    );
     let out = run(&dir, "60");
     let said = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{said}");

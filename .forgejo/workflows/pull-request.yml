@@ -418,7 +418,7 @@ jobs:
   memory:
     needs: [static, build, boot-store]
     runs-on: nix-x86_64
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Runner cleanup
         run: |

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Run the memory job's two cases, the cases of the boot_measures binary that the
-check lane ignores: a first boot, then the whole-day replay. CI's memory job runs
-them; `make memory` is the same command.
+"""Run the memory job's case, the case of the boot_measures binary that the check lane
+ignores: the import boot, the boot over its snapshot, the boot with none, and the
+whole-day replay on that last server. CI's memory job runs it; `make memory` is the
+same command.
 
-The cases boot the current binary over the production-sized store (BOOT_STORE_DIR);
-the day makes every entry of a day through the running server too. They write their
-numbers to target/bar/boot-measures.log. They are measurements, not tests (rule
-810), and take longer than the check lane allows one test binary, so this runs them
-alone, one after the other, with a deadline of its own for both
-(MEMORY_DAY_DEADLINE_SECONDS, 3300 by default).
+The case boots the current binary over the production-sized store (BOOT_STORE_DIR);
+the day makes every entry of a day through the running server too. It writes its
+numbers to target/bar/boot-measures.log. It is a measurement, not a test (rule 810),
+and takes longer than the check lane allows one test binary, so this runs it alone,
+with a deadline of its own (MEMORY_DAY_DEADLINE_SECONDS, 4800 by default).
 
 With BAR_BUNDLE the binary is the one the bundle holds for the check lane, run
 where the bar runs it: in its package's directory, with CARGO_MANIFEST_DIR and the
@@ -26,14 +26,17 @@ import subprocess
 import sys
 import time
 
-# Both are measurements, not tests (rule 810): the first boot, then the replayed day.
+# One measurement, not a test (rule 810): the import boot that prepares the store, the boot
+# over its snapshot, the boot with none, and the day replayed on that last server. One case,
+# so the store is restored and the import run once: two cases each did both, and a loaded
+# runner took the pair past the deadline.
 CASES = [
-    "memory_report::the_servers_memory_across_a_first_boot",
     "memory_report::the_servers_memory_after_a_replayed_day",
 ]
-# Room for both cases: the day took 1,756 s and a first boot up to 300 s in the runs so
-# far. The memory job is stopped at 60 minutes, which stays above it.
-DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "3300"))
+# Room for the case on a loaded runner: the day took 1,756 to 2,000 s on a free runner and
+# about 3,450 s (1.5 entries a second) on a loaded one, and the three boots and the import
+# before it under 300 s. The memory job is stopped at 90 minutes, which stays above it.
+DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "4800"))
 # Rule 800's bound on the server's own memory, 4 GiB. It is not the unit's memoryMax,
 # which a later rule moves.
 LIMIT_MIB = 4096.0
@@ -136,18 +139,23 @@ def report_lines(measures, start):
 
 def measured(lines):
     """The numbers rule 800 bounds, in MiB as the report writes them, and the import
-    boot beside them. The import boot (the larger of the two the job makes) prepares
+    boot beside them. The import boot (the larger if the job makes more than one) prepares
     the store and is printed beside production's reading, not bound. Bound are the
     boots production can pay on the import-done store: the no-snapshot boot (the larger
-    of the two the job makes; the day runs on the second), and the second boot over the
+    if the job makes more than one; the day runs on it), and the second boot over the
     snapshot the first one left; and its resident memory at the end of the day, and the
     most it held in the day. Production is killed at its peak and not where it settles, so the
     last is the larger of the day's highest sample and the process's own peak. None for
     a number these lines do not hold."""
-    boot = second = no_snapshot = day = highest = None
+    boot = boot_resident = second = no_snapshot = day = highest = None
     for line in lines:
         found = re.search(r"^memory-report boot: .*?server peak ([0-9.]+) MiB", line)
         boot = larger(boot, found.group(1) if found else None)
+        # Production's reading is one instant, the resident memory after its boot, so
+        # the share is taken from this run's resident memory after the boot, the larger
+        # of the two the job makes.
+        found = re.search(r"^memory-report boot: .*?server resident after boot ([0-9.]+) MiB", line)
+        boot_resident = larger(boot_resident, found.group(1) if found else None)
         found = re.search(r"^memory-report second boot: .*?server peak ([0-9.]+) MiB", line)
         second = larger(second, found.group(1) if found else None)
         found = re.search(r"^memory-report no-snapshot boot: .*?server peak ([0-9.]+) MiB", line)
@@ -157,7 +165,7 @@ def measured(lines):
         for pattern in (r"([0-9.]+) MiB at the most", r"; peak ([0-9.]+) MiB"):
             found = re.search(r"^memory-report day: .*?" + pattern, line)
             highest = larger(highest, found.group(1) if found else None)
-    return boot, second, no_snapshot, day, highest
+    return boot, boot_resident, second, no_snapshot, day, highest
 
 
 def main():
@@ -190,7 +198,7 @@ def main():
         verdict = f"memory-day: FAILED, not every case ran: {' and '.join(CASES)} were not all found in the binary"
         code = 1
     else:
-        boot, second, no_snapshot, day, highest = measured(lines)
+        boot, boot_resident, second, no_snapshot, day, highest = measured(lines)
         missing = [name for name, number in (("import-boot peak", boot),
                                              ("no-snapshot-boot peak", no_snapshot),
                                              ("second-boot peak", second),
@@ -200,10 +208,10 @@ def main():
         # The import boot prepares the store and is the calibration pair beside
         # production's own reading; it is not bound. The boots production can pay are.
         beside = ""
-        if boot is not None:
-            share = round(100 * float(boot) / PRODUCTION_FIRST_BOOT_MIB)
-            beside = (f"import boot {boot} MiB, {share}% of production's "
-                      f"{PRODUCTION_FIRST_BOOT_MIB:.0f} MiB ({COMPARISON}), ")
+        if boot is not None and boot_resident is not None:
+            share = round(100 * float(boot_resident) / PRODUCTION_FIRST_BOOT_MIB)
+            beside = (f"import boot resident {boot_resident} MiB (peak {boot} MiB), {share}% of "
+                      f"production's {PRODUCTION_FIRST_BOOT_MIB:.0f} MiB ({COMPARISON}), ")
         numbers = (f"{beside}no-snapshot boot {no_snapshot} MiB, second-boot peak {second} MiB, "
                    f"resident after the day {day} MiB, highest in the day {highest} MiB")
         if missing:
