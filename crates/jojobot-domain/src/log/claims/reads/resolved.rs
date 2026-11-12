@@ -9,7 +9,7 @@ use super::super::State;
 use crate::log::ObjectId;
 use crate::memory::numbered::{nearest_numbers, numbered_handle};
 use crate::memory::{
-    Entity, EntityId, EntityKind, MemoryError, guard, types::DeclaredType, writers_in,
+    Entity, EntityId, EntityKind, MemoryError, MergeEvent, guard, types::DeclaredType, writers_in,
 };
 
 impl State {
@@ -27,6 +27,22 @@ impl State {
         let key = self.numbers_by(object)?;
         let member = self.numbered_member(object, &key, number)?;
         self.entity(&self.handle_of(member)?)
+    }
+
+    /// **The merges that folded a thing or folded something into it**, the thing
+    /// a spelling names: the handle a thing wore, folded or not, one it wore
+    /// before a rename, or a number under a collection. None for a spelling
+    /// nothing answers to.
+    pub fn merge_events_of(&self, spelling: &EntityId) -> Vec<MergeEvent> {
+        let wanted = self
+            .addresses
+            .get(&spelling.0)
+            .and_then(|own| self.own_handle_of(own))
+            .or_else(|| self.canonical_handle(&spelling.0))
+            .or_else(|| self.resolved_entity(spelling).map(|found| found.id));
+        wanted
+            .map(|handle| self.merge_events(Some(&handle)))
+            .unwrap_or_default()
     }
 
     /// **The miss a read of a spelling nothing answers to gets**, as the store

@@ -876,9 +876,16 @@ impl Memory for Folded {
         entity: Option<&EntityId>,
     ) -> Result<Vec<jojobot_domain::memory::MergeEvent>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.merge_events(entity)) {
-            Some(answer) => Ok(answer),
-            None => self.inner.merge_events(entity).await,
+        if self.held(|_| ()).is_none() {
+            return self.inner.merge_events(entity).await;
+        }
+        let read = self.claims(|state| match entity {
+            Some(spelling) => state.merge_events_of(spelling),
+            None => state.merge_events(None),
+        });
+        match read {
+            Ok(events) => Ok(events),
+            Err(_) => self.inner.merge_events(entity).await,
         }
     }
 

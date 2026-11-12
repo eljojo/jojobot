@@ -644,25 +644,6 @@ impl Image {
             .unwrap_or_default())
     }
 
-    /// Every merge made, oldest first, or only those that folded `entity` away or
-    /// took it in.
-    pub fn merge_events(
-        &self,
-        entity: Option<&EntityId>,
-    ) -> Vec<jojobot_domain::memory::MergeEvent> {
-        let Some(entity) = entity else {
-            return self.events.clone();
-        };
-        let Some(wanted) = self.entity(entity).map(|e| e.id.clone()) else {
-            return Vec::new();
-        };
-        self.events
-            .iter()
-            .filter(|e| e.folded == wanted || e.survivor == wanted)
-            .cloned()
-            .collect()
-    }
-
     /// **Where an address went when its thing was merged away**, followed
     /// through a survivor merged later; `None` when no event moved it.
     pub fn moved(&self, address: &FactAddress) -> Result<Option<FactAddress>, MergeLoop> {
