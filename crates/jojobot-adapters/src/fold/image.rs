@@ -535,78 +535,6 @@ impl Image {
             .collect()
     }
 
-    /// **Whether some thing names this address as a claim it cannot serve.**
-    pub fn names_as_unmapped(&self, address: &FactAddress) -> bool {
-        self.docs.values().any(|doc| {
-            doc.scan
-                .unmapped
-                .iter()
-                .any(|claim| &claim.address == address)
-        })
-    }
-
-    /// **The writes of a claim some thing cannot serve**, as they were read when
-    /// that thing's document was filled. `None` when no thing names the address,
-    /// or its chain could not be read then.
-    pub fn unmapped_history(&self, address: &FactAddress) -> Option<Vec<ClaimWrite>> {
-        self.docs
-            .values()
-            .find_map(|doc| doc.unmapped_histories.get(address))
-            .cloned()
-    }
-
-    /// `entity_history`: the versions of one thing's own row as they were read
-    /// when its document was filled, or the miss the store gives for a handle
-    /// that names nothing. `Ok(None)` is a thing whose versions could not be read
-    /// then.
-    pub fn entity_history(
-        &self,
-        entity: &EntityId,
-    ) -> Result<Option<Vec<EntityVersion>>, MemoryError> {
-        Ok(self.doc(entity)?.entity_versions.clone())
-    }
-
-    /// `claim_history`: the writes of one claim, or the miss the store gives —
-    /// a claim that stands has at least one write, so none is no record.
-    pub fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
-        let doc = self.doc(&address.home)?;
-        if let Some(chain) = doc.histories.get(&address.local)
-            && !chain.is_empty()
-        {
-            return Ok(chain.clone());
-        }
-        if let Some(resolved) = self.entity(&address.home)
-            && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
-        {
-            return Err(err);
-        }
-        Err(MemoryError::UnknownFact {
-            attempted: address.to_string(),
-            nearest: doc
-                .scan
-                .facts
-                .iter()
-                .map(|f| f.address().to_string())
-                .collect(),
-        })
-    }
-
-    /// `history`: every write of one key, oldest first; a key nobody wrote on a
-    /// thing that exists is an empty list.
-    pub fn history(
-        &self,
-        entity: &EntityId,
-        key: &str,
-    ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
-        Ok(self
-            .doc(entity)?
-            .trails
-            .history
-            .get(key)
-            .cloned()
-            .unwrap_or_default())
-    }
-
     /// **Where an address went when its thing was merged away**, followed
     /// through a survivor merged later; `None` when no event moved it.
     pub fn moved(&self, address: &FactAddress) -> Result<Option<FactAddress>, MergeLoop> {
@@ -616,10 +544,5 @@ impl Image {
         let moved =
             follow_claim::<_, MergeLoop>(home, address.local.clone(), moves_in(&self.events))?;
         Ok(moved.map(|(survivor, now)| FactAddress::new(survivor, now)))
-    }
-
-    /// `key_trails`.
-    pub fn trails(&self, entity: &EntityId) -> Result<KeyTrails, MemoryError> {
-        Ok(self.doc(entity)?.trails.clone())
     }
 }

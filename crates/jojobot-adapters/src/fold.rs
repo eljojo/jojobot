@@ -595,6 +595,26 @@ impl Folded {
         })
     }
 
+    /// **The writes of the claim at `address`, or the miss the port gives**: none
+    /// is no record, because a claim that stands has at least one write. `None`
+    /// when the State cannot say.
+    fn chain_of(&self, address: &FactAddress) -> Option<Result<Vec<ClaimWrite>, MemoryError>> {
+        self.stated(&address.home, |state, found, declared| {
+            let object = state.resolve(&found.id.0)?;
+            let mut parts = state.document_parts(object, declared)?;
+            if let Some(chain) = parts.histories.remove(&address.local)
+                && !chain.is_empty()
+            {
+                return Some(Ok(chain));
+            }
+            let scan = state.document_scan(object, declared)?;
+            Some(Err(MemoryError::UnknownFact {
+                attempted: address.to_string(),
+                nearest: scan.facts.iter().map(|f| f.address().to_string()).collect(),
+            }))
+        })
+    }
+
     /// **The miss of a read of a spelling nothing answers to**, made from the
     /// claims State, so a miss reaches no store either. `None` when the spelling
     /// answers to a thing, or there is no image or State to say it does not, or the
@@ -930,11 +950,16 @@ impl Memory for Folded {
         }
     }
 
+    /// **Answered from the claims State**, with each stored link forwarded through
+    /// the merges as the store forwards it.
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.history(entity, key)) {
-            Some(answer) => answer,
-            None => self.inner.history(entity, key).await,
+        match self.part_of(entity, |parts| parts.trails.history.get(key).cloned()) {
+            Some(writes) => Ok(writes.unwrap_or_default()),
+            None => match self.missed(entity) {
+                Some(unknown) => Err(unknown),
+                None => self.inner.history(entity, key).await,
+            },
         }
     }
 
@@ -994,63 +1019,39 @@ impl Memory for Folded {
         }
     }
 
-    /// **An address from before a merge is moved by the image's own copy of the
-    /// events**, so a claim read costs the store nothing: the image names no
-    /// claim of a folded thing, and the event's map says where the claim went.
+    /// **The writes of a claim, answered from the claims State.** An address from
+    /// before a merge, and a claim on a thing a merge touched, are the store's:
+    /// it keeps the merge's own version rows, which the State does not hold yet.
+    /// TEMPORARY(9.3.4) `q-934-merge-version-row-in-state`.
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.claim_history(address)) {
-            Some(Err(merged @ MemoryError::AlreadyMerged { .. })) => {
-                match self.held(|image| image.moved(address)) {
-                    Some(Err(looped)) => Err(looped.into()),
-                    Some(Ok(Some(moved))) => match self.held(|image| image.claim_history(&moved)) {
-                        Some(answer) => answer,
-                        None => {
-                            self.unheld()?;
-                            self.inner.claim_history(address).await
-                        }
-                    },
-                    // **A claim the survivor names as one it cannot serve** is
-                    // answered from the chain the image read when it filled the
-                    // survivor's document. A chain that could not be read then is
-                    // read where it is stored.
-                    _ if self.held(|image| image.names_as_unmapped(address)) == Some(true) => {
-                        match self.held(|image| image.unmapped_history(address)) {
-                            Some(Some(chain)) => Ok(chain),
-                            _ => {
-                                self.unheld()?;
-                                self.inner.claim_history(address).await
-                            }
-                        }
-                    }
-                    _ => Err(merged),
-                }
-            }
-            Some(answer) => answer,
-            None => {
-                self.unheld()?;
-                self.inner.claim_history(address).await
-            }
+        if let Some(answer) = self.chain_of(address) {
+            return answer;
         }
+        if let Some(unknown) = self.missed(&address.home) {
+            return Err(unknown);
+        }
+        self.unheld()?;
+        self.inner.claim_history(address).await
     }
 
-    /// **Answered from the image**, which holds every version of each thing's own
-    /// row beside its claims, read when the document is filled and again after
-    /// each write that refreshes it. A thing whose versions the store could not
-    /// answer at the fill is read where it is stored, as is every read before the
-    /// first fill.
+    /// **Answered from the claims State**: the versions of one thing's own row.
+    /// A child a merge moved is the store's, which holds the version the move
+    /// appended. TEMPORARY(9.3.4) `q-934-merge-version-row-in-state`.
     async fn entity_history(
         &self,
         entity: &EntityId,
     ) -> Result<Vec<jojobot_domain::memory::EntityVersion>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.entity_history(entity)) {
-            Some(Ok(Some(versions))) => Ok(versions),
-            Some(Err(unknown)) => Err(unknown),
-            Some(Ok(None)) | None => {
-                self.unheld()?;
-                self.inner.entity_history(entity).await
-            }
+        match self.part_of(entity, |parts| parts.entity_versions) {
+            Some(versions) => Ok(versions),
+            None => match self.missed(entity) {
+                Some(unknown) => Err(unknown),
+                None => {
+                    self.unheld()?;
+                    self.inner.entity_history(entity).await
+                }
+            },
         }
     }
 
@@ -1075,9 +1076,12 @@ impl Memory for Folded {
         entity: &EntityId,
     ) -> Result<jojobot_domain::memory::KeyTrails, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.trails(entity)) {
-            Some(answer) => answer,
-            None => self.inner.key_trails(entity).await,
+        match self.part_of(entity, |parts| parts.trails) {
+            Some(trails) => Ok(trails),
+            None => match self.missed(entity) {
+                Some(unknown) => Err(unknown),
+                None => self.inner.key_trails(entity).await,
+            },
         }
     }
 
@@ -1086,9 +1090,12 @@ impl Memory for Folded {
         entity: &EntityId,
     ) -> Result<HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.doc(entity).map(|doc| doc.histories.clone())) {
-            Some(answer) => answer,
-            None => self.inner.claim_histories(entity).await,
+        match self.part_of(entity, |parts| parts.histories) {
+            Some(histories) => Ok(histories),
+            None => match self.missed(entity) {
+                Some(unknown) => Err(unknown),
+                None => self.inner.claim_histories(entity).await,
+            },
         }
     }
 
@@ -1169,9 +1176,12 @@ impl Memory for Folded {
 
     async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.doc(entity).map(|doc| doc.ages.clone())) {
-            Some(answer) => answer,
-            None => self.inner.field_ages(entity).await,
+        match self.part_of(entity, |parts| parts.ages) {
+            Some(ages) => Ok(ages),
+            None => match self.missed(entity) {
+                Some(unknown) => Err(unknown),
+                None => self.inner.field_ages(entity).await,
+            },
         }
     }
 

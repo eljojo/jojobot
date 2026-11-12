@@ -42,13 +42,14 @@ pub struct Probe<'a> {
 
 impl Probe<'_> {
     /// **Whether the store answers a read of this subject by design**, so the
-    /// read may reach it: a thing a merge touched, folded or survivor, and a role.
+    /// read may reach it: a thing a merge touched, folded or survivor, a child a
+    /// merge moved, and a role.
     /// The State keeps neither a merge's own row nor a lease's heartbeats yet.
     /// TEMPORARY(9.3.4) `q-934-merge-version-row-in-state` and
     /// `q-934-role-lease-read-from-heartbeat-home`. The subject is read as a
     /// handle, or as the first word of an address (`handle#label`).
     async fn store_answers(&self, subject: &str) -> bool {
-        let asked = subject.split('#').next().unwrap_or(subject);
+        let asked = subject.split(['#', ',']).next().unwrap_or(subject);
         let listed = self
             .direct
             .list_entities(None)
@@ -80,6 +81,13 @@ impl Probe<'_> {
                 || merges
                     .iter()
                     .any(|event| event.folded == e.id || event.survivor == e.id)
+                // A child a merge moved: the store appended a version of it naming
+                // the survivor as its parent.
+                || e.parent.as_ref().is_some_and(|parent| {
+                    merges
+                        .iter()
+                        .any(|event| &event.folded == parent || &event.survivor == parent)
+                })
         }) || merges
             .iter()
             .any(|event| event.folded.as_str() == asked || event.survivor.as_str() == asked)
