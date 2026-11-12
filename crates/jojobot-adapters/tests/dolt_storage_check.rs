@@ -340,6 +340,10 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
            VALUES ('person:krusty', 'k', 3, 'supplied/role:dev')",
         "INSERT INTO field_link (entity, `key`, ordinal, target)
            VALUES ('person:krusty', 'k', 4, 'supplied/bot:otto')",
+        // Only a link target reads a supply identity: the same text in any other
+        // column names no thing.
+        "INSERT INTO session (id, bot, focus, started_at, state)
+           VALUES ('efgh', 'supplied/role:dev', 'f', '2026-10-22T00:00:00Z', 'active')",
     ] {
         run(&pool, sql).await;
     }
@@ -363,13 +367,19 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         "message.mailbox: no-such-box",
         "message_event.message_id: no-such-message",
         "session.bot: bot:otto",
+        "session.bot: supplied/role:dev",
     ];
     want.sort();
     assert_eq!(
         ids, want,
         "one id for each column, none for the supplied handle and none for a home keyed by a handle"
     );
-    assert_eq!(dangling.1, 12);
+    assert_eq!(dangling.1, 13);
+    // The check spells the prefix in SQL; the import that writes it is the other side.
+    assert_eq!(
+        jojobot_domain::log::claims::import::SUPPLY_PREFIX,
+        "supplied/"
+    );
 
     // The writes homed under a handle are a class of their own, named with the
     // claim's address and the field write's key.

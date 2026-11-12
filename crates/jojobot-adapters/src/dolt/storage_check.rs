@@ -172,15 +172,9 @@ async fn claims_the_merge_does_not_list(
 /// use an expression, so each claim and field write scanned every thing and the
 /// check's time grew with rows times things. The two tests together hold the same
 /// rows, because a row without a badge is found by its id.
-///
-/// **A supplied record is named by its handle or by its supply identity**, the
-/// handle behind the prefix `supplied/`: the claims import files a link to one by
-/// the identity. The list of supplied handles is a few dozen rows, so the
-/// concatenation costs nothing.
 pub(super) const THING: &str = "(EXISTS (SELECT 1 FROM entity t WHERE t.badge = {v})
      OR EXISTS (SELECT 1 FROM entity t WHERE t.id = {v})
-     OR EXISTS (SELECT 1 FROM supplied_handle s
-                WHERE s.handle = {v} OR CONCAT('supplied/', s.handle) = {v}))";
+     OR EXISTS (SELECT 1 FROM supplied_handle s WHERE s.handle = {v}))";
 
 /// **A link row whose write no later write of the same key on the same record has
 /// replaced.** An edit appends a write beside the old one and leaves the old write
@@ -188,11 +182,18 @@ pub(super) const THING: &str = "(EXISTS (SELECT 1 FROM entity t WHERE t.badge = 
 /// behind as history. Every read decides who points at a thing from the records'
 /// current values and none serves a replaced write's target, so such a row is not
 /// damage. A link row with no write at all is still damage.
-const LINK_OF_A_CURRENT_WRITE: &str = "NOT EXISTS (
+///
+/// **A link to a record the build supplies may name it by its supply identity**,
+/// the handle behind the prefix `supplied/`: the 9.3.3 build stores a field value's
+/// link to a supplied record that way. Only this column reads it so; a parent, an
+/// edge or a bot written as `supplied/<handle>` is still named dangling.
+const LINK_OF_A_CURRENT_WRITE_NOT_TO_A_SUPPLIED_RECORD: &str = "NOT EXISTS (
          SELECT 1 FROM field_write w
          JOIN field_write later ON later.entity = w.entity AND later.`key` = w.`key`
                                AND later.fact_id = w.fact_id AND later.ordinal > w.ordinal
-         WHERE w.entity = r.entity AND w.`key` = r.`key` AND w.ordinal = r.ordinal)";
+         WHERE w.entity = r.entity AND w.`key` = r.`key` AND w.ordinal = r.ordinal)
+     AND NOT EXISTS (SELECT 1 FROM supplied_handle s
+                     WHERE CONCAT('supplied/', s.handle) = r.`target`)";
 
 /// **B.** Each entry is a label an id carries, the table, the column that names a
 /// thing, and a further condition on the value. A row whose column is set and
@@ -217,7 +218,7 @@ const THING_REFERENCES: &[(&str, &str, &str, &str)] = &[
         "field_link.target",
         "field_link",
         "target",
-        LINK_OF_A_CURRENT_WRITE,
+        LINK_OF_A_CURRENT_WRITE_NOT_TO_A_SUPPLIED_RECORD,
     ),
     ("mailbox.owner", "mailbox", "owner", "TRUE"),
     ("session.bot", "session", "bot", "TRUE"),
