@@ -958,7 +958,10 @@ impl Memory for Folded {
             Some(writes) => Ok(writes.unwrap_or_default()),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
-                None => self.inner.history(entity, key).await,
+                None => {
+                    self.unheld()?;
+                    self.inner.history(entity, key).await
+                }
             },
         }
     }
@@ -1066,7 +1069,10 @@ impl Memory for Folded {
             Some(kept) => Ok(kept.unwrap_or_default()),
             None => match self.missed(&address.home) {
                 Some(unknown) => Err(unknown),
-                None => self.inner.keys_kept_off_the_thing(address).await,
+                None => {
+                    self.unheld()?;
+                    self.inner.keys_kept_off_the_thing(address).await
+                }
             },
         }
     }
@@ -1080,7 +1086,10 @@ impl Memory for Folded {
             Some(trails) => Ok(trails),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
-                None => self.inner.key_trails(entity).await,
+                None => {
+                    self.unheld()?;
+                    self.inner.key_trails(entity).await
+                }
             },
         }
     }
@@ -1094,7 +1103,10 @@ impl Memory for Folded {
             Some(histories) => Ok(histories),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
-                None => self.inner.claim_histories(entity).await,
+                None => {
+                    self.unheld()?;
+                    self.inner.claim_histories(entity).await
+                }
             },
         }
     }
@@ -1180,7 +1192,10 @@ impl Memory for Folded {
             Some(ages) => Ok(ages),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
-                None => self.inner.field_ages(entity).await,
+                None => {
+                    self.unheld()?;
+                    self.inner.field_ages(entity).await
+                }
             },
         }
     }

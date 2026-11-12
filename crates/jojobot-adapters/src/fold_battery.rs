@@ -83,6 +83,8 @@ impl Probe<'_> {
                     .any(|event| event.folded == e.id || event.survivor == e.id)
                 // A child a merge moved: the store appended a version of it naming
                 // the survivor as its parent.
+                // The store lists the moved child under the survivor, so the survivor
+                // is the only parent the listing shows.
                 || e.parent.as_ref().is_some_and(|parent| {
                     merges
                         .iter()

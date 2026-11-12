@@ -673,7 +673,8 @@ impl State {
     /// the one rule the store forwards a history by
     /// ([`memory::forward_field_value`]), the survivor of a thing found by this
     /// State's own walk. The value as written when no link in it names a folded
-    /// thing.
+    /// thing. A loop among the merges is the walk's error in the store; this State
+    /// never holds one, because its apply refuses a merge that would close a loop.
     fn forwarded_value(&self, value: &str) -> String {
         memory::forward_field_value::<memory::claim_walk::MergeLoop>(value, |thing| {
             let object = ObjectId(thing.0.clone());
