@@ -616,6 +616,10 @@ impl InMemoryMemory {
     }
 
     pub fn knowing(self, supplied: crate::memory::owned::Provisions) -> Self {
+        // **The State holds each supplied record under its supply identity**, as the
+        // real store's boot leaves it (rule 784); a State without them answers every
+        // listing the way production never does.
+        self.bind_supplied_in_state(&supplied, jiff::civil::date(2026, 1, 1));
         *self.supplied.lock().expect("fake mutex poisoned") = supplied;
         self
     }
