@@ -102,7 +102,8 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    jojobot_adapters::testing::import_claims_now(&pool).await;
+    // **The import binds the shipped view in the State**, as the boot does.
+    jojobot_adapters::testing::import_claims_supplying(&pool, &the_shipped_view()).await;
 
     let _counting =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(CountStatements));

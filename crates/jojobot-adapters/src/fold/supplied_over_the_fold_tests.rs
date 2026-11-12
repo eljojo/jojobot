@@ -162,8 +162,8 @@ async fn a_stored_row_at_a_supplied_handle_lists_as_the_stored_row() {
 
 /// **A sets-only edit of a supplied record lands through the stack**, as the verb
 /// writes it: the supply layer answers the edit with the companion claim the store
-/// takes, the fold carries it past the store and reads it back from the State, and
-/// the record stays supplied, with no row of its own.
+/// takes, the fold carries it past the store and reads it back, and the record stays
+/// supplied, with no row of its own.
 #[tokio::test]
 async fn a_sets_only_edit_of_a_supplied_record_lands_through_the_fold_and_reads_back() {
     use jojobot_domain::actor::Actor;

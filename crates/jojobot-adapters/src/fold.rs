@@ -402,6 +402,14 @@ impl Folded {
         // supply identity and answers its stored half, and the layer over the fold
         // lays the shipped half on top.
         let from_the_store = self.before_the_import.load(Ordering::SeqCst);
+        // **The image holds no document of a supplied record no stored row wears**: its
+        // reads are the State's, or the store's for the one decline above, and the layer
+        // over the fold makes its scan. A claim written on it changes the State and
+        // nothing the image holds.
+        if !from_the_store && !relist && self.is_supplied_only(handle) {
+            self.generation.fetch_add(1, Ordering::SeqCst);
+            return Ok(());
+        }
         let stated = if from_the_store {
             Ok(None)
         } else {
@@ -583,10 +591,7 @@ impl Folded {
 
     /// **Whether the handle names a record the build supplies that no stored row
     /// wears**: the State resolves it to an object under a supply identity, which
-    /// holds no document in the image. TEMPORARY(9.3.3.1), owner card
-    /// `q-9331-no-memory-image` with the history reads: the two reads that still
-    /// answer from the image's documents go to the store for such a handle until
-    /// the State serves them.
+    /// holds no document in the image.
     fn is_supplied_only(&self, handle: &EntityId) -> bool {
         self.claims(|state| {
             state.resolve(&handle.0).is_some_and(|object| {
