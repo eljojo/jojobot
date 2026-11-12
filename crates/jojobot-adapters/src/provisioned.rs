@@ -600,18 +600,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         &self,
         entity: &EntityId,
     ) -> Result<jojobot_domain::memory::FieldAges, MemoryError> {
-        let mut ages = match self.inner.field_ages(entity).await {
-            // **A supplied record no stored row wears has nothing the store took in**,
-            // and the fold, whose image holds no document of it, says it is unknown.
-            // TEMPORARY(9.3.3.1), owner card `q-9331-no-memory-image` with the history
-            // reads: the State serves them next.
-            Err(MemoryError::UnknownEntity { .. })
-                if self.supplied_only(entity).await?.is_some() =>
-            {
-                jojobot_domain::memory::FieldAges::default()
-            }
-            answer => answer?,
-        };
+        let mut ages = self.inner.field_ages(entity).await?;
         ages.keys.retain(|key, _| !is_overlay_key(key));
         Ok(ages)
     }
@@ -846,16 +835,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
-        match self.inner.claim_histories(entity).await {
-            // The same as `field_ages`: nothing is stored for a supplied record no row
-            // wears. TEMPORARY(9.3.3.1), owner card `q-9331-no-memory-image`.
-            Err(MemoryError::UnknownEntity { .. })
-                if self.supplied_only(entity).await?.is_some() =>
-            {
-                Ok(std::collections::HashMap::new())
-            }
-            answer => answer,
-        }
+        self.inner.claim_histories(entity).await
     }
     /// **Straight through**: a left-over default here answers no event.
     async fn merge_events(
