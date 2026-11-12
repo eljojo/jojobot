@@ -319,14 +319,19 @@ impl Folded {
             .map(|held| held.set.clone())
     }
 
-    /// **Read the kinds again after a kind was written**, and nothing else: the
-    /// claims State serves every read, so no thing is read again.
+    /// **Read the kinds again after a kind was written**, and the declared types
+    /// with them (a kind's keys are a declared type under its name), and nothing
+    /// else: the claims State serves every read, so no thing is read again.
     async fn refresh_kinds(&self) -> Result<(), MemoryError> {
         if !self.wanted.load(Ordering::SeqCst) {
             return Ok(());
         }
         let rows = self.inner.declared_kinds().await?;
+        let types = self.inner.declared_types().await?;
         *self.kinds.write().expect("kinds lock") = Some(HeldKinds::of(rows));
+        if let Some(image) = self.image.write().expect("fold lock").as_mut() {
+            image.set_types(types);
+        }
         self.generation.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -1725,17 +1730,18 @@ impl Memory for Folded {
         Ok(self.declared_types_shared().await?.as_ref().clone())
     }
 
-    /// **The declarations in force, from the claims State's own shared list**, which a
-    /// declaration rebuilds and a read only clones the pointer of. With no image, or
-    /// no State to read, the store answers.
+    /// **The declarations as the store gave them when the image filled**, shared:
+    /// a read copies nothing. They are the store's own, so a comparison of them
+    /// with the log's State means something: the boot's reconcile holds the two to
+    /// each other, and the claims State's own list (`State::declared_types_shared`)
+    /// would make that comparison one of the State with itself. With no image the
+    /// store answers.
     async fn declared_types_shared(
         &self,
     ) -> Result<std::sync::Arc<Vec<DeclaredType>>, MemoryError> {
         self.readable()?;
-        if self.held(|_| ()).is_some()
-            && let Ok(declared) = self.claims(|state| state.declared_types_shared())
-        {
-            return Ok(declared);
+        if let Some(types) = self.held(Image::types_shared) {
+            return Ok(types);
         }
         Ok(std::sync::Arc::new(self.inner.declared_types().await?))
     }

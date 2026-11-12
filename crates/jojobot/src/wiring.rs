@@ -2051,14 +2051,12 @@ mod tests {
 
     /// **`Folded` genuinely sits inside the whole assembled stack — it is not
     /// merely forwarding to a store that happens to hold the right answer
-    /// anyway.** `fields` falls through to the store when no image is held (see
-    /// `Folded::fields`), so a value-only check here would pass even if
-    /// `assemble_memory` dropped `Folded` from the chain entirely: the store
-    /// underneath still has the right data either way. What actually proves
-    /// the fold is in the live write path is staleness — a write made AROUND
-    /// the whole assembled stack, straight to the bare store, must be
-    /// invisible to a `fields` read through `folded`, exactly as
-    /// `Folded`'s own single-writer doc warns.
+    /// anyway.** A value-only check here would pass even if `assemble_memory`
+    /// dropped `Folded` from the chain entirely: the store underneath still has
+    /// the right data either way. What proves the fold is in the live write path
+    /// is its own change count (`write_summary`): a write made THROUGH the whole
+    /// assembled stack moves it, and a write made AROUND the stack, straight to
+    /// the bare store, does not, because only a write the fold made counts.
     #[tokio::test]
     async fn a_write_through_the_assembled_stack_reaches_the_fold_underneath() {
         let bare = Arc::new(InMemoryMemory::booted());
@@ -2069,6 +2067,7 @@ mod tests {
         folded.rebuild().await.expect("the image fills");
 
         let alpha = EntityId::person("person:alpha");
+        let before = folded.write_summary().await.expect("the summary reads");
         indexed
             .add_entity(NewEntity::new(alpha.clone(), "Alpha", "user-named"))
             .await
@@ -2092,6 +2091,11 @@ mod tests {
             .expect("capture ok")
             .written()
             .expect("not blocked");
+        let through = folded.write_summary().await.expect("the summary reads");
+        assert_ne!(
+            before, through,
+            "a write through the outermost assembled port must move the fold's own change count"
+        );
 
         assert_eq!(
             folded
@@ -2123,14 +2127,10 @@ mod tests {
         .expect("not blocked");
 
         assert_eq!(
-            folded
-                .fields(&alpha)
-                .await
-                .expect("fields ok")
-                .get("due_on"),
-            Some(&"2026-09-14".to_string()),
-            "the fold must still answer with what it cached, proving it is genuinely wired into \
-             the write path rather than always falling through to the store"
+            through,
+            folded.write_summary().await.expect("the summary reads"),
+            "a write around the stack is no write of the fold's, so it moves nothing the fold \
+             counts: the count moves only for a write that went through the fold"
         );
     }
 
