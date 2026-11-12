@@ -559,6 +559,7 @@ async fn record_the_grown_store() {
     let grown = restore_into("jojobot-measure-recorder", "UPGRADE_FIXTURE_DIR", true).await;
     let mut store = scaling_store(&grown).await;
     jojobot_domain::memory::kinds::load_shipped();
+    remove_the_recorders_log(store.pool()).await;
     // Opening the log ensures its validity row, which is kept in the cached dump.
     let log = WriterLog::open(store.pool().clone(), Writer::default())
         .await
@@ -566,12 +567,24 @@ async fn record_the_grown_store() {
     assert_eq!(
         claims_counts(&log.read_from(Position(0), 100_000).await.unwrap()),
         (0, 0),
-        "the restored recorder leaves claims for the first head boot"
+        "the recorder's log holds no claims events before the first head boot"
     );
     drop(log);
     let counts = scale_to_production(store.pool()).await;
     store.stop().await;
     dump_grown_store(&grown, &out, &counts);
+}
+
+/// **Leave the log of a store the claims import has not run on**, which is what a
+/// recorder that predates the claims log leaves. The recorder is the last deployed
+/// build, and since 9.3.3 that build imports claims on its own first boot, so its log
+/// already holds them. The batches and the snapshots are removed and the log's
+/// identity row stays: what is left is the log the head boot imports into.
+async fn remove_the_recorders_log(pool: &sqlx::MySqlPool) {
+    sqlx::query("DELETE FROM event_log WHERE slot <> 'validity'")
+        .execute(pool)
+        .await
+        .expect("the recorder's events and snapshots are removed");
 }
 
 async fn scaling_store(state: &Scratch) -> Dolt {
@@ -946,15 +959,7 @@ async fn compare_grown_claims(scaled: bool) {
     surface.finish().await;
     let seed = running.stopped().0;
     let mut store = scaling_store(&seed).await;
-    // **The case needs a store the claims import has not run on**, which is what a
-    // recorder that predates the claims log leaves. The recorder is the last deployed
-    // build, and since 9.3.3 that build imports claims on its own first boot, so its
-    // log already holds them. The batches and the snapshots are removed here, and the
-    // log's identity row stays: what is left is the log the head boot imports into.
-    sqlx::query("DELETE FROM event_log WHERE slot <> 'validity'")
-        .execute(store.pool())
-        .await
-        .expect("the recorder's events and snapshots are removed");
+    remove_the_recorders_log(store.pool()).await;
     let writer = Writer::default();
     let seed_log = WriterLog::open(store.pool().clone(), writer.clone())
         .await
