@@ -149,3 +149,44 @@ fn a_write_without_its_claim_is_left_out_of_the_trails() {
     assert!(trails.record_writes.is_empty());
     assert!(trails.kept_off.is_empty());
 }
+
+/// **A value that links a thing a merge folded away is served as the thing it
+/// became**, in the writes that reach the thing and in the writes that stay on
+/// their record, as the store serves a history (`forward_field_value`): a list
+/// that named both the folded thing and its survivor names the survivor once.
+#[test]
+fn a_value_naming_a_folded_thing_is_served_as_its_survivor() {
+    let mut events = thing();
+    for name in ["work:beta", "work:gamma"] {
+        events.push(ClaimEvent::ObjectCreated {
+            object: object(name),
+            body: ObjectBody {
+                ..body("work", name)
+            },
+        });
+        events.push(ClaimEvent::AddressBound {
+            object: object(name),
+            address: name.to_string(),
+        });
+    }
+    events.extend([
+        created("r1", claim("f1", "work:alpha", "a", 3)),
+        write("r1", "work:alpha", "lodge", 1, "@#work:beta"),
+        write("r1", "work:alpha", "both", 1, "@#work:beta, @#work:gamma"),
+        stays("r1", "kept", 2, "@#work:beta"),
+        ClaimEvent::ObjectsMerged {
+            folded: object("work:beta"),
+            survivor: object("work:gamma"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+    ]);
+    let trails = replayed(&events).key_trails(&object("work:alpha"));
+    let said = |key: &str| trails.history[key][0].value.clone();
+    assert_eq!(said("lodge"), Some("@#work:gamma".to_string()));
+    assert_eq!(said("both"), Some("@#work:gamma".to_string()));
+    assert_eq!(
+        trails.record_writes[0].value,
+        Some("@#work:gamma".to_string())
+    );
+}

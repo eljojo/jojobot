@@ -669,6 +669,22 @@ impl State {
             .collect()
     }
 
+    /// **A stored value with every link in it served as the thing it became**, by
+    /// the one rule the store forwards a history by
+    /// ([`memory::forward_field_value`]), the survivor of a thing found by this
+    /// State's own walk. The value as written when no link in it names a folded
+    /// thing.
+    fn forwarded_value(&self, value: &str) -> String {
+        memory::forward_field_value::<memory::claim_walk::MergeLoop>(value, |thing| {
+            let object = ObjectId(thing.0.clone());
+            let survivor = self.survivor(&object);
+            Ok((survivor != &object).then(|| EntityId(survivor.0.clone())))
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| value.to_string())
+    }
+
     /// **Every write on a thing, and the records they were written in**, as the
     /// store's `key_trails` answers it: a key's trail is its writes that reach
     /// the thing, a key that stays on its record keeps its writes with their
@@ -691,7 +707,7 @@ impl State {
             };
             let carried = FactId(record.claim.label.clone());
             let value = match &write.write {
-                FieldValue::Set(value) => Some(value.clone()),
+                FieldValue::Set(value) => Some(self.forwarded_value(value)),
                 FieldValue::Clear | FieldValue::Removed => None,
             };
             match &value {
