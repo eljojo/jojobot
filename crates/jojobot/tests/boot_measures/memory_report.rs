@@ -838,10 +838,11 @@ struct FirstBoot {
 
 /// **Make the replayed store as long and as heavy as production's**, on this case's
 /// own copy: production's log before the claims import (its events and batches,
-/// read from its boot lines) and the copied text padded by the fitted factor. Both
-/// are applied here and not in the shared recorder, so the store the check lane
-/// boots over is unchanged and a factor change costs one memory job and no regrow.
-/// The line names what was done, so a reading is read beside its factor.
+/// read from its boot lines), the deepest and heaviest claims at production's depth and
+/// bytes, and the copied text at production's bytes. All are applied here and not in
+/// the shared recorder, so the store the check lane boots over is unchanged and a
+/// change costs one memory job and no regrow. The line names what was done, so a
+/// reading is read beside the day production's bytes were read.
 async fn calibrate_the_store(state: &Scratch) {
     jojobot_domain::memory::kinds::load_shipped();
     let mut store = Dolt::start(&state.0.join("db"), free_port())
@@ -853,9 +854,10 @@ async fn calibrate_the_store(state: &Scratch) {
         super::PRODUCTION_PRE_IMPORT_BATCHES,
     )
     .await;
-    super::pad_the_text(store.pool(), super::FITTED_PAD_FACTOR).await;
+    let deepened = super::grow_the_depth(store.pool()).await;
+    let padded = super::pad_the_text(store.pool()).await;
     store.stop().await;
-    record(&calibration_line(&earlier, super::FITTED_PAD_FACTOR));
+    record(&calibration_line(&format!("{earlier} {deepened} {padded}")));
 }
 
 /// **A first boot, as production's is on a new build**: the dump the last deployed
@@ -1013,20 +1015,14 @@ async fn no_snapshot_boot(state: Scratch) -> Running {
     run
 }
 
-/// **What the calibration did, and whose bytes they are.** Production's per-table
-/// byte totals are unread while `PRODUCTION_BYTES_READ_ON` is none, so the line says
-/// the bytes are fitted and the comparison it supports does not discharge the card.
-fn calibration_line(earlier: &str, factor: i64) -> String {
-    calibration_line_for(super::PRODUCTION_BYTES_READ_ON, earlier, factor)
+/// **What the calibration did, and whose bytes they are**: production's, read on
+/// `PRODUCTION_BYTES_READ_ON`.
+fn calibration_line(done: &str) -> String {
+    calibration_line_for(super::PRODUCTION_BYTES_READ_ON, done)
 }
 
-fn calibration_line_for(read_on: Option<&str>, earlier: &str, factor: i64) -> String {
-    let bytes = match (read_on, factor) {
-        (Some(day), _) => format!("production's totals read on {day}"),
-        (None, 0) => "unpadded, production's totals unread".to_string(),
-        (None, _) => "bytes fitted, production's totals unread".to_string(),
-    };
-    format!("memory-report calibration: {earlier} pad_factor={factor}; {bytes}")
+fn calibration_line_for(read_on: &str, done: &str) -> String {
+    format!("memory-report calibration: {done}; production's totals read on {read_on}")
 }
 
 /// What the boot's log said it held, for the per-thing division.
@@ -1431,31 +1427,26 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         assert!(line.contains("(1101580 kB)"), "{line}");
     }
 
-    /// **The calibration line says whether the bytes are production's, fitted or
-    /// unpadded.** The grown store's bytes are fitted only when a factor padded them, and
-    /// are the tool-written text as it is while the factor is zero; a reader of the line
-    /// must not take either for production's, and must not read "fitted" on a store
-    /// nothing was fitted to.
+    /// **The calibration line names what was done and the day production's bytes were
+    /// read**, so a reading is never taken for one on a store that was not sized to them.
     #[test]
-    fn memory_report_says_in_its_calibration_line_whose_bytes_the_store_holds() {
+    fn memory_report_says_in_its_calibration_line_the_day_production_was_read() {
         let events = "pre_import_events=7 pre_import_batches=3";
-        let fitted = calibration_line(events, 20);
+        let line = calibration_line(events);
+        assert!(line.starts_with("memory-report calibration: "), "{line}");
+        assert!(line.contains(events), "{line}");
         assert!(
-            fitted.starts_with("memory-report calibration: "),
-            "{fitted}"
+            line.contains(&format!(
+                "production's totals read on {}",
+                super::super::PRODUCTION_BYTES_READ_ON
+            )),
+            "{line}"
         );
-        assert!(fitted.contains("fitted"), "{fitted}");
-        assert!(fitted.contains("pad_factor=20"), "{fitted}");
-        let none = calibration_line(events, 0);
-        assert!(none.contains("unpadded"), "{none}");
-        assert!(none.contains("pad_factor=0"), "{none}");
-        assert!(!none.contains("fitted"), "{none}");
-        let read = calibration_line_for(Some("2026-12-01"), "x", 0);
+        let read = calibration_line_for("2026-12-01", "x");
         assert!(
             read.contains("production's totals read on 2026-12-01"),
             "{read}"
         );
-        assert!(!read.contains("fitted"), "{read}");
     }
 
     /// **The per-thing line divides each projection's growth by what it holds, and

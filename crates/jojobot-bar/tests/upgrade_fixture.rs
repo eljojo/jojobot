@@ -813,14 +813,14 @@ fn memory_day_verdict_names_the_larger_of_the_two_import_boot_peaks_and_does_not
     }
 }
 
-/// **The import boot is printed beside production's reading, as fitted.** Production's
-/// first boot at 9.3.3 held 3.47 GiB (3,553 MiB): the Rust process's resident memory at
-/// the first sample after serving began, one instant. The share is therefore taken from
-/// this run's resident memory after the import boot, not from its peak, which is the
-/// most it held at any moment; the verdict names both and says the comparison is fitted
-/// while production's byte totals are unread.
+/// **The import boot is printed beside production's reading, with the day its bytes were
+/// read.** Production's first boot at 9.3.3 held 3.47 GiB (3,553 MiB): the Rust process's
+/// resident memory at the first sample after serving began, one instant. The share is
+/// therefore taken from this run's resident memory after the import boot, not from its
+/// peak, which is the most it held at any moment; the verdict names both and the day
+/// production's byte totals were read.
 #[test]
-fn memory_day_verdict_prints_the_import_boot_beside_production_as_fitted() {
+fn memory_day_verdict_prints_the_import_boot_beside_production_and_the_day_it_was_read() {
     let dir = bundle_with(PASSED, "1776.5", "1625.9");
     let out = run(&dir, "60");
     let said = String::from_utf8_lossy(&out.stdout);
@@ -829,12 +829,13 @@ fn memory_day_verdict_prints_the_import_boot_beside_production_as_fitted() {
     // The bundle's import boot line holds a resident memory after boot of 1146.2 MiB,
     // 32 percent of production's 3,553, and a peak of 1776.5 MiB, which would be 50
     // percent and is not the share.
-    for word in ["1776.5", "1146.2", "3553", "32%", "fitted"] {
+    for word in ["1776.5", "1146.2", "3553", "32%", "2026-11-12"] {
         assert!(
             verdict.contains(word),
             "the verdict lacks {word}: {verdict}"
         );
     }
+    assert!(!verdict.contains("fitted"), "{verdict}");
     assert!(
         !verdict.contains("50%"),
         "the share is taken from the peak: {verdict}"

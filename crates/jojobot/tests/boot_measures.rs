@@ -101,8 +101,8 @@ const PRODUCTION_TOOL_CALLS: i64 = 116_258;
 /// Writing the instance's whole count that way takes more than an hour, so
 /// [`scale_to_production`] reaches the counts above by copying rows the server
 /// wrote. A copy shares its parent's shape: the row counts are production's and the
-/// text is padded to a fitted length ([`FITTED_PAD_FACTOR`]); the variety of content is
-/// not production's. Copied messages stay in the state they were posted in (new),
+/// text is padded to production's bytes ([`PRODUCTION_FACT_WRITE_BYTES`]); the variety of
+/// content is not production's. Copied messages stay in the state they were posted in (new),
 /// where production's are nearly all processed.
 const SETS_PER_CLAIM: usize = 4;
 const TOOL_MESSAGES: i64 = 1_000;
@@ -588,26 +588,22 @@ async fn remove_the_recorders_log(pool: &sqlx::MySqlPool) {
         .expect("the recorder's events and snapshots are removed");
 }
 
-/// **How much longer the copied text is made, in units**, by the memory case on its
-/// own copy of the grown store, so the store the check lane boots over is not changed. One unit adds 100 bytes
-/// to every write of a claim, 10 to every plain field value and 75 to every mail.
-/// The counts of the grown store are production's, measured; the bytes are not:
-/// production's totals were never read, so this factor is fitted. It is the one
-/// number the memory job's first-boot peak is set against production's reading
-/// (3.47 GiB at 9.3.3's first boot), and the card says it is an estimate.
-///
-/// **It is zero.** At 20 the import boot peaked at 3,169 MiB, 89 percent of
-/// production's, but the padding raised the steps that already matched (the images
-/// reached 1,866 MiB where production's were 0.8 to 1.0 GiB) and barely moved the
-/// import step that does not (357 MiB against production's 2.6 GiB). Content bytes
-/// are not the lever. The store line now prints the bytes a write carries beside its
-/// text (receipt, stamp, links); the padding returns when those name the lever.
-const FITTED_PAD_FACTOR: i64 = 0;
-
-/// **The day production's per-table byte totals and claim-revision depth were read**, and
-/// the constants above are replaced by them. None while they are unread: the report
-/// then says the bytes are fitted and the comparison does not discharge the card.
-const PRODUCTION_BYTES_READ_ON: Option<&str> = None;
+/// **The day production's per-table byte totals and claim-revision depth were read**,
+/// read-only: the constants below are those readings, not fitted numbers. They are
+/// applied by the memory case on its own copy of the grown store, so the store the
+/// check lane boots over is not changed.
+const PRODUCTION_BYTES_READ_ON: &str = "2026-11-12";
+/// Bytes a write of a claim carries, content and details together: 66.3 MB over 53,338
+/// writes. CI's store carried 43.
+const PRODUCTION_FACT_WRITE_BYTES: i64 = 1_243;
+/// Bytes a mail body carries: 48.1 MB over 28,373 mails. CI's store carried 130.
+const PRODUCTION_MAIL_BYTES: i64 = 1_695;
+/// The writes of production's deepest claim. CI's deepest held 8.
+const PRODUCTION_DEEPEST_FACT_WRITES: i64 = 1_395;
+/// The writes of production's heaviest claim by bytes, and what each carries: 12.3 MB
+/// over 413 writes.
+const PRODUCTION_HEAVY_FACT_WRITES: i64 = 413;
+const PRODUCTION_HEAVY_FACT_WRITE_BYTES: i64 = 29_782;
 
 /// **Production's log before the claims import**, read from its boot lines: 31,388
 /// events in 14,974 batches. The log CI's store held was 34 events.
@@ -621,26 +617,99 @@ fn filler(bytes: i64) -> String {
     text
 }
 
-/// **Make the copied text longer**, for the claims, the plain field values and the
-/// mails the grower copied, by [`FITTED_PAD_FACTOR`]-style units (see there). Only text
-/// that is read as text is padded: a key whose value holds an id stays whole.
+/// **Lift the copied text to production's bytes**: each write of a claim, and the claim
+/// that mirrors its latest write, to [`PRODUCTION_FACT_WRITE_BYTES`] and each mail to
+/// [`PRODUCTION_MAIL_BYTES`]. Text already longer stays as it is, and only text read as
+/// text is touched: no field value is, so a value that holds an id stays whole.
 /// Returns what it did, for the record the dump keeps.
-async fn pad_the_text(pool: &sqlx::MySqlPool, factor: i64) -> String {
-    for (table, column, extra, condition) in [
-        ("fact", "content", 100, "TRUE"),
-        ("fact_write", "content", 100, "TRUE"),
-        ("field_write", "value", 10, "`key` LIKE 'load\\_key\\_%'"),
-        ("message", "body", 75, "TRUE"),
+async fn pad_the_text(pool: &sqlx::MySqlPool) -> String {
+    for (table, column, held, target) in [
+        (
+            "fact",
+            "content",
+            "LENGTH(`content`)",
+            PRODUCTION_FACT_WRITE_BYTES,
+        ),
+        (
+            "fact_write",
+            "content",
+            "LENGTH(`content`) + IFNULL(LENGTH(`details`), 0)",
+            PRODUCTION_FACT_WRITE_BYTES,
+        ),
+        ("message", "body", "LENGTH(`body`)", PRODUCTION_MAIL_BYTES),
     ] {
         sqlx::query(sqlx::AssertSqlSafe(format!(
-            "UPDATE `{table}` SET `{column}` = CONCAT(`{column}`, ?) WHERE {condition}"
+            "UPDATE `{table}` SET `{column}` = CONCAT(`{column}`, \
+             SUBSTRING(?, 1, GREATEST(0, CAST({target} - ({held}) AS SIGNED))))"
         )))
-        .bind(filler(extra * factor))
+        .bind(filler(target))
         .execute(pool)
         .await
         .unwrap_or_else(|e| panic!("padding {table}.{column}: {e}"));
     }
-    format!("pad_factor={factor}")
+    format!("fact_write_bytes={PRODUCTION_FACT_WRITE_BYTES} mail_bytes={PRODUCTION_MAIL_BYTES}")
+}
+
+/// **Give the deepest claim production's depth and the heaviest production's bytes.**
+/// The deepest is the claim with the most writes the grown store has and the heaviest
+/// the next; each takes copies of its first write under the next ordinals until it
+/// holds production's count, and the heaviest's writes are lifted to production's
+/// bytes for such a claim. Returns what it did, for the record the dump keeps.
+async fn grow_the_depth(pool: &sqlx::MySqlPool) -> String {
+    use sqlx::Row;
+    let claims = sqlx::query(
+        "SELECT entity, fact_id, COUNT(*) AS writes, MIN(ordinal) AS first, MAX(ordinal) AS last
+           FROM fact_write GROUP BY entity, fact_id
+          ORDER BY writes DESC, entity, fact_id LIMIT 2",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the deepest claims read");
+    assert_eq!(
+        claims.len(),
+        2,
+        "the grown store holds two claims to deepen"
+    );
+    let mut said = Vec::new();
+    for (row, target) in claims
+        .iter()
+        .zip([PRODUCTION_DEEPEST_FACT_WRITES, PRODUCTION_HEAVY_FACT_WRITES])
+    {
+        let entity: String = row.get("entity");
+        let fact: String = row.get("fact_id");
+        let (writes, first, last): (i64, i64, i64) =
+            (row.get("writes"), row.get("first"), row.get("last"));
+        let filter = format!(
+            "entity = '{}' AND fact_id = '{}' AND ordinal = {first}",
+            entity.replace('\'', "''"),
+            fact.replace('\'', "''")
+        );
+        for ordinal in last + 1..=last + (target - writes).max(0) {
+            copy_rows(
+                pool,
+                "fact_write",
+                &[("ordinal", ordinal.to_string())],
+                &filter,
+            )
+            .await;
+        }
+        said.push(format!("{fact}={target}"));
+    }
+    let heaviest = &claims[1];
+    sqlx::query(
+        "UPDATE fact_write
+            SET content = CONCAT(content, SUBSTRING(?, 1,
+                GREATEST(0, CAST(? - LENGTH(content) AS SIGNED))))
+          WHERE entity = ? AND fact_id = ?",
+    )
+    .bind(filler(PRODUCTION_HEAVY_FACT_WRITE_BYTES))
+    .bind(PRODUCTION_HEAVY_FACT_WRITE_BYTES)
+    .bind(heaviest.get::<String, _>("entity"))
+    .bind(heaviest.get::<String, _>("fact_id"))
+    .execute(pool)
+    .await
+    .expect("the heaviest claim's writes are lifted");
+    format!("deepened {}", said.join(" "))
 }
 
 /// **Put production's pre-import log into the store**: `events` teaching events
@@ -971,21 +1040,23 @@ async fn the_unscaled_seed_and_its_restored_claims_state_hold_the_same_history()
     compare_grown_claims(false).await;
 }
 
-/// **The padding makes each copied text longer by its factor and touches no link.**
-/// A claim's text grows by 100 bytes for each unit of the factor, a plain field
-/// value by 10 and a mail by 75. A key that holds an id is left alone, since a
-/// longer id names nothing; so is every column that is not text of the kinds named.
+/// **The padding lifts each copied text to production's bytes and touches no link.**
+/// A write of a claim is lifted to the bytes production's writes carry, content and
+/// details together, and a mail to the bytes of production's mails; one already longer
+/// stays as it is. A value that holds an id stays whole, since a longer id names
+/// nothing, and a plain field value is not production's lever and stays as written.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn padding_grows_the_copied_text_by_its_factor_and_leaves_links_alone() {
+async fn padding_lifts_the_copied_text_to_production_bytes_and_leaves_links_alone() {
     let scratch = Scratch::new("pad-the-text");
     let mut store = scaling_store(&scratch).await;
     let pool = store.pool().clone();
+    let long = "x".repeat(PRODUCTION_FACT_WRITE_BYTES as usize + 50);
     for sql in [
         "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
            VALUES ('person:homer', 'f1', 'a claim', 'testimony', 'active', '2026-10-22')",
-        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at)
-           VALUES ('person:homer', 'f1', 1, 'a claim', 'testimony', 'active', '2026-10-22'),
-                  ('person:homer', 'f1', 2, 'a claim again', 'testimony', 'active', '2026-10-22')",
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance, status, recorded_at)
+           VALUES ('person:homer', 'f1', 1, 'a claim', 'its details', 'testimony', 'active', '2026-10-22'),
+                  ('person:homer', 'f1', 2, 'a claim again', NULL, 'testimony', 'active', '2026-10-22')",
         "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
            VALUES ('person:homer', 'load_key_0', 1, 'shelf 1', 'f1'),
                   ('person:homer', 'depends_on', 1, '@#abc123', 'f1')",
@@ -994,25 +1065,45 @@ async fn padding_grows_the_copied_text_by_its_factor_and_leaves_links_alone() {
     ] {
         sqlx::query(sql).execute(&pool).await.expect("a row lands");
     }
-    pad_the_text(&pool, 2).await;
+    sqlx::query(
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at)
+           VALUES ('person:homer', 'f1', 3, ?, 'testimony', 'active', '2026-10-22')",
+    )
+    .bind(&long)
+    .execute(&pool)
+    .await
+    .expect("a write longer than production's lands");
+    pad_the_text(&pool).await;
+    let bytes = |ordinal: i64| {
+        format!(
+            "(SELECT LENGTH(content) + IFNULL(LENGTH(details), 0) FROM fact_write WHERE ordinal = {ordinal})"
+        )
+    };
+    for ordinal in [1, 2] {
+        assert_eq!(
+            count_of(&pool, &bytes(ordinal)).await,
+            PRODUCTION_FACT_WRITE_BYTES,
+            "write {ordinal} carries production's bytes"
+        );
+    }
+    assert_eq!(
+        count_of(&pool, &bytes(3)).await,
+        PRODUCTION_FACT_WRITE_BYTES + 50,
+        "a write already longer stays as it is"
+    );
     let length = |what: &'static str| {
         let pool = pool.clone();
         async move { count_of(&pool, what).await }
     };
     assert_eq!(
         length("(SELECT LENGTH(content) FROM fact)").await,
-        7 + 200,
-        "a claim"
-    );
-    assert_eq!(
-        length("(SELECT SUM(LENGTH(content)) FROM fact_write)").await,
-        (7 + 200) + (13 + 200),
-        "every write of the claim"
+        PRODUCTION_FACT_WRITE_BYTES,
+        "a claim carries the bytes of a write"
     );
     assert_eq!(
         length("(SELECT LENGTH(value) FROM field_write WHERE `key` = 'load_key_0')").await,
-        7 + 20,
-        "a plain field value"
+        7,
+        "a plain field value stays as written"
     );
     assert_eq!(
         length("(SELECT LENGTH(value) FROM field_write WHERE `key` = 'depends_on')").await,
@@ -1021,8 +1112,68 @@ async fn padding_grows_the_copied_text_by_its_factor_and_leaves_links_alone() {
     );
     assert_eq!(
         length("(SELECT LENGTH(body) FROM message)").await,
-        5 + 150,
-        "a mail"
+        PRODUCTION_MAIL_BYTES,
+        "a mail carries production's bytes"
+    );
+    store.stop().await;
+}
+
+/// **The deepest claim holds production's depth of writes, and the heaviest claim its
+/// writes at production's bytes.** The two are different claims: the deepest is the one
+/// with the most writes the grown store has, the heaviest the next. A write is the
+/// whole row copied under the next ordinal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_deepest_and_the_heaviest_claim_reach_production_depth_and_bytes() {
+    let scratch = Scratch::new("grow-the-depth");
+    let mut store = scaling_store(&scratch).await;
+    let pool = store.pool().clone();
+    for (fact, writes) in [("f1", 3), ("f2", 2), ("f3", 1)] {
+        sqlx::query(
+            "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
+               VALUES ('person:marge', ?, 'a claim', 'testimony', 'active', '2026-10-22')",
+        )
+        .bind(fact)
+        .execute(&pool)
+        .await
+        .expect("a claim lands");
+        for ordinal in 1..=writes {
+            sqlx::query(
+                "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at)
+                   VALUES ('person:marge', ?, ?, 'a claim', 'testimony', 'active', '2026-10-22')",
+            )
+            .bind(fact)
+            .bind(ordinal)
+            .execute(&pool)
+            .await
+            .expect("a write lands");
+        }
+    }
+    grow_the_depth(&pool).await;
+    let writes = |fact: &'static str| {
+        let pool = pool.clone();
+        async move {
+            count_of(
+                &pool,
+                &format!("(SELECT COUNT(*) FROM fact_write WHERE fact_id = '{fact}')"),
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        writes("f1").await,
+        PRODUCTION_DEEPEST_FACT_WRITES,
+        "deepest"
+    );
+    assert_eq!(writes("f2").await, PRODUCTION_HEAVY_FACT_WRITES, "heaviest");
+    assert_eq!(writes("f3").await, 1, "a third claim is left as it was");
+    let lightest = count_of(
+        &pool,
+        "(SELECT MIN(LENGTH(content)) FROM fact_write WHERE fact_id = 'f2')",
+    )
+    .await;
+    assert_eq!(
+        lightest, PRODUCTION_HEAVY_FACT_WRITE_BYTES,
+        "every write of the heaviest claim carries its bytes"
     );
     store.stop().await;
 }

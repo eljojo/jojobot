@@ -48,9 +48,9 @@ BAR = Path("target/bar")
 # Production's first boot at 9.3.3: the Rust process's resident memory the first sample after
 # serving began (3.47 GiB, VictoriaMetrics process_resident_memory_bytes, 2026-11-12).
 PRODUCTION_FIRST_BOOT_MIB = 3553.0
-# The grown store's bytes are fitted until production's per-table byte totals are read, and
-# the comparison says so; a fitted comparison does not discharge the card.
-COMPARISON = "fitted: production's byte totals are unread"
+# The grown store carries production's per-table bytes and claim depth, read on this day
+# (PRODUCTION_BYTES_READ_ON in tests/boot_measures.rs); the comparison names it.
+COMPARISON = "store sized to production's bytes read 2026-11-12"
 # The share of production's first-boot reading under which the store is too small for the bound
 # to speak for production: the verdict says so.
 SIZED_SHARE = 75
