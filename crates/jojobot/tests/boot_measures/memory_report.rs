@@ -385,6 +385,81 @@ fn watch_boot(run: &mut Running) -> Boot {
     }
 }
 
+/// **The overhead the ready line states**, as one line of the report.
+fn overhead_line(seen: &[String]) -> String {
+    let (Some(payload), Some(records), Some(resident), Some(walk)) = (
+        field_of(seen, "payload_bytes"),
+        field_of(seen, "payload_records"),
+        field_of(seen, "resident_bytes"),
+        field_of(seen, "walk_micros"),
+    ) else {
+        return "memory-report overhead: no ready line states it".to_string();
+    };
+    let ratio = |of: u64| {
+        if of > 0 {
+            resident as f64 / of as f64
+        } else {
+            0.0
+        }
+    };
+    format!(
+        "memory-report overhead at the ready line: resident {} over payload {} (ratio {:.2}), \
+         {:.0} bytes per record over {records} records; the walk held the State's \
+         lock for {:.1} ms",
+        mib(resident / 1024),
+        mib(payload / 1024),
+        ratio(payload),
+        ratio(records),
+        walk as f64 / 1000.0,
+    )
+}
+
+/// **The overhead a scrape of the server states after the day**, as one line of the
+/// report.
+fn day_overhead_line(scrape: &str) -> String {
+    let gauge = |name: &str| -> Option<f64> {
+        scrape
+            .lines()
+            .find(|line| line.starts_with(&format!("{name} ")))?
+            .rsplit(' ')
+            .next()?
+            .parse()
+            .ok()
+    };
+    let (Some(payload), Some(records), Some(ratio), Some(each)) = (
+        gauge("jojobot_payload_bytes"),
+        gauge("jojobot_payload_records"),
+        gauge("jojobot_resident_to_payload_ratio"),
+        gauge("jojobot_resident_bytes_per_record"),
+    ) else {
+        return "memory-report day overhead: no scrape states it".to_string();
+    };
+    format!(
+        "memory-report day overhead: payload {} over {records} records, ratio {ratio:.2}, \
+         {each:.0} bytes per record",
+        mib(payload as u64 / 1024),
+    )
+}
+
+/// The body of `GET /metrics` from the server's metrics listener, or nothing when the
+/// listener does not answer in two minutes: a scrape that hangs must not cost the rest
+/// of the report.
+fn scrape_metrics(port: u16) -> String {
+    use std::io::{Read, Write};
+    let asked = || -> std::io::Result<String> {
+        let mut ask = std::net::TcpStream::connect(("127.0.0.1", port))?;
+        ask.set_read_timeout(Some(Duration::from_secs(120)))?;
+        ask.write_all(b"GET /metrics HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")?;
+        let mut answer = String::new();
+        ask.read_to_string(&mut answer)?;
+        Ok(answer)
+    };
+    asked()
+        .ok()
+        .filter(|answer| answer.starts_with("HTTP/1.1 200"))
+        .unwrap_or_default()
+}
+
 /// The number after `name=` in a server log line, such as `runs=1560`.
 fn field_of(lines: &[String], name: &str) -> Option<u64> {
     lines.iter().find_map(|line| {
@@ -888,6 +963,12 @@ async fn first_boot() -> FirstBoot {
     );
     let after_boot = memory_of_pid(run.pid).expect("the server runs");
     record(&boot_line(imported, server_peak, store_peak, after_boot));
+    assert!(
+        field_of(&seen, "payload_bytes").is_some(),
+        "the ready line never stated the payload. What it said:\n{}",
+        seen.join("\n")
+    );
+    record(&overhead_line(&seen));
     for step in &steps {
         record(&format!(
             "memory-report step: {} ended at {} ms and grew the server by {} kB ({}{}), to {} \
@@ -1132,7 +1213,11 @@ async fn the_servers_memory_after_a_replayed_day() {
         day().len(),
         "the replay stopped before it made the whole day"
     );
+    // **The peaks are read before the scrape**: the scrape's store reads and its walk
+    // of the State would otherwise land in the high-water mark the verdict gates on.
     let (server_peak_after, store_peak_after) = served.peaks_kib();
+    // **The gauges after the last entry**: the first scrape reads the State afresh.
+    record(&day_overhead_line(&scrape_metrics(served.metrics_port)));
     record(&format!(
         "memory-report day: all {} entries of a day made, which is {} tool calls before any \
          retry, in {} s; server resident {} at the end, {} at the most; peak {}",
@@ -1717,6 +1802,41 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
             day().len() + 2 * count(Call::PostAndClose) + count(Call::Session),
             "a closed message is three calls and a session two; the rest are one"
         );
+    }
+
+    #[test]
+    fn memory_overhead_line_reads_the_ready_line_and_names_the_ratio() {
+        let ready = vec![
+            "INFO jojobot: memory at ready payload_bytes=1000 payload_records=10 \
+             resident_bytes=3500 walk_micros=2500"
+                .to_string(),
+        ];
+        let line = overhead_line(&ready);
+        assert!(line.contains("ratio 3.50"), "{line}");
+        assert!(line.contains("350 bytes per record"), "{line}");
+        assert!(
+            line.contains("walk held the State's lock for 2.5 ms"),
+            "{line}"
+        );
+        assert!(
+            overhead_line(&[]).contains("no ready line"),
+            "a log with no line says so"
+        );
+    }
+
+    #[test]
+    fn memory_overhead_day_line_reads_the_gauges_of_a_scrape() {
+        let scrape = "# TYPE jojobot_payload_bytes gauge\n\
+                      jojobot_payload_bytes 2000\n\
+                      jojobot_payload_records 8\n\
+                      jojobot_resident_to_payload_ratio 4.5\n\
+                      jojobot_resident_bytes_per_record 1125\n";
+        let line = day_overhead_line(scrape);
+        assert!(line.contains("payload 0.0 MiB"), "{line}");
+        assert!(line.contains("8 records"), "{line}");
+        assert!(line.contains("ratio 4.50"), "{line}");
+        assert!(line.contains("1125 bytes per record"), "{line}");
+        assert!(day_overhead_line("").contains("no scrape states it"));
     }
 
     #[test]

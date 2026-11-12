@@ -134,6 +134,8 @@ struct Running {
     seen: Vec<String>,
     started: Instant,
     http_port: u16,
+    /// The port the server serves `/metrics` on, or 0 when it serves none.
+    metrics_port: u16,
     state: Scratch,
 }
 
@@ -148,17 +150,17 @@ impl Drop for Running {
 
 /// Start the real binary over `state` and return at once.
 fn spawn(state: Scratch) -> Running {
-    spawn_binary(state, env!("CARGO_BIN_EXE_jojobot"), 0)
+    spawn_binary(state, env!("CARGO_BIN_EXE_jojobot"), 0, free_port())
 }
 
 fn recording(state: Scratch) -> Running {
     let binary = std::env::var("UPGRADE_FIXTURE_BINARY")
         .expect("the recording runs while the deployed binary is available");
     // Older builds log the configured port instead of the bound port.
-    spawn_binary(state, &binary, free_port())
+    spawn_binary(state, &binary, free_port(), 0)
 }
 
-fn spawn_binary(state: Scratch, binary: &str, http_port: u16) -> Running {
+fn spawn_binary(state: Scratch, binary: &str, http_port: u16, metrics_port: u16) -> Running {
     let boot_turn = ONE_BOOT
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -173,6 +175,10 @@ fn spawn_binary(state: Scratch, binary: &str, http_port: u16) -> Running {
         .env("JOJOBOT_STORE_PORT", free_port().to_string())
         .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
+        .envs(
+            (metrics_port != 0)
+                .then(|| ("JOJOBOT_METRICS_BIND", format!("127.0.0.1:{metrics_port}"))),
+        )
         .env("RUST_LOG", "info")
         .process_group(0)
         .stdout(Stdio::piped())
@@ -201,6 +207,7 @@ fn spawn_binary(state: Scratch, binary: &str, http_port: u16) -> Running {
         seen: Vec::new(),
         started,
         http_port: 0,
+        metrics_port,
         state,
     }
 }

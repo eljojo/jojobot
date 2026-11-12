@@ -319,7 +319,7 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
                         || value == "other"
                 }
                 "state" => matches!(value.as_str(), "new" | "read" | "processed"),
-                "read" => matches!(value.as_str(), "sessions" | "mail" | "things"),
+                "read" => matches!(value.as_str(), "sessions" | "mail" | "things" | "payload"),
                 "family" => value == "referring_to",
                 "reason" => jojobot_adapters::log_snapshot::Skip::ALL
                     .iter()
@@ -411,12 +411,20 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
         "a box a caller made is counted as other: {text}"
     );
     assert!(has(&all, "jojobot_sessions_live", &[]), "{text}");
-    for read in ["sessions", "mail", "things"] {
+    for read in ["sessions", "mail", "things", "payload"] {
         assert!(
             has(&all, "jojobot_scrape_read_ok", &[("read", read)]),
             "{text}"
         );
     }
+    // **The State a real store lends is counted**: the server held things and claims.
+    assert!(
+        text.lines()
+            .find(|line| line.starts_with("jojobot_payload_bytes "))
+            .and_then(|line| line.rsplit(' ').next()?.parse::<f64>().ok())
+            .is_some_and(|bytes| bytes > 0.0),
+        "the payload of a real store's State: {text}"
+    );
     assert!(
         text.lines()
             .filter(|line| line.starts_with("jojobot_scrape_read_ok"))
