@@ -581,17 +581,21 @@ impl Folded {
         .flatten()
     }
 
-    /// **One part of a thing's document, worked out from the claims State at read
-    /// time**: the histories, ages, trails and versions the port serves. `None`
-    /// under the same declines as [`stated`](Folded::stated).
+    /// **One piece of a thing's history, worked out from the claims State at read
+    /// time**: the State builds that piece and no other part of the document.
+    /// `None` under the same declines as [`stated`](Folded::stated).
     fn part_of<T>(
         &self,
         id: &EntityId,
-        pick: impl FnOnce(jojobot_domain::log::claims::DocumentParts) -> T,
+        pick: impl FnOnce(
+            &jojobot_domain::log::claims::State,
+            &jojobot_domain::log::ObjectId,
+            &[DeclaredType],
+        ) -> T,
     ) -> Option<T> {
         self.stated(id, |state, found, declared| {
             let object = state.resolve(&found.id.0)?;
-            Some(pick(state.document_parts(object, declared)?))
+            Some(pick(state, object, declared))
         })
     }
 
@@ -601,8 +605,7 @@ impl Folded {
     fn chain_of(&self, address: &FactAddress) -> Option<Result<Vec<ClaimWrite>, MemoryError>> {
         self.stated(&address.home, |state, found, declared| {
             let object = state.resolve(&found.id.0)?;
-            let mut parts = state.document_parts(object, declared)?;
-            if let Some(chain) = parts.histories.remove(&address.local)
+            if let Some(chain) = state.claim_chain_of(object, &address.local)
                 && !chain.is_empty()
             {
                 return Some(Ok(chain));
@@ -954,8 +957,8 @@ impl Memory for Folded {
     /// the merges as the store forwards it.
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         self.readable()?;
-        match self.part_of(entity, |parts| parts.trails.history.get(key).cloned()) {
-            Some(writes) => Ok(writes.unwrap_or_default()),
+        match self.part_of(entity, |state, object, _| state.key_history(object, key)) {
+            Some(writes) => Ok(writes),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
                 None => {
@@ -1046,7 +1049,7 @@ impl Memory for Folded {
         entity: &EntityId,
     ) -> Result<Vec<jojobot_domain::memory::EntityVersion>, MemoryError> {
         self.readable()?;
-        match self.part_of(entity, |parts| parts.entity_versions) {
+        match self.part_of(entity, |state, object, _| state.entity_versions_of(object)) {
             Some(versions) => Ok(versions),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
@@ -1063,10 +1066,10 @@ impl Memory for Folded {
         address: &FactAddress,
     ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
         self.readable()?;
-        match self.part_of(&address.home, |parts| {
-            parts.trails.kept_off.get(&address.local).cloned()
+        match self.part_of(&address.home, |state, object, _| {
+            state.keys_kept_off(object, &address.local)
         }) {
-            Some(kept) => Ok(kept.unwrap_or_default()),
+            Some(kept) => Ok(kept),
             None => match self.missed(&address.home) {
                 Some(unknown) => Err(unknown),
                 None => {
@@ -1082,7 +1085,7 @@ impl Memory for Folded {
         entity: &EntityId,
     ) -> Result<jojobot_domain::memory::KeyTrails, MemoryError> {
         self.readable()?;
-        match self.part_of(entity, |parts| parts.trails) {
+        match self.part_of(entity, |state, object, _| state.key_trails_served(object)) {
             Some(trails) => Ok(trails),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
@@ -1099,7 +1102,7 @@ impl Memory for Folded {
         entity: &EntityId,
     ) -> Result<HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
         self.readable()?;
-        match self.part_of(entity, |parts| parts.histories) {
+        match self.part_of(entity, |state, object, _| state.claim_chains_of(object)) {
             Some(histories) => Ok(histories),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
@@ -1188,7 +1191,9 @@ impl Memory for Folded {
 
     async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
         self.readable()?;
-        match self.part_of(entity, |parts| parts.ages) {
+        match self.part_of(entity, |state, object, declared| {
+            state.field_ages_of(object, declared)
+        }) {
             Some(ages) => Ok(ages),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
