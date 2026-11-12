@@ -1075,6 +1075,7 @@ fn no_slug_under_a_declared_kind_is_off_the_lists() {
 /// [`the_check_reads_a_commit_for_the_operator_and_one_for_a_character_apart`],
 /// which runs in the same suite and does not depend on what the range holds.
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn no_unpushed_commit_message_writes_a_pronoun_for_the_operator() {
     let unattached = operator_pronouns_in(&unpushed_commits());
     assert!(
@@ -1137,6 +1138,7 @@ fn the_check_reads_a_commit_for_the_operator_and_one_for_a_character_apart() {
 /// enforced by attention, exactly as every other comment and doc string in
 /// this repository is; no machine reads prose for a life specific.
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn no_commit_message_since_the_boundary_quotes_an_off_roster_handle() {
     let violations = off_roster_handles_in(&commits_checked_for_handles());
     assert!(
@@ -1211,6 +1213,7 @@ fn current_head() -> String {
 /// that quietly stopped tracking HEAD would leave every later commit
 /// unchecked with nothing here to notice.
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn the_handle_check_range_reaches_head() {
     let commits = commits_checked_for_handles();
     let head = current_head();

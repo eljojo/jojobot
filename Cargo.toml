@@ -14,6 +14,9 @@ license = "AGPL-3.0-or-later"
 rust-version = "1.95"
 repository = "https://github.com/eljojo/jojobot"
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(jojobot_sandbox)"] }
+
 [workspace.dependencies]
 # --- async runtime + web ---
 # `process` and `time`: jojobot spawns the store's server and waits for it to

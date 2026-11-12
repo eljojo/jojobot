@@ -113,3 +113,5 @@ tracing-log = { workspace = true }
 # The metrics cases read every line a scrape answers with a strict OpenMetrics
 # parser, so a line a scraper would drop fails the case.
 openmetrics-parser = "0.5"
+[lints]
+workspace = true

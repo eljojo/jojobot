@@ -124,6 +124,8 @@
         # cargo builds a dependency again when the profile differs.
         testProfile = {
           CARGO_PROFILE_RELEASE_LTO = "off";
+          # The sandbox's build: cases that need what it lacks are compiled out.
+          RUSTFLAGS = "--cfg jojobot_sandbox";
         };
 
         # **The suite's dependencies are a second build, on purpose.** The
@@ -207,22 +209,11 @@
             # rest. (The paid half of that crate is a binary somebody has to
             # invoke, and no test starts it.)
             #
-            # fixture_roster's unpushed-commit check is the one kind of test
-            # skipped, at test granularity: it reads `git log origin/main..HEAD`
-            # against the checkout it runs in, and fails loud rather than passing
-            # quietly when it cannot — by design, so a missing check is never
-            # reported as a clean one. `src` here is a Nix store path: it has no
-            # `.git`, the same reason JOJOBOT_BUILD above falls back to "unknown"
-            # instead of reading `self.rev`. That makes the check unrunnable in
-            # this sandbox on every build, not occasionally broken. The two
-            # checks that read the commit range from the roster boundary to HEAD
-            # are the same kind, for the same reason.
-            #
-            # All three stay enforced by `make check`, which is where they can
-            # read the history.
-            # The upgrade gate also needs the CI-owned last-release cache. Its
-            # cases use the same test skips here; make check's ALWAYS_RUN gate
-            # still runs in branch and pull-request jobs.
+            # **A case the sandbox cannot run carries `cfg(not(jojobot_sandbox))`,
+            # never a name here.** It reads the checkout's `git log` (`src` is a
+            # store path with no `.git`), needs `flake.nix`, a pid helper or the
+            # CI-owned last-release cache. `testProfile` sets the cfg, so the case
+            # is not compiled here; `make check` builds without it and runs it.
             #
             # **The compile prints a line for each unit it finishes, so the log
             # is not silent while it works.** `cargo test --release --workspace`
@@ -238,49 +229,6 @@
               "--message-format"
               "json-render-diagnostics"
               "--workspace"
-              "--"
-              "--skip=no_unpushed_commit_message_writes_a_pronoun_for_the_operator"
-              "--skip=no_commit_message_since_the_boundary_quotes_an_off_roster_handle"
-              "--skip=the_handle_check_range_reaches_head"
-              "--skip=deaths::"
-              "--skip=the_current_binary_boots_on_the_last_deployed_store"
-              "--skip=kitchen_sink::the_kitchen_sink_boots_once_and_reads_every_tolerated_shape"
-              "--skip=kitchen_sink::link_marking_changes_no_row_on_the_second_boot"
-              "--skip=kitchen_sink::old_merge_repair_changes_no_row_on_the_second_boot"
-              "--skip=the_last_deployed_store_recorded_six_hours_earlier_reads_back"
-              "--skip=the_last_deployed_store_recorded_three_days_earlier_reads_back"
-              "--skip=the_scan_for_oversized_records_finds_one_stored_over_the_ceiling"
-              "--skip=the_wait_for_the_store_lock_lasts_as_long_as_the_lock_is_held_and_no_longer"
-              "--skip=every_recorded_held_value_joins_to_an_entity"
-              "--skip=a_held_value_the_oracle_cannot_join_fails_the_gate"
-              "--skip=the_statement_splitter_keeps_a_semicolon_inside_a_value"
-              "--skip=a_hand_made_instance_record_keeps_its_operator_and_zone_across_a_boot"
-              "--skip=field_link_holds_the_links_the_writes_imply_and_nothing_else"
-              "--skip=a_slow_statement_alert_is_not_a_degradation"
-              "--skip=any_other_warning_or_error_is_still_a_degradation_beside_the_alert"
-              "--skip=a_slow_acquire_alert_is_not_a_degradation"
-              "--skip=any_other_warning_is_still_a_degradation_beside_the_acquire_alert"
-              "--skip=a_pointer_at_a_record_the_build_supplies_boots_quiet_and_reads_back"
-              "--skip=a_reference_field_naming_a_supplied_record_boots_quiet_and_reads_back"
-              "--skip=the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_error"
-              "--skip=a_boot_over_a_run_with_a_long_history_reaches_its_serving_line"
-              "--skip=a_stored_cadence_days_rhythm_reads_the_same_on_the_head"
-              "--skip=a_stored_cadence_days_rhythm_checks_in_on_the_head_as_it_did_before"
-              "--skip=rows_classed_own_still_reach_their_things_on_the_last_deployed_store"
-              "--skip=a_thread_a_deployed_build_left_over_the_default_ceiling_reads_and_edits_as_before"
-              "--skip=a_view_stored_with_a_filter_record_answers_as_before_on_the_current_binary"
-              "--skip=a_stored_mark_inside_code_reads_as_the_handle_on_the_current_binary"
-              "--skip=a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_last_deployed_store"
-              "--skip=a_store_holding_a_row_at_a_handle_the_build_supplies_boots_and_the_row_answers"
-              "--skip=what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_back_as_a_thing"
-              "--skip=a_stored_clear_by_a_claim_that_did_not_hold_the_key_is_imported_as_a_removal"
-              "--skip=everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it"
-              "--skip=import_rows::"
-              "--skip=old_shapes::"
-              "--skip=boot_store_cache_key_patterns_all_match_the_checkout"
-              "--skip=memory_day_stops_what_the_binary_started_in_a_group_of_its_own"
-              "--skip=landing_gate_"
-              "--skip=runs_in_moment_order::the_runs_of_the_last_deployed_store_read_in_moment_order_on_the_head"
             ];
           }
         );

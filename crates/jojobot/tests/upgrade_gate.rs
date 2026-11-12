@@ -1,5 +1,6 @@
 //! Upgrade the one store the last deployed release wrote, supplied by CI.
 //! No SQL dump is committed; a cache miss records the deployed tag again.
+#![cfg(not(jojobot_sandbox))]
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::testing::{Scratch, free_port};
 use jojobot_exercise::surface::Surface;

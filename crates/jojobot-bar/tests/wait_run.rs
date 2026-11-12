@@ -402,6 +402,7 @@ fn boundary_omissions_refuse_touched_crates_until_the_same_head_has_covering_pro
 }
 
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_sha_ref_verdict_matches_the_tip_or_an_unchanged_ancestor() {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-landing-sha"));
     std::fs::create_dir_all(&dir).unwrap();
@@ -476,6 +477,7 @@ fn landing_gate_sha_ref_verdict_matches_the_tip_or_an_unchanged_ancestor() {
 }
 
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_uses_the_newest_finished_verdict_without_waiting() {
     for newest in [
         "success",
@@ -518,6 +520,7 @@ fn landing_gate_uses_the_newest_finished_verdict_without_waiting() {
 /// and a landing that read that as no verdict read the gate before it. Green lands, a red
 /// outside the known reds refuses, and a cancelled run is no verdict, as ever.
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_reads_a_gate_whose_only_unfinished_job_is_its_cleanup_job() {
     for (jobs, log, code, number) in [
         (
@@ -550,6 +553,7 @@ fn landing_gate_reads_a_gate_whose_only_unfinished_job_is_its_cleanup_job() {
 }
 
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_refuses_red_and_accepts_green_and_no_finished_run() {
     for status in ["failure", "success", "running"] {
         let standing = stand(Forge {
@@ -562,6 +566,7 @@ fn landing_gate_refuses_red_and_accepts_green_and_no_finished_run() {
 }
 
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_reads_the_pull_request_head_and_ignores_other_workflows_and_branches() {
     let mut pr = trunk_gate(101, "failure");
     pr["prettyref"] = json!("#68");
@@ -585,6 +590,7 @@ fn landing_gate_reads_the_pull_request_head_and_ignores_other_workflows_and_bran
 }
 
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_only_excuses_exact_known_tests_and_no_other_red_phase() {
     let log = "verdict: RED\nsize: ok\nbuild: ok\ntest: FAILED — 1 failed\n  FAILED: tests::known\nlint: ok\nlog: target/bar/check.log\n";
     for (known, log, code) in [
@@ -627,6 +633,7 @@ fn landing_gate_only_excuses_exact_known_tests_and_no_other_red_phase() {
 /// and printing no result is red outside the list. The log is the real renderer's
 /// output for two real captures, not a block written to look like one.
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_refuses_a_known_test_beside_a_crashed_suite() {
     let failing = include_str!("fixtures/one-failing-test.txt");
     let killed = include_str!("fixtures/verdict-killed-binary.txt");
@@ -660,6 +667,7 @@ fn landing_gate_refuses_a_known_test_beside_a_crashed_suite() {
 }
 
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_checks_every_red_job_before_accepting_known_tests() {
     let log = "verdict: RED\ntest: FAILED\n  FAILED: tests::known\nlog: target/bar/check.log\n";
     for extra in ["tests::known", "tests::new"] {
@@ -702,6 +710,7 @@ fn landing_summary(names: Vec<String>, timed_out: Vec<String>) -> String {
 }
 
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_refuses_a_rendered_timeout_beside_a_known_test() {
     for timeout in [false, true] {
         let timed_out = if timeout {
@@ -723,6 +732,7 @@ fn landing_gate_refuses_a_rendered_timeout_beside_a_known_test() {
 }
 
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_refuses_a_rendered_failure_list_cut_short() {
     let allowed: Vec<String> = (0..10).map(|n| format!("tests::known_{n}")).collect();
     for omitted in [false, true] {
@@ -743,6 +753,7 @@ fn landing_gate_refuses_a_rendered_failure_list_cut_short() {
 }
 
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn landing_gate_uses_the_last_finished_verdict_across_different_shas() {
     for newest in ["running", "success", "failure"] {
         for older in ["success", "failure"] {

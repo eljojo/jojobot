@@ -422,6 +422,7 @@ print('recording input edits, migration additions/removals, and unused document 
 /// The cases above run on a made-up tree, which cannot say that a pattern still
 /// names a path of THIS checkout, or that a crate added later was weighed.
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn boot_store_cache_key_patterns_all_match_the_checkout() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let out = support::output_fenced(
@@ -997,6 +998,7 @@ fn memory_day_reads_an_unreaped_process_as_gone() {
 /// be gone. **The positive is in the same case**: the child's pid was written, so it
 /// ran.
 #[test]
+#[cfg(not(jojobot_sandbox))]
 fn memory_day_stops_what_the_binary_started_in_a_group_of_its_own() {
     let dir = bundle("setsid sh -c 'echo $$ > ../../server-pid; exec sleep 300' & sleep 30");
     let out = run(&dir, "2");
@@ -1035,4 +1037,26 @@ fn memory_day_kills_a_run_past_its_deadline_and_says_so() {
     );
     the_verdict_file_is_the_last_line(&dir, &said);
     fs::remove_dir_all(dir).unwrap();
+}
+
+/// **The Nix sandbox leaves out a case by one marker and keeps no list of names.**
+/// A case the sandbox cannot run carries `cfg(not(jojobot_sandbox))`, which the flake
+/// sets. Nothing outside this process declares that spelling, so this case pins it.
+#[test]
+#[cfg(not(jojobot_sandbox))]
+fn the_nix_sandbox_skips_cases_by_one_marker_and_keeps_no_list_of_names() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let flake = fs::read_to_string(root.join("flake.nix")).unwrap();
+    let list = flake
+        .split("cargoTestExtraArgs =")
+        .nth(1)
+        .expect("the test arguments");
+    let list = &list[..list.find("];").expect("the end of the list")];
+    assert!(
+        !list.contains("--skip="),
+        "a case is skipped by name:\n{list}"
+    );
+    assert!(flake.contains("RUSTFLAGS = \"--cfg jojobot_sandbox\""));
+    let gate = fs::read_to_string(root.join("crates/jojobot/tests/upgrade_gate.rs")).unwrap();
+    assert!(gate.lines().any(|l| l == "#![cfg(not(jojobot_sandbox))]"));
 }
