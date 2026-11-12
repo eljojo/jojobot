@@ -330,7 +330,7 @@ async fn compare(merged: bool) {
                 )
             ),
         );
-        let held_fields = state.fields(&object, &declared);
+        let held_fields = state.fields_served(&object, &declared);
         differ(
             "fields",
             held_fields == stored.fields,
