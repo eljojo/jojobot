@@ -706,7 +706,7 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
     assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
-    assert_the_teaching_marks_equal_the_rows(&state_dir, store_port, &git_ref).await;
+    assert_the_teaching_marks_cover_the_rows(&state_dir, store_port, &git_ref).await;
     assert_the_import_answers_what_the_old_tables_answered(
         &state_dir,
         store_port,
@@ -1646,14 +1646,33 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
         rows.iter().all(|row| logged.contains(row)),
         "an aged store's log holds every row's mark: log {logged:?}, rows {rows:?}"
     );
+    assert_no_other_mark_of_a_run_a_row_names(&logged, &rows);
 }
 
-/// **The teaching marks the restore seeded through the log survive the first
-/// boot whole.** The store is brought up with no binary over it. The log's
-/// events, folded in order with a clear dropping its run, equal the rows of
-/// `session_teaching` read the same way, and both seeded marks read back with
-/// their own times. The boot itself said nothing of a disagreement.
-async fn assert_the_teaching_marks_equal_the_rows(
+/// **A run a row names has in the log the marks its rows hold and no others.** The
+/// log may hold marks of runs no row holds; a stray or moved mark of a run a row
+/// does name is a disagreement the old equality caught.
+fn assert_no_other_mark_of_a_run_a_row_names(
+    logged: &[jojobot_adapters::teaching_log::Mark],
+    rows: &[jojobot_adapters::teaching_log::Mark],
+) {
+    let strays: Vec<_> = logged
+        .iter()
+        .filter(|mark| rows.iter().any(|row| row.sid == mark.sid) && !rows.contains(mark))
+        .collect();
+    assert!(
+        strays.is_empty(),
+        "the log holds marks of a run a row names that no row holds: {strays:?}"
+    );
+}
+
+/// **Every mark the rows hold is in the log after the first boot, with its own
+/// time, and the log holds no other mark of a run a row names.** The store is
+/// brought up with no binary over it. The log's events, folded in order with a
+/// clear dropping its run, cover the rows of `session_teaching` read the same way,
+/// and both seeded marks read back with their own times. The log may hold the
+/// marks of runs no row holds, which the 9.3.3 recording's own sessions left.
+async fn assert_the_teaching_marks_cover_the_rows(
     state_dir: &std::path::Path,
     store_port: u16,
     git_ref: &str,
@@ -1681,6 +1700,7 @@ async fn assert_the_teaching_marks_equal_the_rows(
         rows.iter().all(|row| imported.contains(row)),
         "the teaching marks the log holds after the first boot lack a row of the store recorded at {git_ref}: log {imported:?}, rows {rows:?}"
     );
+    assert_no_other_mark_of_a_run_a_row_names(&imported, &rows);
     store.stop().await;
 }
 
@@ -4105,8 +4125,6 @@ async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_ov
     drop(scratch);
 }
 
-/// **Rows for a thread with five active records**, written below the surface into
-/// the recorded schema, as a build that let a thread grow without a limit left it.
 /// **A case that plants rows below the surface needs the head boot to import them.**
 /// The recording is 9.3.3's, whose log already holds a completed claims import, so
 /// rows planted afterwards are never read into the State and the served surface
@@ -4121,6 +4139,8 @@ pub(crate) async fn leave_the_claims_import_to_the_head_boot(pool: &sqlx::MySqlP
         .expect("the recording's events and snapshots are removed");
 }
 
+/// **Rows for a thread with five active records**, written below the surface into
+/// the recorded schema, as a build that let a thread grow without a limit left it.
 async fn plant_a_thread_over_the_default_ceiling(pool: &sqlx::MySqlPool) {
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,

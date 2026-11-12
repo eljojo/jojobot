@@ -716,7 +716,7 @@ async fn a_boot_that_stamps_a_due_day_before_the_teaching_ledger_opens_leaves_bo
     );
     booted.stop().await;
     assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
-    assert_the_teaching_marks_equal_the_rows(&state_dir, store_port, &git_ref).await;
+    assert_the_teaching_marks_cover_the_rows(&state_dir, store_port, &git_ref).await;
     drop(scratch);
 }
 
