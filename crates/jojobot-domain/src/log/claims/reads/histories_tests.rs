@@ -421,3 +421,52 @@ fn a_field_written_by_a_merged_bot_names_the_survivor() {
         "ClaimWrite.bot follows the survivor too"
     );
 }
+
+/// **A claim derived from a claim a merge relabelled is served at the new label**,
+/// in its history, as the store serves it: the address a read gives follows the
+/// merge's relabel, never the label the claim was last written under. A stand-in
+/// carried by `stands_for` follows too.
+#[test]
+fn a_lineage_follows_the_label_a_merge_gave_the_claim() {
+    let mut state = State::default();
+    for event in things() {
+        state.apply(&stamped(None, None, event));
+    }
+    state.apply(&stamped(
+        None,
+        None,
+        created("work:beta/f1", claim("f1", "work:beta", "the source", 3)),
+    ));
+    state.apply(&stamped(
+        None,
+        None,
+        created(
+            "work:alpha/f1",
+            ClaimBody {
+                derived_from: Some(record("work:beta/f1")),
+                stands_for: vec![record("work:beta/f1")],
+                ..claim("f1", "work:alpha", "worked out from the source", 4)
+            },
+        ),
+    ));
+    state.apply(&stamped(
+        None,
+        None,
+        ClaimEvent::ObjectsMerged {
+            folded: object("work:beta"),
+            survivor: object("work:alpha"),
+            records: vec![MovedRecord {
+                record: record("work:beta/f1"),
+                label: "f2".into(),
+            }],
+            writes: Vec::new(),
+        },
+    ));
+    let moved = FactAddress::new(EntityId("work:alpha".into()), FactId("f2".into()));
+    let parts = state
+        .document_parts(&object("work:alpha"), &[])
+        .expect("the thing is held");
+    let write = &parts.histories[&FactId("f1".into())][0];
+    assert_eq!(write.derived_from, Some(moved.clone()), "the history");
+    assert_eq!(write.stands_for, Some(vec![moved]), "the stand-in");
+}

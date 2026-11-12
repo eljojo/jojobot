@@ -35,11 +35,13 @@ fn served(state: &State, object: &ObjectId) -> EntityId {
 
 /// **The address a claim is served at now**: the handle of its home and its label.
 fn address_of(state: &State, record: &RecordId) -> Option<FactAddress> {
-    let Some(write) = state.claim_history(record).last() else {
+    let Some(held) = state.records.get(record) else {
         // A record the State does not hold is served at the address it was filed under.
         return state.filed_address(record);
     };
-    let claim = &write.claim;
+    // **The claim as it stands now**, whose home and label a merge moved, and not
+    // the claim as its last write left it: the store serves the relabelled address.
+    let claim = &held.claim;
     Some(FactAddress::new(
         served(state, &claim.home),
         FactId(claim.label.clone()),
