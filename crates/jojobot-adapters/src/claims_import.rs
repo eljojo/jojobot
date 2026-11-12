@@ -135,12 +135,12 @@ pub async fn import_claims_once(
         .await
 }
 
-async fn import_in_job(
-    writer: &Writer,
-    pool: &sql::Pool,
-    supplied: Provisions,
-    at: Timestamp,
-) -> Result<Imported, ClaimsImportError> {
+/// **Does the log hold a claims event?** The one test of "the import is done",
+/// shared by the import and by the boot that picks its write order from it. A
+/// member of another family is skipped; one of this family that cannot be read
+/// fails the call, because importing over a log this build cannot read would
+/// write the rows twice.
+async fn log_holds_an_import(writer: &Writer, pool: &sql::Pool) -> Result<bool, ClaimsImportError> {
     let log = writer.shared_log(pool);
     // The head is read on the writer's connection, which takes the one-writer
     // lock first, as the ledger seam's open does.
@@ -153,14 +153,11 @@ async fn import_in_job(
     let _ = tx.rollback().await;
     settled.map_err(log_failed)?;
 
-    // **Does the log hold a claims event?** A member of another family is skipped;
-    // one of this family that cannot be read fails the call, because importing
-    // over a log this build cannot read would write the rows twice.
     let mut from = Position::default();
     loop {
         let batches = log.read_from(from, READ_BOUND).await.map_err(log_failed)?;
         let Some(last) = batches.last().map(|batch| batch.range().last) else {
-            break;
+            return Ok(false);
         };
         for batch in &batches {
             for member in batch.members() {
@@ -168,11 +165,35 @@ async fn import_in_job(
                     .map_err(|e| ClaimsImportError::Log(e.to_string()))?
                     .is_some()
                 {
-                    return Ok(Imported::AlreadyDone);
+                    return Ok(true);
                 }
             }
         }
         from = last;
+    }
+}
+
+/// **Is the claims import already done?** Read before the repair passes run, so
+/// the boot knows whether a write of theirs is one the import will take in.
+pub async fn claims_import_done(
+    writer: &Writer,
+    pool: &MySqlPool,
+) -> Result<bool, ClaimsImportError> {
+    let pool = sql::Pool::from(pool.clone());
+    let owner = writer.clone();
+    writer
+        .run(async move { log_holds_an_import(&owner, &pool).await })
+        .await
+}
+
+async fn import_in_job(
+    writer: &Writer,
+    pool: &sql::Pool,
+    supplied: Provisions,
+    at: Timestamp,
+) -> Result<Imported, ClaimsImportError> {
+    if log_holds_an_import(writer, pool).await? {
+        return Ok(Imported::AlreadyDone);
     }
 
     let read = DoltMemory::open((**pool).clone())

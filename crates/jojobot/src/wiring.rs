@@ -780,11 +780,23 @@ pub async fn boot_store_observed(
     let (folded, indexed) =
         assemble_memory_with(observation.memory(resolved), Some(boot_reader)).await?;
     fill_memory(&folded, &indexed).await;
-    // **The repair passes below write before the claims import**, when the log
-    // holds no State, so a refresh after such a write reads the store until the
-    // import is done. TEMPORARY(9.3.10): it goes with the five paired row
-    // repairs that stay before the importer (rule 706).
-    folded.before_the_import(true);
+    // **A boot write is bare only before the import.** Once the import is done the
+    // State exists, so the repair passes below write through a journaled store and
+    // every row they write has an event. Before the import they write bare rows and
+    // the import takes them in; a refresh then reads the store, because the log
+    // holds no State yet.
+    let import_done =
+        jojobot_adapters::claims_import::claims_import_done(&folded.writer(), store.pool())
+            .await
+            .map_err(|why| {
+                let line = claims_import_failure(&why);
+                tracing::error!("{line}");
+                anyhow::anyhow!("{line}")
+            })?;
+    match import_done {
+        true => bare_memory.start_journaling(),
+        false => folded.before_the_import(true),
+    }
 
     // **The ports mail and sessions are served from.** Rows in the SQL store,
     // both over the one pool.
@@ -1114,7 +1126,9 @@ pub async fn boot_store_observed(
     }
 
     // The log holds the State now: a refresh reads it.
-    folded.before_the_import(false);
+    if !import_done {
+        folded.before_the_import(false);
+    }
 
     // **A later boot binds the records a new build supplies**, directly after the
     // import: the difference between the supply list and the log, in one batch, and
@@ -1140,10 +1154,13 @@ pub async fn boot_store_observed(
         }
     }
 
-    // **The served store takes part in the event log from here**, after the seeds,
-    // the repairs, the import and the reconcile, which write rows and emit nothing
-    // of their own, and before anything serves.
-    bare_memory.start_journaling();
+    // **The served store takes part in the event log from here** when the import
+    // had to run: the seeds, the repairs, the import and the reconcile wrote rows
+    // and emitted nothing of their own. It was already journaling when the import
+    // was done.
+    if !import_done {
+        bare_memory.start_journaling();
+    }
 
     Ok(Booted {
         served: bare_memory,

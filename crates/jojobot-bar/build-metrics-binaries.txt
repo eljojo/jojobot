@@ -36,6 +36,7 @@ test-boot_logs_the_time_of_each_step
 test-boot_lowers_a_value_naming_a_supplied_record
 test-boot_measures
 test-boot_names_a_kept_dangling_pointer
+test-boot_pass_owed_after_the_import
 test-boot_reads_dolt
 test-boot_reads_link_rule_dolt
 test-boot_store_refuses_a_stated_clock_it_cannot_continue
