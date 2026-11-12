@@ -142,6 +142,17 @@ impl Writer {
         self.0.publication.record(change);
     }
 
+    /// Put a rail in the state a commit of unknown outcome leaves it in, for a case
+    /// that reads while the recovery has not run.
+    #[cfg(test)]
+    pub(crate) fn mark_uncertain(&self, rail: &'static str) {
+        self.0
+            .uncertain
+            .lock()
+            .expect("uncertainty lock")
+            .insert(rail);
+    }
+
     pub(crate) fn rail_uncertain(&self, rail: &str) -> bool {
         self.0
             .uncertain

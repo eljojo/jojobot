@@ -495,7 +495,10 @@ impl Folded {
         jojobot_domain::memory::validate_subject_in(&kinds, &source.home)?;
         match self.claims(|state| state.built_on(source)) {
             Ok(facts) => Ok(facts),
-            Err(_) => self.inner.built_on(source).await,
+            Err(_) => {
+                self.unheld()?;
+                self.inner.built_on(source).await
+            }
         }
     }
 
@@ -858,7 +861,10 @@ impl Memory for Folded {
             Some(facts) => Ok(facts),
             None => match self.missed(subject) {
                 Some(unknown) => Err(unknown),
-                None => self.inner.recall(subject).await,
+                None => {
+                    self.unheld()?;
+                    self.inner.recall(subject).await
+                }
             },
         }
     }
@@ -885,7 +891,10 @@ impl Memory for Folded {
         });
         match read {
             Ok(events) => Ok(events),
-            Err(_) => self.inner.merge_events(entity).await,
+            Err(_) => {
+                self.unheld()?;
+                self.inner.merge_events(entity).await
+            }
         }
     }
 
@@ -917,7 +926,10 @@ impl Memory for Folded {
         match stated {
             Some(unmapped) => Ok(unmapped),
             None if self.missed(entity).is_some() => Ok(Vec::new()),
-            None => self.inner.unmapped_claims(entity).await,
+            None => {
+                self.unheld()?;
+                self.inner.unmapped_claims(entity).await
+            }
         }
     }
 
@@ -1057,7 +1069,10 @@ impl Memory for Folded {
             Some(fields) => Ok(fields),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
-                None => self.inner.fields(entity).await,
+                None => {
+                    self.unheld()?;
+                    self.inner.fields(entity).await
+                }
             },
         }
     }
@@ -1078,7 +1093,10 @@ impl Memory for Folded {
             Some(versioned) => Ok(versioned),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
-                None => self.inner.fields_versioned(entity).await,
+                None => {
+                    self.unheld()?;
+                    self.inner.fields_versioned(entity).await
+                }
             },
         }
     }
@@ -1359,7 +1377,10 @@ impl Memory for Folded {
         match stated {
             Some(doc) => Ok(doc),
             None if self.missed(entity).is_some() => Ok(None),
-            None => self.inner.scan_entity(entity).await,
+            None => {
+                self.unheld()?;
+                self.inner.scan_entity(entity).await
+            }
         }
     }
 
@@ -1376,7 +1397,10 @@ impl Memory for Folded {
         match stated {
             Some(has) => Ok(has),
             None if self.missed(entity).is_some() => Ok(false),
-            None => self.inner.has_prose(entity).await,
+            None => {
+                self.unheld()?;
+                self.inner.has_prose(entity).await
+            }
         }
     }
 
@@ -1438,7 +1462,10 @@ impl Memory for Folded {
             Some(backing) => Ok(backing),
             None => match self.missed(entity) {
                 Some(unknown) => Err(unknown),
-                None => self.inner.backing(entity).await,
+                None => {
+                    self.unheld()?;
+                    self.inner.backing(entity).await
+                }
             },
         }
     }
@@ -1503,7 +1530,10 @@ impl Memory for Folded {
         jojobot_domain::memory::validate_subject_in(&kinds, thread)?;
         match self.claims(|state| state.thought_writers(thread, &state.declared_types_shared())) {
             Ok(writers) => Ok(writers),
-            Err(_) => self.inner.thought_writers(thread).await,
+            Err(_) => {
+                self.unheld()?;
+                self.inner.thought_writers(thread).await
+            }
         }
     }
 
@@ -1520,7 +1550,10 @@ impl Memory for Folded {
         }
         match self.claims(|state| state.keys_holding(key, test, kind)) {
             Ok(held) => Ok(held),
-            Err(_) => self.inner.keys_holding(key, test, kind).await,
+            Err(_) => {
+                self.unheld()?;
+                self.inner.keys_holding(key, test, kind).await
+            }
         }
     }
 
@@ -1690,6 +1723,8 @@ mod landed_tests;
 mod refresh_from_state_tests;
 #[cfg(test)]
 mod stalled_read;
+#[cfg(test)]
+mod uncertain_serving_tests;
 
 #[cfg(test)]
 mod tests;
