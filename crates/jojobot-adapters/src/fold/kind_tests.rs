@@ -32,3 +32,36 @@ async fn a_fold_reads_a_kind_its_store_declares_and_refuses_one_it_does_not() {
         "the fold admitted a kind its store does not declare: {refused:?}"
     );
 }
+
+/// **A kind declaration refreshes the kinds the fold holds and reads no thing
+/// again.** The kinds are the one read the fold keeps beside the claims State: about
+/// two dozen rows, read again when a kind is written. A refill of every thing, as a
+/// declaration made before the State served the reads, would show as a read of the
+/// listing or of a document.
+#[tokio::test]
+async fn a_kind_declaration_refreshes_the_kinds_and_reads_no_thing_again() {
+    let counted = Arc::new(crate::counted::Counted::new(Arc::new(
+        InMemoryMemory::booted(),
+    )));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    counted.reset();
+    let changed = folded
+        .declare_kind("sloth", Origin::Declared, Vec::new())
+        .await
+        .expect("the kind is declared");
+    assert!(changed, "the store had no such kind");
+    let seen = counted.seen();
+    for read in ["list_entities", "scan", "scan_entity", "recall", "fields"] {
+        assert_eq!(
+            seen.get(read).copied().unwrap_or(0),
+            0,
+            "a kind declaration read {read} again: {seen:?}"
+        );
+    }
+    let held = folded.declared_kinds().await.expect("the kinds are read");
+    assert!(
+        held.iter().any(|(token, _)| token == "sloth"),
+        "the fold holds the kind it just declared: {held:?}"
+    );
+}

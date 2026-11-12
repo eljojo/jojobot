@@ -380,19 +380,19 @@ async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_store_answers
     a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at(&counted, &*store).await;
 }
 
-/// **A kind declared again as it already stands reads the image no more.** The
-/// seed declares every shipped kind on every start, so a fold that took the whole
-/// store back in for each declaration paid for each of them. The store says
-/// whether a declaration changed anything, and the fold reads the image again
-/// only then. Counted in the reads of the whole store: `scan` is the read an image
-/// fill makes once.
+/// **A kind declared again as it already stands refreshes the kinds no more.** The
+/// seed declares every shipped kind on every start, so a fold that read the kinds
+/// again for each declaration paid for each of them. The store says
+/// whether a declaration changed anything, and the fold reads the kinds again
+/// only then, and never a thing: `declared_kinds` is the read a refresh makes once,
+/// and `scan` is the read of every thing, which no kind write makes.
 ///
 /// **The positive is in the same case**: the first seed over a store that holds no
 /// kind changes every declaration, so it fills the image, at most once for each;
 /// and a key a caller adds to a shipped kind changes the store, so that fills it
 /// again, where the same declaration repeated does not.
 #[tokio::test]
-async fn declaring_a_kind_that_changes_nothing_reads_the_image_no_more() {
+async fn declaring_a_kind_that_changes_nothing_refreshes_the_kinds_no_more() {
     use jojobot_domain::memory::Memory;
     use jojobot_domain::memory::kinds;
     use jojobot_domain::memory::types::{Field, Origin, ValueType};
@@ -401,7 +401,16 @@ async fn declaring_a_kind_that_changes_nothing_reads_the_image_no_more() {
     let counted = Arc::new(Counted::new(store.clone()));
     let folded = Folded::new(counted.clone());
     folded.rebuild().await.expect("the fold loads");
-    let fills = |counted: &Counted| counted.seen().get("scan").copied().unwrap_or(0);
+    // The kinds are read again by `declared_kinds`; no write reads a thing again.
+    let fills = |counted: &Counted| {
+        let seen = counted.seen();
+        assert_eq!(
+            seen.get("scan"),
+            None,
+            "a kind write read every thing: {seen:?}"
+        );
+        seen.get("declared_kinds").copied().unwrap_or(0)
+    };
 
     counted.reset();
     kinds::seed(&folded).await.expect("the kinds are seeded");

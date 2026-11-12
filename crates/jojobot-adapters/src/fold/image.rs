@@ -6,7 +6,7 @@
 //! the value the store above it gave when it was asked, and a second copy of
 //! the fold that learned to disagree with the first is the defect this avoids.
 //! What is held per thing is a [`Doc`]; what is held for all things is the
-//! listing, the rename history, the declared types and the kinds.
+//! listing, the rename history and the declared types.
 //!
 //! A miss is answered here as well — an unknown handle is the same
 //! [`MemoryError::UnknownEntity`], with the same candidates, that the store
@@ -23,9 +23,8 @@ use jojobot_domain::memory::numbered::{
 use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, EntityVersion, FactAddress, FactId, FieldAges,
     FormerHandle, KeyTrails, Memory, MemoryError, guard,
-    kinds::KindSet,
     search::DocScan,
-    types::{DeclaredType, Origin, ValueType},
+    types::{DeclaredType, ValueType},
 };
 
 pub(super) mod patch;
@@ -155,9 +154,6 @@ pub(super) struct Image {
     /// alone that `former` holds.
     numbered: Vec<FormerHandle>,
     types: std::sync::Arc<Vec<DeclaredType>>,
-    kinds: Vec<(String, Origin)>,
-    /// The same kinds as a set, asked at every admission the image answers.
-    kind_set: KindSet,
     docs: HashMap<EntityId, Doc>,
     /// Position in `entities` of the thing wearing each handle now.
     by_id: HashMap<EntityId, usize>,
@@ -194,7 +190,6 @@ impl Image {
         let entities = inner.list_entities(None).await?;
         let former = inner.former_handles().await?;
         let types = inner.declared_types().await?;
-        let kinds = inner.declared_kinds().await?;
         fill_phase("lists", started, entities.len());
         // **The documents come from the reader when the store has one**, a thing at
         // a time only for those it leaves out; otherwise the store scans them all.
@@ -264,7 +259,7 @@ impl Image {
         }
         fill_phase("per-thing-reads", started, docs.len());
         let started = std::time::Instant::now();
-        let mut image = Image::assembled(entities, former, types, kinds, docs);
+        let mut image = Image::assembled(entities, former, types, docs);
         fill_phase("assembly", started, image.docs.len());
         let started = std::time::Instant::now();
         image.events = inner.merge_events(None).await?;
@@ -276,7 +271,6 @@ impl Image {
         entities: Vec<Entity>,
         former: Vec<FormerHandle>,
         types: Vec<DeclaredType>,
-        kinds: Vec<(String, Origin)>,
         docs: HashMap<EntityId, Doc>,
     ) -> Image {
         // The store's list of former handles carries the numbered ones it
@@ -291,8 +285,6 @@ impl Image {
             former,
             numbered: Vec::new(),
             types: std::sync::Arc::new(types),
-            kind_set: KindSet::new(kinds.clone()),
-            kinds,
             docs,
             by_id: HashMap::new(),
             by_badge: HashMap::new(),
@@ -532,14 +524,6 @@ impl Image {
 
     pub fn types(&self) -> Vec<DeclaredType> {
         self.types.as_ref().clone()
-    }
-
-    pub fn kind_set(&self) -> KindSet {
-        self.kind_set.clone()
-    }
-
-    pub fn kinds(&self) -> Vec<(String, Origin)> {
-        self.kinds.clone()
     }
 
     /// `scan`: every document, in the listing's order.

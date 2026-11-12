@@ -75,6 +75,12 @@ pub struct Folded {
     /// failed, or a refresh that failed, leaves no image, and this is what tells
     /// the next write to fill it again.
     wanted: Arc<AtomicBool>,
+    /// **The kinds the store declares, the one read the fold keeps beside the
+    /// claims State**: about two dozen rows (token and origin) and the set built
+    /// from them, which every admission asks. Read when the fold fills and again
+    /// when a kind is written. It moves into the State when 9.3.5 makes kinds
+    /// events. `None` until the first fill, and while the image is not held.
+    kinds: Arc<RwLock<Option<HeldKinds>>>,
     /// **Set while the boot's repair passes write, before the claims import.** The
     /// log holds no State then, so a refresh after such a write reads the store, as
     /// every refresh did. TEMPORARY(9.3.3.1) `q-9331-no-memory-image`: the passes
@@ -100,6 +106,21 @@ pub struct Folded {
 type FactEditObserver =
     std::sync::Mutex<Option<tokio::sync::oneshot::Sender<jojobot_domain::memory::FactAddress>>>;
 
+/// The kinds the store declares, as rows and as the set every admission asks.
+struct HeldKinds {
+    rows: Vec<(String, types::Origin)>,
+    set: jojobot_domain::memory::kinds::KindSet,
+}
+
+impl HeldKinds {
+    fn of(rows: Vec<(String, types::Origin)>) -> Self {
+        HeldKinds {
+            set: jojobot_domain::memory::kinds::KindSet::new(rows.clone()),
+            rows,
+        }
+    }
+}
+
 /// **Why a refresh got no answer from the claims State.**
 enum Unseen {
     /// The fold holds no State: the store beneath keeps none and the writer holds no
@@ -122,6 +143,7 @@ impl Folded {
             boot_reader: None,
             image: Arc::new(RwLock::new(None)),
             wanted: Arc::new(AtomicBool::new(false)),
+            kinds: Arc::new(RwLock::new(None)),
             before_the_import: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
             shadow: Arc::new(shadow::Shadow::default()),
@@ -256,14 +278,16 @@ impl Folded {
     /// The read behind [`rebuild`](Folded::rebuild), for a caller that already
     /// runs in the writer task. A failure leaves no image rather than a half one.
     async fn fill(&self) -> Result<usize, MemoryError> {
-        match crate::writer::sql::reading(Box::pin(Image::load(
-            &self.inner,
-            self.boot_reader.as_deref(),
-        )))
-        .await
-        {
-            Ok(image) => {
+        let filled = crate::writer::sql::reading(Box::pin(async {
+            let image = Image::load(&self.inner, self.boot_reader.as_deref()).await?;
+            let kinds = self.inner.declared_kinds().await?;
+            Ok::<_, MemoryError>((image, kinds))
+        }))
+        .await;
+        match filled {
+            Ok((image, kinds)) => {
                 let held = image.len();
+                *self.kinds.write().expect("kinds lock") = Some(HeldKinds::of(kinds));
                 {
                     let mut slot = self.image.write().expect("fold lock");
                     *slot = Some(image);
@@ -282,6 +306,29 @@ impl Folded {
                 Err(e)
             }
         }
+    }
+
+    /// **The set of kinds every admission asks**, while the fold holds an image;
+    /// `None` sends the read to the store.
+    fn held_kind_set(&self) -> Option<jojobot_domain::memory::kinds::KindSet> {
+        self.held(|_| ())?;
+        self.kinds
+            .read()
+            .expect("kinds lock")
+            .as_ref()
+            .map(|held| held.set.clone())
+    }
+
+    /// **Read the kinds again after a kind was written**, and nothing else: the
+    /// claims State serves every read, so no thing is read again.
+    async fn refresh_kinds(&self) -> Result<(), MemoryError> {
+        if !self.wanted.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let rows = self.inner.declared_kinds().await?;
+        *self.kinds.write().expect("kinds lock") = Some(HeldKinds::of(rows));
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
 
     /// Answer from the image when one is held; `None` sends the read to the
@@ -489,7 +536,7 @@ impl Folded {
     /// kinds, as every read of the image is. With no image, or no State to read,
     /// the store answers.
     async fn built_on_here(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
-        let Some(kinds) = self.held(|image| image.kind_set()) else {
+        let Some(kinds) = self.held_kind_set() else {
             return self.inner.built_on(source).await;
         };
         jojobot_domain::memory::validate_subject_in(&kinds, &source.home)?;
@@ -1490,7 +1537,7 @@ impl Memory for Folded {
     /// own kinds. With no image, or no State to read, the store answers.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.readable()?;
-        let Some(kinds) = self.held(|image| image.kind_set()) else {
+        let Some(kinds) = self.held_kind_set() else {
             return self.inner.referring_to(target).await;
         };
         jojobot_domain::memory::validate_subject_in(&kinds, target)?;
@@ -1524,7 +1571,7 @@ impl Memory for Folded {
     /// does not pass here.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.readable()?;
-        let Some(kinds) = self.held(|image| image.kind_set()) else {
+        let Some(kinds) = self.held_kind_set() else {
             return self.inner.thought_writers(thread).await;
         };
         jojobot_domain::memory::validate_subject_in(&kinds, thread)?;
@@ -1675,7 +1722,7 @@ impl Memory for Folded {
             // different.** The seed declares every shipped kind at every start, and
             // a declaration that left the store as it was folds nothing differently.
             if changed {
-                Self::follow("declare_kind", self.reload().await);
+                Self::follow("declare_kind", self.refresh_kinds().await);
             }
             Ok(changed)
         })
@@ -1684,7 +1731,14 @@ impl Memory for Folded {
 
     async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
         self.readable()?;
-        match self.held(Image::kinds) {
+        let held = self.held(|_| ()).and_then(|()| {
+            self.kinds
+                .read()
+                .expect("kinds lock")
+                .as_ref()
+                .map(|held| held.rows.clone())
+        });
+        match held {
             Some(kinds) => Ok(kinds),
             None => self.inner.declared_kinds().await,
         }
@@ -1702,7 +1756,7 @@ impl Memory for Folded {
         );
         self.scoped(async {
             self.inner.reclaim_kind(token).await?;
-            Self::follow("reclaim_kind", self.reload().await);
+            Self::follow("reclaim_kind", self.refresh_kinds().await);
             Ok(())
         })
         .await
