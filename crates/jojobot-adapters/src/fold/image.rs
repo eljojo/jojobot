@@ -534,13 +534,6 @@ impl Image {
         self.types.as_ref().clone()
     }
 
-    /// **The declared types, shared**: a read holds the image's own list and
-    /// copies nothing. A new image holds a new list, so a reader keeps the one it
-    /// was given for as long as it reads.
-    pub fn types_shared(&self) -> std::sync::Arc<Vec<DeclaredType>> {
-        self.types.clone()
-    }
-
     pub fn kind_set(&self) -> KindSet {
         self.kind_set.clone()
     }

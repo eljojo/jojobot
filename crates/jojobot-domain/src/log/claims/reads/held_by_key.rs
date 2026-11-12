@@ -15,7 +15,7 @@ impl State {
         &self,
         kind: Option<EntityKind>,
     ) -> Vec<(EntityId, std::collections::BTreeMap<String, String>)> {
-        let declared = self.declared_types();
+        let declared = self.declared_types_shared();
         self.objects
             .iter()
             .filter_map(|(object, body)| {

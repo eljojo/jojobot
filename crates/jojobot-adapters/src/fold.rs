@@ -368,7 +368,7 @@ impl Folded {
                 if state.was_merged(object) || state.holds_a_lease(object) {
                     return None;
                 }
-                let doc = Doc::from_state(state, object, &state.declared_types())?;
+                let doc = Doc::from_state(state, object, &state.declared_types_shared())?;
                 Some((relist.then(|| state.listing()), doc))
             })
         };
@@ -525,7 +525,7 @@ impl Folded {
             {
                 return None;
             }
-            read(state, &entity, &state.declared_types())
+            read(state, &entity, &state.declared_types_shared())
         })
         .ok()
         .flatten()
@@ -1501,7 +1501,7 @@ impl Memory for Folded {
             return self.inner.thought_writers(thread).await;
         };
         jojobot_domain::memory::validate_subject_in(&kinds, thread)?;
-        match self.claims(|state| state.thought_writers(thread, &state.declared_types())) {
+        match self.claims(|state| state.thought_writers(thread, &state.declared_types_shared())) {
             Ok(writers) => Ok(writers),
             Err(_) => self.inner.thought_writers(thread).await,
         }
@@ -1598,21 +1598,22 @@ impl Memory for Folded {
     }
 
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
-        self.readable()?;
-        match self.held(Image::types) {
-            Some(declared) => Ok(declared),
-            None => self.inner.declared_types().await,
-        }
+        Ok(self.declared_types_shared().await?.as_ref().clone())
     }
 
+    /// **The declarations in force, from the claims State's own shared list**, which a
+    /// declaration rebuilds and a read only clones the pointer of. With no image, or
+    /// no State to read, the store answers.
     async fn declared_types_shared(
         &self,
     ) -> Result<std::sync::Arc<Vec<DeclaredType>>, MemoryError> {
         self.readable()?;
-        match self.held(Image::types_shared) {
-            Some(declared) => Ok(declared),
-            None => Ok(std::sync::Arc::new(self.inner.declared_types().await?)),
+        if self.held(|_| ()).is_some()
+            && let Ok(declared) = self.claims(|state| state.declared_types_shared())
+        {
+            return Ok(declared);
         }
+        Ok(std::sync::Arc::new(self.inner.declared_types().await?))
     }
 
     async fn displaced_type(&self, name: &str) -> Result<Option<types::Displaced>, MemoryError> {

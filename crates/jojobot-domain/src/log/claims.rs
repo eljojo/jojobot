@@ -443,6 +443,12 @@ pub struct State {
     streams: BTreeMap<(ObjectId, KeyId), Vec<Write>>,
     /// Every declaration of each kind, oldest first.
     declarations: BTreeMap<ObjectId, Vec<DeclaredType>>,
+    /// **The declaration in force of each kind, as one shared list**, rebuilt when a
+    /// declaration lands or is withdrawn and never by a read, so a read of the types
+    /// copies nothing. **Not serialized**, for the reason `held_fields` is not: it is
+    /// rebuilt from `declarations` whenever one lands or is withdrawn.
+    #[serde(skip)]
+    declared_snapshot: std::sync::Arc<Vec<DeclaredType>>,
     /// Every observed write of each object's own row, in the order the events
     /// arrived, under the object that was written.
     observed: BTreeMap<ObjectId, Vec<ObservedWrite>>,
@@ -662,9 +668,11 @@ impl State {
                     .entry(kind.clone())
                     .or_default()
                     .push(declaration.clone());
+                self.rebuild_declared_snapshot();
             }
             ClaimEvent::TypeWithdrawn { kind } => {
                 self.declarations.remove(kind);
+                self.rebuild_declared_snapshot();
             }
         }
         applied
@@ -785,6 +793,16 @@ impl State {
             .values()
             .filter_map(|held| held.last().cloned())
             .collect()
+    }
+
+    /// **Every declaration in force now, as one shared list** that a declaration
+    /// rebuilds and a read only clones the pointer of.
+    pub fn declared_types_shared(&self) -> std::sync::Arc<Vec<DeclaredType>> {
+        self.declared_snapshot.clone()
+    }
+
+    fn rebuild_declared_snapshot(&mut self) {
+        self.declared_snapshot = std::sync::Arc::new(self.declared_types());
     }
 
     /// Every name the State holds a declaration for.

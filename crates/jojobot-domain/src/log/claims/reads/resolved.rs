@@ -53,7 +53,7 @@ impl State {
         let entities = self.listing();
         let nearest = numbered_handle(asked)
             .and_then(|_| {
-                let declared = self.declared_types();
+                let declared = self.declared_types_shared();
                 let fields: BTreeMap<EntityId, BTreeMap<String, String>> = self
                     .objects
                     .keys()

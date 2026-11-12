@@ -907,6 +907,45 @@ fn a_former_spelling_stands_for_the_handle_the_thing_wears_now() {
     );
 }
 
+/// **The declared types are one shared list**, rebuilt when a declaration lands
+/// or is withdrawn and never by a read, so a read of the types copies nothing.
+#[test]
+fn the_declared_types_are_one_shared_snapshot_rebuilt_by_a_declaration() {
+    let mut state = State::default();
+    let (pet, toy) = (object("pet"), object("toy"));
+    state.apply(&envelope(ClaimEvent::TypeDeclared {
+        kind: pet.clone(),
+        declaration: declaration("pet", None),
+    }));
+    let first = state.declared_types_shared();
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &state.declared_types_shared()),
+        "a read copies nothing: two reads hold one list"
+    );
+    assert_eq!(*first, state.declared_types());
+    // A write that declares nothing leaves the list as it was.
+    apply(
+        &mut state,
+        &ClaimEvent::ObjectCreated {
+            object: object("k1"),
+            body: body("pet", "Alpha"),
+        },
+    );
+    assert!(std::sync::Arc::ptr_eq(
+        &first,
+        &state.declared_types_shared()
+    ));
+    state.apply(&envelope(ClaimEvent::TypeDeclared {
+        kind: toy.clone(),
+        declaration: declaration("toy", None),
+    }));
+    let second = state.declared_types_shared();
+    assert!(!std::sync::Arc::ptr_eq(&first, &second));
+    assert_eq!(second.len(), 2);
+    state.apply(&envelope(ClaimEvent::TypeWithdrawn { kind: pet.clone() }));
+    assert_eq!(state.declared_types_shared().len(), 1);
+}
+
 /// A withdrawn declaration leaves the kind with none, and only that kind; a kind
 /// declared again afterwards is held again.
 #[test]
