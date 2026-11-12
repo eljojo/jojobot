@@ -84,7 +84,7 @@ impl DoltMemory {
                     };
                     let place = place_of(places, record)?;
                     let value = match write {
-                        FieldValue::Set(value) => Some(value.clone()),
+                        FieldValue::Set(value) => Some(filed_value(seam, value)),
                         FieldValue::Clear | FieldValue::Removed => None,
                     };
                     let thing = storage_key(seam, subject);
@@ -138,6 +138,26 @@ fn storage_key_in(state: &State, object: &ObjectId) -> EntityId {
             .unwrap_or_else(|| EntityId(first_handle.to_string())),
         None => EntityId(object.0.clone()),
     }
+}
+
+/// **A field value as the rows file it.** The State marks a link to a record the
+/// build supplies with the record's supply identity. The rows file that record by
+/// its handle, as they file a claim's home and an edge to it, and the link rows
+/// are derived from the value's text, so a marked item that names a supply
+/// identity is written with the handle behind it. Every other item is as it is.
+fn filed_value(seam: &Arc<Seam>, value: &str) -> String {
+    value
+        .split(',')
+        .map(|item| {
+            match jojobot_domain::memory::stored_handle_id(item)
+                .filter(|id| id.starts_with(SUPPLY_PREFIX))
+            {
+                Some(id) => item.replace(id, storage_key(seam, &ObjectId(id.to_string())).as_str()),
+                None => item.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn storage_key(seam: &Arc<Seam>, object: &ObjectId) -> EntityId {
