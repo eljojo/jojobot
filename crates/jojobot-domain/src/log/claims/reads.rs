@@ -750,6 +750,7 @@ impl State {
 }
 
 mod document;
+mod held_by_key;
 mod resolved;
 mod served;
 pub use document::DocumentParts;

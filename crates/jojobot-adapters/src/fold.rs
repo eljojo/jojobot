@@ -29,7 +29,6 @@
 //! this assumption breaks first.
 
 pub mod claims_view;
-mod held;
 mod image;
 pub mod mail;
 pub mod sessions;
@@ -1406,9 +1405,12 @@ impl Memory for Folded {
         kind: Option<EntityKind>,
     ) -> Result<Vec<EntityId>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.keys_holding(key, test, kind)) {
-            Some(answer) => Ok(answer),
-            None => self.inner.keys_holding(key, test, kind).await,
+        if self.held(|_| ()).is_none() {
+            return self.inner.keys_holding(key, test, kind).await;
+        }
+        match self.claims(|state| state.keys_holding(key, test, kind)) {
+            Ok(held) => Ok(held),
+            Err(_) => self.inner.keys_holding(key, test, kind).await,
         }
     }
 
@@ -1424,13 +1426,16 @@ impl Memory for Folded {
         k: usize,
     ) -> Result<jojobot_domain::memory::holders::OrderedHead, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.ordered_first_k(key, holds, direction, kind, among, k)) {
-            Some(answer) => Ok(answer),
-            None => {
-                self.inner
-                    .ordered_first_k(key, holds, direction, kind, among, k)
-                    .await
-            }
+        let inner = || {
+            self.inner
+                .ordered_first_k(key, holds, direction, kind, among, k)
+        };
+        if self.held(|_| ()).is_none() {
+            return inner().await;
+        }
+        match self.claims(|state| state.ordered_first_k(key, holds, direction, kind, among, k)) {
+            Ok(head) => Ok(head),
+            Err(_) => inner().await,
         }
     }
 

@@ -15,11 +15,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use super::held::Held;
 use jojobot_domain::memory::boot_reader::{BootReader, Parts, ThingParts};
 use jojobot_domain::memory::claim_walk::{MergeLoop, follow_claim, moves_in};
-use jojobot_domain::memory::filter::{Direction, Filter, Test};
-use jojobot_domain::memory::holders::{OrderedHead, head_of};
 use jojobot_domain::memory::numbered::{
     NUMBERS_BY, derived_formers, nearest_numbers, numbered_handle,
 };
@@ -179,9 +176,6 @@ pub(super) struct Image {
     /// handle resolves through, taken in listing order as the port's own
     /// `resolve_handle` takes it.
     by_badge: HashMap<String, usize>,
-    /// **What the documents hold, by key** (see [`Held`]). Kept current a
-    /// document at a time, and filled again with the image.
-    held: Held,
     /// **Every merge made, as the store appended it**, with the handles as they
     /// are served at the moment of the fill. A rename or a merge reads the events
     /// again (see [`patch`]), so the handles are as current as the image.
@@ -313,11 +307,9 @@ impl Image {
             docs,
             by_id: HashMap::new(),
             by_badge: HashMap::new(),
-            held: Held::default(),
             events: Vec::new(),
         };
         image.reindex();
-        image.hold_documents();
         image.derive_numbered();
         image
     }
@@ -351,10 +343,7 @@ impl Image {
     /// what is kept beside the documents with it.
     fn take_in_doc(&mut self, doc: Doc) {
         if let Some(handle) = doc.scan.entity.as_ref().map(|e| e.id.clone()) {
-            let fields = doc.fields.clone();
-            let old = self.docs.insert(handle.clone(), doc);
-            self.held
-                .replace(&handle, old.as_ref().map(|old| &old.fields), &fields);
+            self.docs.insert(handle, doc);
         }
     }
 
@@ -395,9 +384,7 @@ impl Image {
             .cloned()
             .collect();
         for handle in gone {
-            if let Some(doc) = self.docs.remove(&handle) {
-                self.held.remove(&handle, &doc.fields);
-            }
+            self.docs.remove(&handle);
         }
     }
 
@@ -422,115 +409,6 @@ impl Image {
             return;
         }
         self.numbered = derived_formers(&self.entities, &self.fields_by_handle());
-    }
-
-    /// Fill what is kept by key from the documents held.
-    fn hold_documents(&mut self) {
-        let mut held = Held::declaring(&self.types);
-        for (handle, doc) in &self.docs {
-            held.add(handle, &doc.fields);
-        }
-        self.held = held;
-    }
-
-    /// **Whether what is kept beside the documents is what a build over them would
-    /// make**, for the case that holds the upkeep to the full scan.
-    #[cfg(test)]
-    pub fn upkeep_is_what_a_build_would_make(&self) -> Result<(), String> {
-        self.held.is_what_a_build_would_make(
-            &self.types,
-            self.docs.iter().map(|(handle, doc)| (handle, &doc.fields)),
-        )
-    }
-
-    // ── who holds a key, and in what order ──────────────────────────────────
-
-    /// Whether a thing stands in a default browse and is of `kind`, when one is
-    /// named.
-    fn browsable_of(&self, id: &EntityId, kind: Option<EntityKind>) -> bool {
-        self.by_id
-            .get(id)
-            .and_then(|at| self.entities.get(*at))
-            .is_some_and(|entity| entity.browsable() && kind.is_none_or(|k| entity.kind == k))
-    }
-
-    /// `keys_holding`: the things a leaf keeps, in handle order. A leaf the maps
-    /// kept by key do not hold is asked of the documents.
-    pub fn keys_holding(&self, key: &str, test: &Test, kind: Option<EntityKind>) -> Vec<EntityId> {
-        let key = key.trim();
-        match self.held.holding(key, test) {
-            Some(held) => held
-                .into_iter()
-                .filter(|id| self.browsable_of(id, kind))
-                .collect(),
-            None => {
-                let leaf = Filter::leaf(Some(key), test.clone());
-                let mut held: Vec<EntityId> = self
-                    .docs
-                    .iter()
-                    .filter(|(id, doc)| self.browsable_of(id, kind) && leaf.holds(&doc.fields))
-                    .map(|(id, _)| (*id).clone())
-                    .collect();
-                held.sort();
-                held
-            }
-        }
-    }
-
-    /// `ordered_first_k`: the front of the order of a key. A key no type declares
-    /// as `holds` is placed from the documents.
-    pub fn ordered_first_k(
-        &self,
-        key: &str,
-        holds: ValueType,
-        direction: Direction,
-        kind: Option<EntityKind>,
-        among: Option<&[EntityId]>,
-        k: usize,
-    ) -> OrderedHead {
-        use jojobot_domain::memory::filter::Orderable;
-        let key = key.trim();
-        let among: Option<std::collections::HashSet<&EntityId>> =
-            among.map(|among| among.iter().collect());
-        let counts = |id: &EntityId| {
-            self.browsable_of(id, kind) && among.as_ref().is_none_or(|among| among.contains(id))
-        };
-        let held_by = |id: &EntityId| -> String {
-            self.docs
-                .get(id)
-                .and_then(|doc| doc.fields.get(key))
-                .cloned()
-                .unwrap_or_default()
-        };
-        match self.held.front(key, holds, direction, k, counts) {
-            Some(front) => OrderedHead {
-                head: front
-                    .placed
-                    .into_iter()
-                    .map(|(id, _)| {
-                        let held = held_by(&id);
-                        (id, held)
-                    })
-                    .collect(),
-                cut: front.cut,
-            },
-            None => head_of(
-                self.docs
-                    .iter()
-                    .filter(|(id, _)| counts(id))
-                    .filter_map(|(id, doc)| {
-                        let held = doc.fields.get(key)?;
-                        Some((
-                            Orderable::read_to_order(holds, held)?,
-                            (*id).clone(),
-                            held.clone(),
-                        ))
-                    })
-                    .collect(),
-                direction,
-                k,
-            ),
-        }
     }
 
     // ── what a read asks ────────────────────────────────────────────────────
@@ -661,7 +539,6 @@ impl Image {
         types.push(written);
         types.sort_by(|a, b| a.name.cmp(&b.name));
         self.types = std::sync::Arc::new(types);
-        self.hold_documents();
     }
 
     pub fn types(&self) -> Vec<DeclaredType> {
