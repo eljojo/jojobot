@@ -221,29 +221,7 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
         "a search after a write costs what a search after none costs"
     );
 
-    // A change made past the application: the same store, edited by hand.
-    let badge: Option<String> = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
-        .bind(milhouse.as_str())
-        .fetch_one(&pool)
-        .await
-        .expect("the row is readable");
-    sqlx::query("UPDATE entity SET name = ? WHERE id = ?")
-        .bind("Renamed By Hand")
-        .bind(milhouse.as_str())
-        .execute(&pool)
-        .await
-        .expect("the direct edit lands");
-    assert!(badge.is_some(), "a created entity is given a badge");
-    // The fold holds the store as this process wrote it, so a row changed past
-    // the process is seen when the fold reads the store again, as at a start.
-    indexed.state().rebuild().await.expect("the fold loads");
-    let (hand_hits, _) = counter
-        .counted(retrieval.search(&SearchQuery::text("Renamed By Hand")))
-        .await;
-    assert!(
-        names(&hand_hits.expect("search ok"), &milhouse),
-        "an edit made past the application is found"
-    );
-
+    // A row edited by hand past the process is not seen: the fold serves what the
+    // log holds, and the process is the store's only writer (decision 292).
     store.stop().await;
 }
