@@ -1982,6 +1982,7 @@ pub async fn p1_claim_replaces_or_clears_its_agent<M: Memory>(store: &M) {
         claimant: "delta",
         now,
         agent: Some("delta-agent"),
+        runs_agent: None,
     }
     .patch(&seat.name);
     let claimed = capture(
@@ -2010,13 +2011,45 @@ pub async fn p1_claim_replaces_or_clears_its_agent<M: Memory>(store: &M) {
             .len(),
         1
     );
-    for (agent, claimant, at) in [
+    // (agent the call names, agent the claiming run recorded at its boot, claimant,
+    // moment, agent the role then names). A takeover that names none writes blank:
+    // it never takes the previous holder's agent.
+    for (agent, runs_agent, claimant, at, expected) in [
         (
             Some("epsilon-agent"),
+            None,
             "epsilon",
             now + jiff::SignedDuration::from_hours(1),
+            Some("epsilon-agent"),
         ),
-        (None, "epsilon", now + jiff::SignedDuration::from_hours(2)),
+        (
+            None,
+            Some("epsilon-boot-agent"),
+            "epsilon",
+            now + jiff::SignedDuration::from_hours(2),
+            Some("epsilon-boot-agent"),
+        ),
+        (
+            None,
+            None,
+            "epsilon",
+            now + jiff::SignedDuration::from_hours(3),
+            None,
+        ),
+        (
+            Some("zeta-agent"),
+            None,
+            "zeta",
+            now + jiff::SignedDuration::from_hours(4),
+            Some("zeta-agent"),
+        ),
+        (
+            None,
+            None,
+            "eta",
+            now + jiff::SignedDuration::from_hours(5),
+            None,
+        ),
     ] {
         let before = store
             .claim_history(&claimed.address())
@@ -2030,6 +2063,7 @@ pub async fn p1_claim_replaces_or_clears_its_agent<M: Memory>(store: &M) {
                     claimant,
                     now: at,
                     agent,
+                    runs_agent,
                 }
                 .patch(&seat.name),
                 &seat.bot,
@@ -2044,7 +2078,11 @@ pub async fn p1_claim_replaces_or_clears_its_agent<M: Memory>(store: &M) {
             Some(claimant),
             "{fields:?}"
         );
-        assert_eq!(fields.get("agent").map(String::as_str), agent, "{fields:?}");
+        assert_eq!(
+            fields.get("agent").map(String::as_str),
+            expected,
+            "{fields:?}"
+        );
         assert_eq!(
             store
                 .claim_history(&claimed.address())
@@ -2054,7 +2092,7 @@ pub async fn p1_claim_replaces_or_clears_its_agent<M: Memory>(store: &M) {
             before + 1,
             "the binding takes one revision"
         );
-        if agent.is_some() {
+        if expected.is_some() {
             capture(
                 store,
                 NewFact {

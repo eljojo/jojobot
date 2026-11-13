@@ -9,11 +9,15 @@ pub const ROLE_AGENT: &str = "agent";
 
 /// The three writes to a role's binding and lease.
 pub enum RoleWrite<'a> {
-    /// Take the role with the caller's runtime agent, when supplied.
+    /// Take the role with the agent the call names. A call that names none
+    /// takes the agent the claiming run recorded at its boot, and a run that
+    /// recorded none writes blank: the role names its holder's own agent or
+    /// none (rule 788). It never takes the previous holder's agent.
     Claim {
         claimant: &'a str,
         now: Timestamp,
         agent: Option<&'a str>,
+        runs_agent: Option<&'a str>,
     },
     /// Keep the current holder's lease fresh without changing its agent.
     Renew { claimant: &'a str, at: Timestamp },
@@ -45,7 +49,9 @@ impl RoleWrite<'_> {
             .to_string(),
         );
         let agent = match self {
-            Self::Claim { agent, .. } => Some(agent.unwrap_or_default()),
+            Self::Claim {
+                agent, runs_agent, ..
+            } => Some(agent.or(*runs_agent).unwrap_or_default()),
             Self::Release { .. } => Some(""),
             Self::Renew { .. } => None,
         };
@@ -83,6 +89,7 @@ pub mod testing {
                     claimant: "gamma",
                     now,
                     agent: Some("gamma-agent"),
+                    runs_agent: None,
                 },
                 Some("gamma-agent"),
                 Vec::<String>::new(),
@@ -93,8 +100,31 @@ pub mod testing {
                     claimant: "gamma",
                     now,
                     agent: None,
+                    runs_agent: None,
                 },
                 Some(""),
+                vec![],
+                Some("gamma"),
+            ),
+            (
+                RoleWrite::Claim {
+                    claimant: "gamma",
+                    now,
+                    agent: None,
+                    runs_agent: Some("gamma-boot-agent"),
+                },
+                Some("gamma-boot-agent"),
+                vec![],
+                Some("gamma"),
+            ),
+            (
+                RoleWrite::Claim {
+                    claimant: "gamma",
+                    now,
+                    agent: Some("gamma-agent"),
+                    runs_agent: Some("gamma-boot-agent"),
+                },
+                Some("gamma-agent"),
                 vec![],
                 Some("gamma"),
             ),

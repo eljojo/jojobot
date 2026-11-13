@@ -322,6 +322,37 @@ async fn p1_agent_is_not_silently_dropped_beside_a_fetch() {
     assert!(refused.to_string().contains("agent"), "{refused}");
 }
 
+/// A run that recorded its agent at boot keeps it on the role when it claims
+/// again and names none, as after a resume or a compaction report.
+#[tokio::test]
+async fn p1_claim_without_agent_keeps_the_agent_the_run_booted_with() {
+    let jojobot = handler();
+    make_bot(&jojobot, "gamma").await;
+    let booted = boot_args(
+        &jojobot,
+        serde_json::json!({
+            "bot":"gamma", "resume":"new", "claim":"dev-dispatch", "agent":"gamma-agent"
+        }),
+    )
+    .await;
+    let claimed = boot_args(
+        &jojobot,
+        serde_json::json!({"bot":"gamma", "sid":sid_of(&booted), "claim":"dev-dispatch"}),
+    )
+    .await;
+    assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
+    let fields = jojobot
+        .memory
+        .fields(&EntityId("role:dev-dispatch".into()))
+        .await
+        .expect("role");
+    assert_eq!(
+        fields.get("agent").map(String::as_str),
+        Some("gamma-agent"),
+        "the re-claim blanked the run's own agent: {fields:?}"
+    );
+}
+
 #[tokio::test]
 async fn p1_claim_replaces_a_separate_legacy_agent_in_one_revision() {
     let jojobot = handler();

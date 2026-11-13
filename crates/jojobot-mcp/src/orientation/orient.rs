@@ -697,8 +697,28 @@ impl Jojobot {
                         },
                     );
                 }
+                // **The agent this run recorded at its boot**, which a claim that
+                // names none keeps on the role. A run with no card, or none
+                // recorded, supplies nothing and the role is written blank.
+                let runs_agent = match self.registry.lookup_key(&sid).and_then(|h| h.card) {
+                    Some(card) => self
+                        .sessions
+                        .read_session(&card)
+                        .await
+                        .ok()
+                        .and_then(|run| run.agent)
+                        .filter(|recorded| !recorded.is_empty()),
+                    None => None,
+                };
                 let outcome = self
-                    .decide_role_claim(bot, role, (&run, agent), now, today_or_clock, word)
+                    .decide_role_claim(
+                        bot,
+                        role,
+                        (&run, agent, runs_agent.as_deref()),
+                        now,
+                        today_or_clock,
+                        word,
+                    )
                     .await;
                 // **A GRANTED claim has done something, so its session record
                 // is written now, through the same lazy path any first write
@@ -1166,12 +1186,12 @@ impl Jojobot {
         &self,
         bot: &EntityId,
         role: &str,
-        binding: (&str, Option<&str>),
+        binding: (&str, Option<&str>, Option<&str>),
         now: jiff::Timestamp,
         today: jiff::civil::Date,
         operator: Option<&crate::session::challenge::Verified>,
     ) -> serde_json::Value {
-        let (claimant, agent) = binding;
+        let (claimant, agent, runs_agent) = binding;
         // **Ownership is decided before anything is written**, so a claim from
         // the wrong bot leaves no role object and no key behind.
         match self.owner_of_role(bot, role).await {
@@ -1239,6 +1259,7 @@ impl Jojobot {
                     claimant,
                     now,
                     agent,
+                    runs_agent,
                 },
                 today,
             )
@@ -1288,6 +1309,7 @@ impl Jojobot {
                                 claimant,
                                 now,
                                 agent,
+                                runs_agent,
                             },
                             today,
                         )
