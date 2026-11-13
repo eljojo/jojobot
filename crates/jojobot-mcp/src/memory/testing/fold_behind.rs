@@ -150,6 +150,48 @@ impl Memory for FoldBehindMemory {
     }
 }
 
+/// **A [`FoldBehindMemory`] that turns degraded on cue**: until it is told, every
+/// write lands and answers as a store does; after it, every write lands and the fold
+/// never confirms it, and the instance record the receipt reads cannot be read.
+pub(crate) struct FoldBehindWithoutInstance(
+    pub(crate) Arc<InMemoryMemory>,
+    pub(crate) std::sync::atomic::AtomicBool,
+);
+
+impl FoldBehindWithoutInstance {
+    /// From now on the fold is behind and the instance record cannot be read.
+    pub(crate) fn degrades(&self) {
+        self.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn degraded(&self) -> bool {
+        self.1.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for FoldBehindWithoutInstance {
+    async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        match self.0.capture(fact).await? {
+            Guarded::Written(fact) if self.degraded() => {
+                Err(fold_behind(Landed::Fact(Box::new(fact))))
+            }
+            other => Ok(other),
+        }
+    }
+    async fn fields(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        if self.degraded() && entity.as_str() == "topic:instance" {
+            return Err(MemoryError::Store(
+                "the instance settings cannot be read".into(),
+            ));
+        }
+        self.0.fields(entity).await
+    }
+}
+
 fn fold_behind(landed: Landed) -> MemoryError {
     MemoryError::FoldBehind {
         landed,

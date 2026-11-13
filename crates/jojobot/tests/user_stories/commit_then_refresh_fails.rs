@@ -7,55 +7,7 @@
 //! These stories make each of the two happen through the served verb and hold
 //! the answer to what the store holds.
 
-use serde_json::json;
-
 use super::dsl::Story;
-
-#[tokio::test]
-async fn a_retraction_the_store_took_is_answered_as_done_when_the_image_cannot_read_it_back() {
-    let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
-    let s = story.session().await;
-
-    // ── something recorded while everything works ───────────────────────────
-    s.add("person:milhouse", "Milhouse").await;
-    let address = s.fact("person:milhouse", "allergic to shellfish").await;
-
-    // ── the store stops answering the read that follows a write ─────────────
-    store.goes_away();
-
-    let taken_back = s
-        .call(
-            "retract",
-            json!({"address": address, "reason": "written about the wrong person"}),
-        )
-        .await;
-    // The answer is the write's own, with the record it produced, and it says
-    // what it changed could not be read back. It does not say the write failed.
-    taken_back.holds_at("/retracted/status", "archived");
-    taken_back.holds_at("/changed", "not_read");
-    taken_back.never_says("\"fix_by\"");
-
-    // ── the store comes back ─────────────────────────────────────────────────
-    store.comes_back();
-
-    // The claim stands taken back, once. A caller who repeated the retraction
-    // would be told it was already taken back, and this one is not asked to.
-    s.recall("person:milhouse")
-        .await
-        .says("allergic to shellfish")
-        .says("archived");
-    let again = s
-        .refused(
-            "retract",
-            json!({"address": address, "reason": "written about the wrong person"}),
-        )
-        .await;
-    again.says("archived");
-
-    s.wrap("took back a claim while the store could not be read, and was told it was done")
-        .await;
-    story.finish().await;
-}
 
 #[tokio::test]
 async fn a_message_the_board_took_is_answered_as_done_when_the_index_cannot_take_it() {

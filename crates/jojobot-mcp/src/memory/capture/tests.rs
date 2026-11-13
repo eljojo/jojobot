@@ -2908,6 +2908,63 @@ async fn a_capture_whose_fold_could_not_refresh_answers_landed_not_failed() {
     assert_eq!(receipt["changed"], "not_read", "{receipt}");
 }
 
+/// **Each call's warnings stand beside the notes a session is taught once**
+/// (the capture verb's own guarantee, given what the port returns): a session
+/// captures once over a store that answers as one does, so the first receipt teaches
+/// `how_to_read`; the memory then turns degraded (the fold never confirms a write and
+/// the instance record cannot be read) and two more captures land. Both carry the
+/// fold's block and the instance's block beside what the write could not read back.
+#[tokio::test]
+async fn each_receipts_warning_blocks_survive_beside_the_notes_taught_once() {
+    let memory = Arc::new(FoldBehindWithoutInstance(
+        Arc::new(InMemoryMemory::booted()),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    let jojobot = Jojobot::new(
+        memory.clone(),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    make_bot(&jojobot, "gamma").await;
+    let sid = booted(&jojobot, "gamma").await;
+    let capture = |content: &'static str| CaptureArgs {
+        sets: Some(std::collections::BTreeMap::from([(
+            "status".to_string(),
+            "doing".to_string(),
+        )])),
+        ..capture_args("work:alpha-queue", content)
+    };
+    let first = capture_as(&jojobot, &sid, capture("plays chess")).await;
+    assert!(first["how_to_read"].is_string(), "{first}");
+    assert!(first.get("fold").is_none(), "{first}");
+    assert!(first.get("instance_unread").is_none(), "{first}");
+
+    memory.degrades();
+    for content in ["plays billiards", "plays dominoes"] {
+        let receipt = capture_as(&jojobot, &sid, capture(content)).await;
+        assert_ne!(receipt["status"], "blocked", "{receipt}");
+        assert_eq!(receipt["fold"]["behind"], "stale", "{receipt}");
+        assert!(receipt["fold"]["note"].is_string(), "{receipt}");
+        assert_eq!(
+            receipt["instance_unread"]["record"], "topic:instance",
+            "{receipt}"
+        );
+        assert!(
+            receipt["instance_unread"]["not_worked_out"]
+                .as_array()
+                .is_some_and(|left| left.contains(&serde_json::json!("status_word_note"))),
+            "{receipt}"
+        );
+        assert!(receipt["instance_unread"]["note"].is_string(), "{receipt}");
+        // A receipt that could not say what changed carries `how_to_read` itself, as
+        // the first of its session did: only a write read back is taught once.
+        assert_eq!(receipt["changed"], "not_read", "{receipt}");
+    }
+}
+
 /// **Ageing frees a room's slot through `capture`'s own served path** —
 /// the one seam where `Memory` and `Sessions` meet, so this is the one
 /// case that has to go through both real ports rather than calling the
