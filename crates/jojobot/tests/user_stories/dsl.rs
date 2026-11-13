@@ -148,9 +148,16 @@ impl DocumentGate {
 impl Blindable {
     /// A store whose writes spend request ids into `ledger`, the one its server
     /// reads, as every other story's store does.
-    fn new(ledger: Arc<InMemoryRequests>) -> Self {
+    fn new(ledger: Arc<InMemoryRequests>, runs: Arc<InMemorySessions>) -> Self {
         Blindable {
-            inner: Arc::new(InMemoryMemory::booted().with_requests(ledger)),
+            inner: Arc::new(
+                // Told what the build supplies, as `wired` tells every other story's
+                // store: its guard asks what exists.
+                InMemoryMemory::booted()
+                    .with_requests(ledger)
+                    .with_run_bots(runs)
+                    .knowing(jojobot_mcp::provisions()),
+            ),
             instance_blind: std::sync::atomic::AtomicBool::new(false),
             blind: std::sync::atomic::AtomicBool::new(false),
             corpus_blind: std::sync::atomic::AtomicBool::new(false),
@@ -506,7 +513,10 @@ impl Story {
     /// the store beside the story, because taking it away is the story's move.
     pub async fn begin_over_a_store_that_can_go_away(bot: &str) -> (Self, Arc<Blindable>) {
         let ledger = InMemoryRequests::new();
-        let store = Arc::new(Blindable::new(ledger.clone()));
+        // **The store reads which bot a run belongs to from the runs this server
+        // keeps**, as the store of `begin` does.
+        let runs = Arc::new(InMemorySessions::new());
+        let store = Arc::new(Blindable::new(ledger.clone(), runs.clone()));
         // **The server reads the ledger the store spends into**, as it does over
         // every other store a story serves (see [`Story::wired`]).
         let memory: Arc<dyn jojobot_domain::memory::Memory> = store.clone();
@@ -514,7 +524,7 @@ impl Story {
             .lock()
             .expect("the ledger table is poisoned")
             .push((Arc::downgrade(&memory), ledger));
-        let story = Self::serve(bot, memory).await;
+        let story = Self::serve_over_runs(bot, memory, runs).await;
         (story, store)
     }
 
