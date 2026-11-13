@@ -23,7 +23,9 @@ use super::dsl::Story;
 /// TEMPORARY(9.3.4), owner card `q-934-role-lease-read-from-heartbeat-home`: the
 /// staging goes with the decline that sends a role's read to the store. The
 /// `unscanned` half is gone: a boot cannot complete without the store, so no production
-/// server starts with its corpus unread.
+/// server starts with its corpus unread. **Staging, not production**: the story writes
+/// to the role while the store is away, which production refuses; the write is there
+/// only to make the index re-read the role, and the re-read is what fails.
 #[tokio::test]
 async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missing() {
     let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
