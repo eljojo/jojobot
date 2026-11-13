@@ -2908,12 +2908,12 @@ async fn a_capture_whose_fold_could_not_refresh_answers_landed_not_failed() {
     assert_eq!(receipt["changed"], "not_read", "{receipt}");
 }
 
-/// **Each call's warnings stand beside the notes a session is taught once**
-/// (the capture verb's own guarantee, given what the port returns): a session
-/// captures once over a store that answers as one does, so the first receipt teaches
-/// `how_to_read`; the memory then turns degraded (the fold never confirms a write and
-/// the instance record cannot be read) and two more captures land. Both carry the
-/// fold's block and the instance's block beside what the write could not read back.
+/// **Each call's warnings stand beside the notes a session is taught once**, as
+/// the served layer finishes a receipt: a session captures once over a store that
+/// answers as one does, so the first receipt teaches `how_to_read`; the memory then
+/// turns degraded (the fold never confirms a write and the instance record cannot be
+/// read) and two more captures land. Both carry the fold's block and the instance's
+/// block, and neither teaches `how_to_read` again.
 #[tokio::test]
 async fn each_receipts_warning_blocks_survive_beside_the_notes_taught_once() {
     let memory = Arc::new(FoldBehindWithoutInstance(
@@ -2930,21 +2930,44 @@ async fn each_receipts_warning_blocks_survive_beside_the_notes_taught_once() {
     );
     make_bot(&jojobot, "gamma").await;
     let sid = booted(&jojobot, "gamma").await;
-    let capture = |content: &'static str| CaptureArgs {
-        sets: Some(std::collections::BTreeMap::from([(
-            "status".to_string(),
-            "doing".to_string(),
-        )])),
-        ..capture_args("work:alpha-queue", content)
+    // The served layer shapes a receipt (`success`, the nested notes) and then runs the
+    // once-per-session pass over its notes: the handler alone does neither.
+    let served = |content: &'static str| {
+        let jojobot = &jojobot;
+        let sid = sid.clone();
+        async move {
+            let arguments = serde_json::json!({
+                "subject": "work:alpha-queue",
+                "content": content,
+                "sets": {"status": "doing"},
+                "sid": sid,
+            });
+            let request: rmcp::model::CallToolRequestParams = serde_json::from_value(
+                serde_json::json!({"name": "capture", "arguments": arguments}),
+            )
+            .expect("a tool request");
+            let receipt_call = crate::write_receipts::Call::from_request(&request)
+                .expect("capture is a receipt verb");
+            ensure(jojobot, "work:alpha-queue").await;
+            let args: CaptureArgs = serde_json::from_value(arguments).expect("capture arguments");
+            let result = jojobot.capture(Parameters(args)).await.expect("capture ok");
+            let mut answered: CallToolResponse = result.into();
+            receipt_call.finish(&mut answered);
+            jojobot.finish_unshaped(&mut answered, Some(&sid)).await;
+            let CallToolResponse::Complete(result) = answered else {
+                panic!("complete answer")
+            };
+            json_of(&result)
+        }
     };
-    let first = capture_as(&jojobot, &sid, capture("plays chess")).await;
+    let first = served("plays chess").await;
     assert!(first["how_to_read"].is_string(), "{first}");
     assert!(first.get("fold").is_none(), "{first}");
     assert!(first.get("instance_unread").is_none(), "{first}");
 
     memory.degrades();
     for content in ["plays billiards", "plays dominoes"] {
-        let receipt = capture_as(&jojobot, &sid, capture(content)).await;
+        let receipt = served(content).await;
         assert_ne!(receipt["status"], "blocked", "{receipt}");
         assert_eq!(receipt["fold"]["behind"], "stale", "{receipt}");
         assert!(receipt["fold"]["note"].is_string(), "{receipt}");
@@ -2959,9 +2982,10 @@ async fn each_receipts_warning_blocks_survive_beside_the_notes_taught_once() {
             "{receipt}"
         );
         assert!(receipt["instance_unread"]["note"].is_string(), "{receipt}");
-        // A receipt that could not say what changed carries `how_to_read` itself, as
-        // the first of its session did: only a write read back is taught once.
-        assert_eq!(receipt["changed"], "not_read", "{receipt}");
+        assert!(
+            receipt.get("how_to_read").is_none(),
+            "taught on the first receipt of the session: {receipt}"
+        );
     }
 }
 
