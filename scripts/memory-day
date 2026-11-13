@@ -8,7 +8,7 @@ The case boots the current binary over the production-sized store (BOOT_STORE_DI
 the day makes every entry of a day through the running server too. It writes its
 numbers to target/bar/boot-measures.log. It is a measurement, not a test (rule 810),
 and takes longer than the check lane allows one test binary, so this runs it alone,
-with a deadline of its own (MEMORY_DAY_DEADLINE_SECONDS, 3000 by default).
+with a deadline of its own (MEMORY_DAY_DEADLINE_SECONDS, 3600 by default).
 
 With BAR_BUNDLE the binary is the one the bundle holds for the check lane, run
 where the bar runs it: in its package's directory, with CARGO_MANIFEST_DIR and the
@@ -34,10 +34,11 @@ CASES = [
     "memory_report::the_servers_memory_after_a_replayed_day",
 ]
 # Room for the case on a loaded runner, with the server on jemalloc: the whole case took
-# 1,450 to 1,527 s there, against 2,666 s on glibc. The deadline is twice the slower jemalloc
-# reading. The memory job is stopped at 70 minutes, which leaves 20 for the runner cleanup,
-# the downloads and the verdict.
-DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "3000"))
+# 1,450 to 1,527 s there, and 1,961 s at the slowest read. No reading under jemalloc was on a
+# loaded runner. On glibc a loaded runner took 1.7 to 2 times a free one, so 3,600 s is 1.8
+# times the slowest reading. The memory job is stopped at 80 minutes, which leaves 20 for the
+# runner cleanup, the downloads and the verdict.
+DEADLINE = int(os.environ.get("MEMORY_DAY_DEADLINE_SECONDS", "3600"))
 # Rule 800's bound on the server's own memory, 4 GiB. It is not the unit's memoryMax,
 # which a later rule moves.
 LIMIT_MIB = 4096.0

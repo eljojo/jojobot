@@ -415,13 +415,13 @@ jobs:
   # wrapped in stop-with-siblings**, because this forge fails the run when a job
   # fails and the siblings stop on a red job: a replay that ran out of time must
   # not stop the check. The step's own lines say ok, FAILED or TIMED OUT.
-  # The 70-minute timeout is the script's 3,000 s deadline and 20 minutes for the runner
+  # The 80-minute timeout is the script's 3,600 s deadline and 20 minutes for the runner
   # cleanup, the downloads and the verdict. The server runs on jemalloc: the case took
-  # 1,450 to 1,527 s there, against 2,666 s on glibc.
+  # 1,450 to 1,527 s there on free runners, against 2,666 s on glibc.
   memory:
     needs: [static, build, boot-store]
     runs-on: nix-x86_64
-    timeout-minutes: 70
+    timeout-minutes: 80
     steps:
       - name: Runner cleanup
         run: |
