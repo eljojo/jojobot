@@ -502,6 +502,19 @@ impl Folded {
         .flatten()
     }
 
+    /// **A thing's document as the claims State serves it**: `Some(None)` for a
+    /// spelling that is not the thing's own handle, `None` when the State declines
+    /// the thing (see [`stated`](Folded::stated)).
+    fn scan_from_state(&self, entity: &EntityId) -> Option<Option<DocScan>> {
+        self.stated(entity, |state, found, declared| {
+            if found.id != *entity {
+                return Some(None);
+            }
+            let object = state.resolve(&found.id.0)?;
+            Some(Some(state.document_scan(object, declared)?))
+        })
+    }
+
     /// **One piece of a thing's history, worked out from the claims State at read
     /// time**: the State builds that piece and no other part of the document.
     /// `None` under the same declines as [`stated`](Folded::stated).
@@ -1454,24 +1467,40 @@ impl Memory for Folded {
         let Some(listed) = self.held(|image| image.list(None)) else {
             return self.inner.scan().await;
         };
-        let mut scanned = Vec::with_capacity(listed.len());
-        for entity in &listed {
-            if let Some(doc) = self.scan_entity(&entity.id).await? {
-                scanned.push(doc);
-            }
-        }
-        Ok(scanned)
+        // **The things the State declines are read from the store in one pass.** A
+        // merged parent declines every child it holds, so a read of the store for
+        // each would make a boot over a store of thousands of them last minutes.
+        let slots: Vec<Result<Option<DocScan>, &EntityId>> = listed
+            .iter()
+            .map(|entity| match self.scan_from_state(&entity.id) {
+                Some(doc) => Ok(doc),
+                None if self.missed(&entity.id).is_some() => Ok(None),
+                None => Err(&entity.id),
+            })
+            .collect();
+        let mut from_store = if slots.iter().any(Result::is_err) {
+            self.unheld()?;
+            self.inner
+                .scan()
+                .await?
+                .into_iter()
+                .filter_map(|doc| {
+                    let id = doc.entity.as_ref()?.id.clone();
+                    Some((id, doc))
+                })
+                .collect::<HashMap<_, _>>()
+        } else {
+            HashMap::new()
+        };
+        Ok(slots
+            .into_iter()
+            .filter_map(|slot| slot.unwrap_or_else(|id| from_store.remove(id)))
+            .collect())
     }
 
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
         self.readable()?;
-        let stated = self.stated(entity, |state, found, declared| {
-            if found.id != *entity {
-                return Some(None);
-            }
-            let object = state.resolve(&found.id.0)?;
-            Some(Some(state.document_scan(object, declared)?))
-        });
+        let stated = self.scan_from_state(entity);
         match stated {
             Some(doc) => Ok(doc),
             None if self.missed(entity).is_some() => Ok(None),

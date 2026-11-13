@@ -462,3 +462,88 @@ async fn declaring_a_kind_that_changes_nothing_refreshes_the_kinds_no_more() {
         counted.seen()
     );
 }
+
+/// A name no other fixture wears, so a case with hundreds of things meets neither a
+/// duplicate name nor the near-miss screen.
+fn spelled(n: usize) -> String {
+    let mut state = (n as u64 + 1).wrapping_mul(6364136223846793005);
+    (0..12)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (b'a' + ((state >> 33) % 26) as u8) as char
+        })
+        .collect()
+}
+
+/// **A scan that lists many things the State declines reads the store once.** Every
+/// child of a merged parent declines (the store appends a version of such a child for
+/// the move), so a boot scan over a store whose merged parent holds thousands of
+/// children made one read of the store for each: minutes, where the image it replaced
+/// made none. The declined documents come out of one whole read, in the listing's
+/// order, and the thing the State serves is not read again.
+#[tokio::test]
+async fn a_scan_listing_many_declined_things_reads_the_store_once() {
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity};
+
+    let store = Arc::new(InMemoryMemory::booted());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    let handle = |kind: &str, n: usize| EntityId(format!("{kind}:{}", spelled(n)));
+    let (survivor, merged) = (handle("project", 1), handle("project", 2));
+    for parent in [&survivor, &merged] {
+        folded
+            .add_entity(NewEntity::new(parent.clone(), &parent.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    for n in 10..60 {
+        let child = handle("work", n);
+        let mut entity = NewEntity::new(child.clone(), &child.0, "fold-image");
+        entity.parent = Some(merged.clone());
+        folded
+            .add_entity(entity)
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let held = handle("project", 3);
+    folded
+        .add_entity(NewEntity::new(held.clone(), &held.0, "fold-image"))
+        .await
+        .expect("add")
+        .written()
+        .expect("not blocked");
+    folded
+        .merge(
+            &merged,
+            &survivor,
+            Some("filed twice"),
+            jiff::civil::date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("merged");
+
+    counted.reset();
+    let scanned = folded.scan().await.expect("the fold scans");
+    let seen = counted.seen();
+    assert_eq!(seen.get("scan_entity"), None, "{seen:?}");
+    assert_eq!(seen.get("scan"), Some(&1), "{seen:?}");
+    let listed = folded.list_entities(None).await.expect("lists");
+    let in_scan: Vec<String> = scanned
+        .iter()
+        .filter_map(|doc| doc.entity.as_ref().map(|e| e.id.0.clone()))
+        .collect();
+    let in_list: Vec<String> = listed.iter().map(|e| e.id.0.clone()).collect();
+    assert_eq!(
+        in_scan, in_list,
+        "the scan lists what the listing lists, in order"
+    );
+}
