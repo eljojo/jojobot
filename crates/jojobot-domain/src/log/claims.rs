@@ -422,7 +422,7 @@ fn stream_bytes(key: &KeyId, stream: &[Write]) -> u64 {
 
 /// **The bytes of text the State serves now, and the records that hold them**: every
 /// object and claim at any status, and no history. An overhead measure divides what the process holds by this.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Payload {
     pub records: u64,
     pub bytes: u64,
