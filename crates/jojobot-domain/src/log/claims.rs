@@ -1041,8 +1041,10 @@ impl State {
         // The folded thing's streams are the survivor's now.
         self.held_fields.things.remove(folded);
         self.refold(survivor);
-        self.recompute_newest(survivor);
         self.index_after_merge(folded, survivor, records, numbered);
+        // After the index: the folded thing's claims join the survivor's only there,
+        // and the newest change is worked out from the claims the survivor homes.
+        self.recompute_newest(survivor);
     }
 
     /// The state after `events`, from nothing.

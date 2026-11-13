@@ -291,3 +291,43 @@ fn a_replayed_state_holds_the_ages_and_newest_change_of_the_live_one() {
     assert_eq!(live.newest_change(&object("k1")), Some(at(11)));
     assert_eq!(restored.held_fields_are_what_a_fold_makes(), Ok(()));
 }
+
+/// **A merge holds the survivor's newest change with the folded thing's claims in
+/// it.** The folded thing's claim is revised after its last field write; the
+/// merge joins that claim to the survivor, so the survivor's newest change is the
+/// revision and not the moment of the folded thing's last write.
+#[test]
+fn a_merge_holds_the_newest_change_of_a_claim_revised_after_its_last_write() {
+    let mut state = two_things();
+    apply_at(&mut state, 2, created("k2/r1", claim("f1", "k2", "b", 1)));
+    apply_at(&mut state, 3, write("k2/r1", "k2", "mood", 1, "sour"));
+    let mut revised = claim("f1", "k2", "b, said again", 1);
+    revised.status = FactStatus::Active;
+    apply_at(
+        &mut state,
+        9,
+        ClaimEvent::RecordRevised {
+            record: record("k2/r1"),
+            claim: revised,
+        },
+    );
+    apply_at(
+        &mut state,
+        10,
+        ClaimEvent::ObjectsMerged {
+            folded: object("k2"),
+            survivor: object("k1"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+    );
+    agrees(
+        &state,
+        "a merge of a thing whose claim was revised after its last write",
+    );
+    assert_eq!(
+        state.newest_change(&object("k1")),
+        Some(at(9)),
+        "the folded thing's revised claim is the survivor's newest change"
+    );
+}
