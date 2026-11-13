@@ -1041,3 +1041,158 @@ fn archiving_a_claim_or_an_object_leaves_the_payload_unchanged() {
     );
     assert_eq!(state.payload(), held);
 }
+
+fn removed(id: &str, subject: &str, k: &str, ordinal: u64) -> ClaimEvent {
+    ClaimEvent::FieldRemoved {
+        record: record(id),
+        subject: object(subject),
+        key: key(k),
+        ordinal,
+        class: WriteClass::Sets,
+        targets: Vec::new(),
+    }
+}
+
+/// **The kept payload equals a fresh walk of the State after every event.** The
+/// walk is the oracle; the count a reader takes is the one the events kept. Each
+/// kind of event that changes what the State serves is in the sequence, in the
+/// shapes that move the count both ways: a thing written again over a smaller or a
+/// larger body, a claim created again or revised, a key written again by the same
+/// claim and by another, cleared and set again, removed, and two things merged with
+/// the same key written under both.
+#[test]
+fn the_kept_payload_equals_a_fresh_walk_after_every_event() {
+    let mut wide = body("thing", "Alpha is wide");
+    wide.aliases = vec!["al".into(), "alfa".into()];
+    wide.boot = Some("boot text".into());
+    wide.metadata = map(&[("shelf", "top"), ("size", "m")])
+        .into_iter()
+        .collect();
+    let mut detailed = claim("f1", "alpha", "tense", 1);
+    detailed.details = Some("long details".into());
+    let events = [
+        ClaimEvent::ObjectBaselined {
+            object: object("alpha"),
+            body: body("thing", "Alpha"),
+        },
+        // A baseline over a held body replaces it, wider.
+        ClaimEvent::ObjectBaselined {
+            object: object("alpha"),
+            body: wide.clone(),
+        },
+        ClaimEvent::ObjectCreated {
+            object: object("beta"),
+            body: body("thing", "Beta"),
+        },
+        // A body written again, narrower.
+        ClaimEvent::ObjectRevised {
+            object: object("alpha"),
+            body: body("thing", "A"),
+        },
+        ClaimEvent::ObjectRevised {
+            object: object("alpha"),
+            body: wide,
+        },
+        created("r1", claim("f1", "alpha", "tense", 1)),
+        // A claim created again under the same record replaces the first.
+        created("r1", detailed),
+        created("r2", claim("f1", "beta", "calm", 2)),
+        created("r3", claim("f2", "alpha", "gone", 3)),
+        ClaimEvent::RecordRevised {
+            record: record("r1"),
+            claim: claim("f1", "alpha", "x", 1),
+        },
+        // A revision of a record nothing holds changes nothing.
+        ClaimEvent::RecordRevised {
+            record: record("r9"),
+            claim: claim("f9", "alpha", "never held", 1),
+        },
+        write("r1", "alpha", "mood", 1, "tense"),
+        // The same claim writes the key again: the first write is history.
+        write("r1", "alpha", "mood", 2, "wired-up"),
+        // Another claim writes the same key on the same thing.
+        write("r3", "alpha", "mood", 3, "steady"),
+        write("r3", "alpha", "colour", 4, "red"),
+        clear("r3", "alpha", "colour", 5),
+        write("r3", "alpha", "colour", 6, "blue"),
+        removed("r3", "alpha", "colour", 7),
+        write("r2", "beta", "mood", 8, "calm"),
+        write("r2", "beta", "shape", 9, "round"),
+        ClaimEvent::AddressBound {
+            object: object("beta"),
+            address: "thing:beta".into(),
+        },
+        ClaimEvent::ObjectsMerged {
+            folded: object("beta"),
+            survivor: object("alpha"),
+            records: vec![MovedRecord {
+                record: record("r2"),
+                label: "f3".into(),
+            }],
+            writes: vec![MovedWrite {
+                record: record("r2"),
+                key: key("mood"),
+                from_ordinal: 8,
+                ordinal: 2,
+            }],
+        },
+        // A write after the merge, by a claim homed on the folded thing.
+        write("r2", "alpha", "mood", 9, "calmer"),
+        ClaimEvent::ObjectRevised {
+            object: object("beta"),
+            body: body("thing", "Beta, folded"),
+        },
+        ClaimEvent::ObjectCreated {
+            object: object("gamma"),
+            body: body("thing", "Gamma"),
+        },
+        ClaimEvent::ObjectRedirected {
+            folded: object("gamma"),
+            survivor: object("alpha"),
+        },
+        ClaimEvent::AddressRetired {
+            object: object("alpha"),
+            address: "thing:alpha".into(),
+            day: day(4),
+        },
+    ];
+    let mut state = State::default();
+    for (at, event) in events.iter().enumerate() {
+        apply(&mut state, event);
+        assert_eq!(
+            state.payload(),
+            state.payload_by_walk(),
+            "after event {at}: {event:?}"
+        );
+    }
+    let held = state.payload();
+    assert!(held.bytes > 0 && held.records > 0, "{held:?}");
+}
+
+/// **A merge that leaves one claim two writes of a key counts its newest write
+/// once**, as the walk of the merged stream does.
+#[test]
+fn a_merge_that_leaves_one_claim_two_writes_of_a_key_counts_its_newest() {
+    let events = [
+        created("r1", claim("f1", "alpha", "one", 1)),
+        created("r2", claim("f1", "beta", "two", 2)),
+        write("r1", "alpha", "mood", 1, "tense"),
+        write("r1", "beta", "mood", 1, "a much longer mood than the other"),
+        write("r2", "beta", "mood", 2, "calm"),
+        ClaimEvent::ObjectsMerged {
+            folded: object("beta"),
+            survivor: object("alpha"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+    ];
+    let mut state = State::default();
+    for (at, event) in events.iter().enumerate() {
+        apply(&mut state, event);
+        assert_eq!(
+            state.payload(),
+            state.payload_by_walk(),
+            "after event {at}: {event:?}"
+        );
+    }
+}

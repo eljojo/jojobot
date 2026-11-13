@@ -307,7 +307,6 @@ async fn run() -> anyhow::Result<()> {
             payload_bytes = overhead.payload.bytes,
             payload_records = overhead.payload.records,
             resident_bytes = overhead.resident_bytes,
-            walk_micros = overhead.walk_micros,
             "memory at ready"
         );
     }

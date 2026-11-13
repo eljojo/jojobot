@@ -374,6 +374,52 @@ impl ClaimsLender for std::sync::Mutex<State> {
     }
 }
 
+fn text_bytes(text: &str) -> u64 {
+    text.len() as u64
+}
+
+/// The text an object serves: its name, source, aliases, boot text and metadata.
+fn object_bytes(body: &ObjectBody) -> u64 {
+    text_bytes(&body.name)
+        + text_bytes(&body.source)
+        + body
+            .aliases
+            .iter()
+            .map(|alias| text_bytes(alias))
+            .sum::<u64>()
+        + body.boot.as_deref().map_or(0, text_bytes)
+        + body
+            .metadata
+            .iter()
+            .map(|(key, value)| text_bytes(key) + text_bytes(value))
+            .sum::<u64>()
+}
+
+/// The text a claim serves under its current wording.
+fn claim_bytes(claim: &ClaimBody) -> u64 {
+    text_bytes(&claim.content) + claim.details.as_deref().map_or(0, text_bytes)
+}
+
+/// The text one write of a key serves: the key and the value, and nothing for a
+/// clear or a removal.
+fn write_bytes(key: &KeyId, write: &Write) -> u64 {
+    match &write.write {
+        FieldValue::Set(value) => text_bytes(&key.0) + text_bytes(value),
+        _ => 0,
+    }
+}
+
+/// The text a stream serves: each claim's newest write of the key.
+fn stream_bytes(key: &KeyId, stream: &[Write]) -> u64 {
+    let mut seen = BTreeSet::new();
+    stream
+        .iter()
+        .rev()
+        .filter(|write| seen.insert(&write.record))
+        .map(|write| write_bytes(key, write))
+        .sum()
+}
+
 /// **The bytes of text the State serves now, and the records that hold them**: every
 /// object and claim at any status, and no history. An overhead measure divides what the process holds by this.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -415,6 +461,9 @@ pub struct State {
     /// `ImportCompleted` event was applied. It travels with the state, so a state
     /// that starts from a snapshot covering the import still knows.
     import_completed: bool,
+    /// **What the State serves now, kept as events apply** (see [`Payload`]), so
+    /// a reader takes the count without walking the State under its lock.
+    payload: Payload,
     indexes: indexes::Indexes,
 }
 
@@ -427,13 +476,13 @@ impl State {
             // **The current state at the cut serves the object and is never a
             // version of it** (the baseline of an import).
             ClaimEvent::ObjectBaselined { object, body } => {
-                let before = self.objects.get(object).map(|held| held.parent.clone());
-                self.objects.insert(object.clone(), body.clone());
+                let held = self.objects.insert(object.clone(), body.clone());
+                self.keep_object(held.as_ref(), body);
+                let before = held.map(|held| held.parent);
                 self.index_object(object, before, &body.parent);
             }
             ClaimEvent::ObjectCreated { object, body }
             | ClaimEvent::ObjectRevised { object, body } => {
-                let before = self.objects.get(object).map(|held| held.parent.clone());
                 self.version_seq += 1;
                 self.versions
                     .entry(object.clone())
@@ -446,7 +495,9 @@ impl State {
                         run: event.run.clone(),
                         written_at: event.imported_source_time.or(event.written_at),
                     });
-                self.objects.insert(object.clone(), body.clone());
+                let held = self.objects.insert(object.clone(), body.clone());
+                self.keep_object(held.as_ref(), body);
+                let before = held.map(|held| held.parent);
                 self.index_object(object, before, &body.parent);
             }
             ClaimEvent::ObjectWriteObserved {
@@ -526,6 +577,7 @@ impl State {
                         written_at: event.imported_source_time.or(event.written_at),
                     },
                 );
+                self.keep_claim(before.as_ref(), claim);
                 if before.is_none() {
                     self.note_origin(record, claim);
                 }
@@ -534,6 +586,8 @@ impl State {
             ClaimEvent::RecordRevised { record, claim } => {
                 if let Some(held) = self.records.get_mut(record) {
                     let before = std::mem::replace(&mut held.claim, claim.clone());
+                    self.payload.bytes =
+                        self.payload.bytes - claim_bytes(&before) + claim_bytes(claim);
                     held.revisions += 1;
                     held.written_at = event.imported_source_time.or(event.written_at);
                     held.history.push(Revision {
@@ -554,20 +608,20 @@ impl State {
                 write,
                 targets,
             } => {
-                let stream = self
-                    .streams
-                    .entry((subject.clone(), key.clone()))
-                    .or_default();
-                stream.push(Write {
-                    record: record.clone(),
-                    ordinal: *ordinal,
-                    class: *class,
-                    write: write.clone(),
-                    targets: targets.clone(),
-                    writer: event.actor.clone(),
-                    run: event.run.clone(),
-                    written_at: event.imported_source_time.or(event.written_at),
-                });
+                self.append_write(
+                    subject,
+                    key,
+                    Write {
+                        record: record.clone(),
+                        ordinal: *ordinal,
+                        class: *class,
+                        write: write.clone(),
+                        targets: targets.clone(),
+                        writer: event.actor.clone(),
+                        run: event.run.clone(),
+                        written_at: event.imported_source_time.or(event.written_at),
+                    },
+                );
                 self.index_write(record, subject, key, *ordinal);
             }
             ClaimEvent::FieldRemoved {
@@ -578,20 +632,20 @@ impl State {
                 class,
                 targets,
             } => {
-                let stream = self
-                    .streams
-                    .entry((subject.clone(), key.clone()))
-                    .or_default();
-                stream.push(Write {
-                    record: record.clone(),
-                    ordinal: *ordinal,
-                    class: *class,
-                    write: FieldValue::Removed,
-                    targets: targets.clone(),
-                    writer: event.actor.clone(),
-                    run: event.run.clone(),
-                    written_at: event.imported_source_time.or(event.written_at),
-                });
+                self.append_write(
+                    subject,
+                    key,
+                    Write {
+                        record: record.clone(),
+                        ordinal: *ordinal,
+                        class: *class,
+                        write: FieldValue::Removed,
+                        targets: targets.clone(),
+                        writer: event.actor.clone(),
+                        run: event.run.clone(),
+                        written_at: event.imported_source_time.or(event.written_at),
+                    },
+                );
                 self.index_write(record, subject, key, *ordinal);
             }
             ClaimEvent::TypeDeclared { kind, declaration } => {
@@ -605,6 +659,43 @@ impl State {
             }
         }
         applied
+    }
+
+    /// **The kept count takes an object written over what it held** (nothing, when
+    /// it is new): the new text in, the old text out.
+    fn keep_object(&mut self, held: Option<&ObjectBody>, body: &ObjectBody) {
+        match held {
+            Some(held) => self.payload.bytes -= object_bytes(held),
+            None => self.payload.records += 1,
+        }
+        self.payload.bytes += object_bytes(body);
+    }
+
+    /// **The kept count takes a claim created over what the record held** (nothing,
+    /// when it is new).
+    fn keep_claim(&mut self, held: Option<&ClaimBody>, claim: &ClaimBody) {
+        match held {
+            Some(held) => self.payload.bytes -= claim_bytes(held),
+            None => self.payload.records += 1,
+        }
+        self.payload.bytes += claim_bytes(claim);
+    }
+
+    /// **A write joins its stream, and the kept count moves by what its claim's
+    /// newest write of the key was and now is**: a later write of the same claim
+    /// replaces an earlier one, which is history.
+    fn append_write(&mut self, subject: &ObjectId, key: &KeyId, write: Write) {
+        let stream = self
+            .streams
+            .entry((subject.clone(), key.clone()))
+            .or_default();
+        let replaced = stream
+            .iter()
+            .rev()
+            .find(|held| held.record == write.record)
+            .map_or(0, |held| write_bytes(key, held));
+        self.payload.bytes = self.payload.bytes - replaced + write_bytes(key, &write);
+        stream.push(write);
     }
 
     fn retire_address(&mut self, object: &ObjectId, address: &str, day: Option<Date>) {
@@ -780,6 +871,9 @@ impl State {
                     write.ordinal = moved.ordinal;
                 }
             }
+            // The two streams become one, and the newest write of a claim that wrote
+            // under both is the later in the joined order.
+            let before = stream_bytes(&key, &stream) + stream_bytes(&key, target);
             let mut writers: BTreeSet<RecordId> = BTreeSet::new();
             for mut write in stream {
                 writers.insert(write.record.clone());
@@ -792,6 +886,7 @@ impl State {
                 }
                 target.push(write);
             }
+            self.payload.bytes = self.payload.bytes - before + stream_bytes(&key, target);
             let highest = target.iter().map(|write| write.ordinal).max();
             self.indexes
                 .moved_stream(&folded_key, &survivor_key, highest, &writers);
@@ -864,8 +959,16 @@ impl State {
         self.observed.get(object).map_or(&[], Vec::as_slice)
     }
 
-    /// **What the State serves now, by its own text** (see [`Payload`]).
+    /// **What the State serves now, by its own text** (see [`Payload`]), as the
+    /// events so far have kept it.
     pub fn payload(&self) -> Payload {
+        self.payload
+    }
+
+    /// **The count taken by walking the whole State**: the oracle the kept count
+    /// is held to after every event in the tests, and nothing else's.
+    #[cfg(test)]
+    fn payload_by_walk(&self) -> Payload {
         let mut payload = Payload::default();
         let size = |text: &str| text.len() as u64;
         // Every object the State serves, whatever its status: an archived or folded

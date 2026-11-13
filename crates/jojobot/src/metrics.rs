@@ -780,9 +780,6 @@ pub struct Overhead {
     pub payload: jojobot_domain::log::claims::Payload,
     /// Zero where the platform gives no resident figure.
     pub resident_bytes: u64,
-    /// **How long the walk held the State's lock**, in microseconds: the time every
-    /// write waits while the payload is counted.
-    pub walk_micros: u64,
 }
 
 /// **The overhead now**, or `None` when the State cannot answer.
@@ -791,12 +788,10 @@ pub fn overhead(lender: &dyn jojobot_domain::log::claims::ClaimsLender) -> Optio
     let resident_bytes = resident_bytes().unwrap_or_default();
     #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
     let resident_bytes = 0;
-    let began = Instant::now();
     let payload = Metrics::payload_of(lender)?;
     Some(Overhead {
         payload,
         resident_bytes,
-        walk_micros: u64::try_from(began.elapsed().as_micros()).unwrap_or(u64::MAX),
     })
 }
 

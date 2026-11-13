@@ -387,11 +387,10 @@ fn watch_boot(run: &mut Running) -> Boot {
 
 /// **The overhead the ready line states**, as one line of the report.
 fn overhead_line(seen: &[String]) -> String {
-    let (Some(payload), Some(records), Some(resident), Some(walk)) = (
+    let (Some(payload), Some(records), Some(resident)) = (
         field_of(seen, "payload_bytes"),
         field_of(seen, "payload_records"),
         field_of(seen, "resident_bytes"),
-        field_of(seen, "walk_micros"),
     ) else {
         return "memory-report overhead: no ready line states it".to_string();
     };
@@ -404,13 +403,11 @@ fn overhead_line(seen: &[String]) -> String {
     };
     format!(
         "memory-report overhead at the ready line: resident {} over payload {} (ratio {:.2}), \
-         {:.0} bytes per record over {records} records; the walk held the State's \
-         lock for {:.1} ms",
+         {:.0} bytes per record over {records} records",
         mib(resident / 1024),
         mib(payload / 1024),
         ratio(payload),
         ratio(records),
-        walk as f64 / 1000.0,
     )
 }
 
@@ -1213,7 +1210,7 @@ async fn the_servers_memory_after_a_replayed_day() {
         day().len(),
         "the replay stopped before it made the whole day"
     );
-    // **The peaks are read before the scrape**: the scrape's store reads and its walk
+    // **The peaks are read before the scrape**: the scrape's store reads and its read
     // of the State would otherwise land in the high-water mark the verdict gates on.
     let (server_peak_after, store_peak_after) = served.peaks_kib();
     // **The gauges after the last entry**: the first scrape reads the State afresh.
@@ -1808,16 +1805,12 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
     fn memory_overhead_line_reads_the_ready_line_and_names_the_ratio() {
         let ready = vec![
             "INFO jojobot: memory at ready payload_bytes=1000 payload_records=10 \
-             resident_bytes=3500 walk_micros=2500"
+             resident_bytes=3500"
                 .to_string(),
         ];
         let line = overhead_line(&ready);
         assert!(line.contains("ratio 3.50"), "{line}");
         assert!(line.contains("350 bytes per record"), "{line}");
-        assert!(
-            line.contains("walk held the State's lock for 2.5 ms"),
-            "{line}"
-        );
         assert!(
             overhead_line(&[]).contains("no ready line"),
             "a log with no line says so"
