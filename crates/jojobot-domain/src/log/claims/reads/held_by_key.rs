@@ -40,7 +40,7 @@ impl State {
     /// the held fold and copied only when a mark of a stored handle has to be
     /// composed to the handle. `None` for a key the thing does not hold.
     pub(super) fn served_value(&self, object: &ObjectId, key: &str) -> Option<Cow<'_, str>> {
-        let value = self.held_fields.0.get(object)?.get(key)?;
+        let value = &self.held_fields.things.get(object)?.keys.get(key)?.value;
         Some(match self.serve_handles(value) {
             Some(served) => Cow::Owned(served),
             None => Cow::Borrowed(value.as_str()),

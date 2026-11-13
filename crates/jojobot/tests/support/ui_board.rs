@@ -549,9 +549,10 @@ pub async fn spawn_jojobot_clocked(
     // **Assembled and filled by the calls the binary makes**, so a page case
     // reads the image a started server reads, with mentions resolved above the
     // fold as there, and not the store fallback.
-    let (folded, indexed) = jojobot::wiring::assemble_memory(board.memory.clone())
-        .await
-        .expect("the search index opens");
+    let (folded, indexed) =
+        jojobot::wiring::assemble_memory(board.memory.clone(), Default::default())
+            .await
+            .expect("the search index opens");
     if board.filled {
         jojobot::wiring::fill_memory(&folded, &indexed).await;
     }
