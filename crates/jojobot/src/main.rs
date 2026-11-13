@@ -24,7 +24,8 @@ static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 /// **jemalloc's own statistics**, for the two heap series of `/metrics`. The reader sits
 /// beside the allocator: a library that read these in a process whose allocator is another
 /// would report a near-zero heap as fact. The epoch is advanced first, because jemalloc
-/// refreshes its statistics only then.
+/// refreshes its statistics only then. Advancing it is a global operation: it merges every
+/// arena's counters. A scrape makes it once.
 #[cfg(not(target_env = "msvc"))]
 fn allocator_bytes() -> Option<jojobot::metrics::AllocatorBytes> {
     use tikv_jemalloc_ctl::{epoch, stats};

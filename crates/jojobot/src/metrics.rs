@@ -91,7 +91,9 @@ pub struct AllocatorBytes {
     pub resident: u64,
 }
 
-/// A reader of the allocator's statistics.
+/// A reader of the allocator's statistics. A scrape calls it once, under the scrape lock.
+/// jemalloc's reader advances the statistics epoch, which merges every arena's counters: a
+/// global operation, cheap beside the store reads of the same scrape and not free.
 pub type AllocatorReader = fn() -> Option<AllocatorBytes>;
 
 /// The kind a thing is counted under: its own when the build ships it.
@@ -123,6 +125,7 @@ const READ_SESSIONS: &str = "sessions";
 const READ_MAIL: &str = "mail";
 const READ_THINGS: &str = "things";
 const READ_PAYLOAD: &str = "payload";
+const READ_ALLOCATOR: &str = "allocator";
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct RouteStatus {
@@ -510,14 +513,16 @@ impl Metrics {
             );
         }
         if let Some((in_use, retained, reader)) = &self.allocator {
-            let held = reader().unwrap_or(AllocatorBytes {
-                allocated: 0,
-                resident: 0,
-            });
-            in_use.set(i64::try_from(held.allocated).unwrap_or(i64::MAX));
-            retained.set(
-                i64::try_from(held.resident.saturating_sub(held.allocated)).unwrap_or(i64::MAX),
-            );
+            // A failed read leaves both series at their last value and says so on the
+            // read gauge: a zero here would read as a healthy heap.
+            let held = reader();
+            if let Some(held) = held {
+                in_use.set(i64::try_from(held.allocated).unwrap_or(i64::MAX));
+                retained.set(
+                    i64::try_from(held.resident.saturating_sub(held.allocated)).unwrap_or(i64::MAX),
+                );
+            }
+            self.answered(READ_ALLOCATOR, held.is_some());
         }
         // Read from the process, not the store: every scrape serves them.
         for (reason, count) in jojobot_adapters::log_snapshot::skip_counts() {
@@ -826,6 +831,56 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("caller-chose-this"), "{text}");
+    }
+
+    /// A reader that answers once and then fails, as an allocator whose statistics
+    /// cannot be read does.
+    fn answers_once() -> Option<AllocatorBytes> {
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        (CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0).then_some(AllocatorBytes {
+            allocated: 5000,
+            resident: 9000,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_failed_allocator_read_keeps_the_last_heap_and_says_so_on_the_read_gauge() {
+        let metrics = Metrics::new().with_allocator(answers_once);
+        let ports = Ports {
+            memory: Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
+            sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            mailboxes: Arc::new(
+                jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
+            ),
+        };
+        let line = |text: &str, name: &str| -> String {
+            text.lines()
+                .find(|line| line.starts_with(name))
+                .unwrap_or_else(|| panic!("no {name} on the scrape:\n{text}"))
+                .to_string()
+        };
+        let first = metrics.scrape(&ports).await;
+        assert!(
+            line(&first, "process_heap_in_use_bytes").ends_with(" 5000"),
+            "{first}"
+        );
+        assert!(
+            line(&first, "process_allocator_retained_bytes").ends_with(" 4000"),
+            "{first}"
+        );
+        assert!(
+            line(&first, "jojobot_scrape_read_ok{read=\"allocator\"}").ends_with(" 1"),
+            "{first}"
+        );
+        let second = metrics.scrape(&ports).await;
+        assert!(
+            line(&second, "process_heap_in_use_bytes").ends_with(" 5000"),
+            "a failed read left a zero as the heap: {second}"
+        );
+        assert!(
+            line(&second, "jojobot_scrape_read_ok{read=\"allocator\"}").ends_with(" 0"),
+            "{second}"
+        );
     }
 
     #[test]

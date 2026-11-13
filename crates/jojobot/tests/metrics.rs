@@ -319,7 +319,10 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
                         || value == "other"
                 }
                 "state" => matches!(value.as_str(), "new" | "read" | "processed"),
-                "read" => matches!(value.as_str(), "sessions" | "mail" | "things" | "payload"),
+                "read" => matches!(
+                    value.as_str(),
+                    "sessions" | "mail" | "things" | "payload" | "allocator"
+                ),
                 "family" => value == "referring_to",
                 "reason" => jojobot_adapters::log_snapshot::Skip::ALL
                     .iter()
@@ -411,7 +414,7 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
         "a box a caller made is counted as other: {text}"
     );
     assert!(has(&all, "jojobot_sessions_live", &[]), "{text}");
-    for read in ["sessions", "mail", "things", "payload"] {
+    for read in ["sessions", "mail", "things", "payload", "allocator"] {
         assert!(
             has(&all, "jojobot_scrape_read_ok", &[("read", read)]),
             "{text}"
