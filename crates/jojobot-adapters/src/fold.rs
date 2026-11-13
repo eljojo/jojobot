@@ -1467,9 +1467,13 @@ impl Memory for Folded {
         let Some(listed) = self.held(|image| image.list(None)) else {
             return self.inner.scan().await;
         };
-        // **The things the State declines are read from the store in one pass.** A
-        // merged parent declines every child it holds, so a read of the store for
-        // each would make a boot over a store of thousands of them last minutes.
+        // **Most things declined: one read of the store for the lot.** Before the
+        // ledgers open the State declines every thing, and a read of the store for
+        // each made a boot last minutes. A read of the whole store costs about one
+        // read of a thing a row (measured over a real store), so it is cheaper than
+        // reading each declined thing only when nearly all of them are declined;
+        // with a few declined (a role, a thing a merge touched) each is read on its
+        // own, and a row the State serves is never read from the store.
         let slots: Vec<Result<Option<DocScan>, &EntityId>> = listed
             .iter()
             .map(|entity| match self.scan_from_state(&entity.id) {
@@ -1478,7 +1482,8 @@ impl Memory for Folded {
                 None => Err(&entity.id),
             })
             .collect();
-        let mut from_store = if slots.iter().any(Result::is_err) {
+        let declined = slots.iter().filter(|slot| slot.is_err()).count();
+        let mut from_store = if declined * 6 > slots.len() * 5 {
             self.unheld()?;
             self.inner
                 .scan()
@@ -1492,10 +1497,18 @@ impl Memory for Folded {
         } else {
             HashMap::new()
         };
-        Ok(slots
-            .into_iter()
-            .filter_map(|slot| slot.unwrap_or_else(|id| from_store.remove(id)))
-            .collect())
+        let mut scanned = Vec::with_capacity(slots.len());
+        for slot in slots {
+            let doc = match slot {
+                Ok(doc) => doc,
+                Err(id) => match from_store.remove(id) {
+                    Some(doc) => Some(doc),
+                    None => self.scan_entity(id).await?,
+                },
+            };
+            scanned.extend(doc);
+        }
+        Ok(scanned)
     }
 
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {

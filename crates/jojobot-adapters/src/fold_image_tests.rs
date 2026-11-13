@@ -547,3 +547,58 @@ async fn a_scan_listing_many_declined_things_reads_the_store_once() {
         "the scan lists what the listing lists, in order"
     );
 }
+
+/// **A scan that lists a few things the State declines reads each of them on its
+/// own, and reads no thing the State serves.** A whole read of the store costs a row
+/// for every thing it holds, so it is worth making only when nearly every listed
+/// thing is declined (see the case above).
+#[tokio::test]
+async fn a_scan_listing_a_few_declined_things_reads_only_those_things() {
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity};
+
+    let store = Arc::new(InMemoryMemory::booted());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    let handle = |kind: &str, n: usize| EntityId(format!("{kind}:{}", spelled(n)));
+    for n in 100..140 {
+        let plain = handle("project", n);
+        folded
+            .add_entity(NewEntity::new(plain.clone(), &plain.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let (survivor, merged) = (handle("project", 1), handle("project", 2));
+    for parent in [&survivor, &merged] {
+        folded
+            .add_entity(NewEntity::new(parent.clone(), &parent.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    folded
+        .merge(
+            &merged,
+            &survivor,
+            Some("filed twice"),
+            jiff::civil::date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("merged");
+
+    counted.reset();
+    let scanned = folded.scan().await.expect("the fold scans");
+    let seen = counted.seen();
+    assert_eq!(seen.get("scan"), None, "{seen:?}");
+    let read = seen.get("scan_entity").copied().unwrap_or(0);
+    assert!(
+        (1..=3).contains(&read),
+        "only the merged things are read from the store: {seen:?}"
+    );
+    assert!(scanned.len() > 40, "the scan lists the rest from the State");
+}
