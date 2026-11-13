@@ -58,33 +58,30 @@ async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let store = Arc::new(DoltMemory::open(pool.clone()).journaled());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
+    // **The rows are written before the claims import**, as a store from before the
+    // merge event was kept holds them, and the import is what puts them in the log.
+    let rows = DoltMemory::open(pool.clone());
 
     // Two merges: one made now, one made "before events were kept" — its event
     // rows are taken out after the fact, the shape a store from the older code
     // is in.
-    let old_survivor = thing(&folded, "person:krusty", "Krusty").await;
-    let old_folded = thing(&folded, "person:skinner", "Skinner").await;
-    let new_survivor = thing(&folded, "person:homer", "Homer").await;
-    let new_folded = thing(&folded, "person:apu", "Apu").await;
-    let old_claim = say(&folded, &old_folded, "plays the saxophone").await;
-    let new_claim = say(&folded, &new_folded, "sucks a pacifier").await;
+    let old_survivor = thing(&rows, "person:krusty", "Krusty").await;
+    let old_folded = thing(&rows, "person:skinner", "Skinner").await;
+    let new_survivor = thing(&rows, "person:homer", "Homer").await;
+    let new_folded = thing(&rows, "person:apu", "Apu").await;
+    let old_claim = say(&rows, &old_folded, "plays the saxophone").await;
+    let new_claim = say(&rows, &new_folded, "sucks a pacifier").await;
     for (gone, kept) in [(&old_folded, &old_survivor), (&new_folded, &new_survivor)] {
-        folded
-            .merge(
-                gone,
-                kept,
-                Some("filed twice"),
-                date(2026, 9, 2),
-                &EntityId("bot:sigma".into()),
-                Some("run-a"),
-            )
-            .await
-            .expect("the fold lands");
+        rows.merge(
+            gone,
+            kept,
+            Some("filed twice"),
+            date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+            Some("run-a"),
+        )
+        .await
+        .expect("the fold lands");
     }
     // The older code moved the folded thing's claim rows onto the survivor as it
     // merged, so the rows move before the event is taken out.
@@ -105,16 +102,32 @@ async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
         .await
         .expect("the old merge's event is taken out");
 
-    // The rows were changed past the fold, as a store from the older code is
-    // found at a start: the fold reads the store again, as a restart does.
-    folded.rebuild().await.expect("the fold loads again");
+    // The start imports the rows and fills the fold, as a boot does.
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let store = Arc::new(DoltMemory::open(pool.clone()).journaled());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    jojobot_adapters::testing::open_seam(&folded.writer(), &pool).await;
+    folded.rebuild().await.expect("the fold loads");
 
-    // The merge made now: an event, and an address that resolves.
-    assert_eq!(
-        folded.merge_events(None).await.expect("events read").len(),
-        1,
-        "one event stands, for the merge made with events kept"
+    // **The import writes an event for each merge**, so the merge made before events
+    // were kept has one too, with no moment and no claims to place; the merge made
+    // now holds the claim it moved.
+    let events = folded.merge_events(None).await.expect("events read");
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.folded == old_folded && event.claims.is_empty()),
+        "the older merge's event places no claim: {events:?}"
     );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.folded == new_folded && event.claims.len() == 1),
+        "the merge made now holds its claim: {events:?}"
+    );
+    // The merge made now: an address that resolves.
     assert!(
         folded
             .moved_address(&new_claim)
@@ -128,7 +141,7 @@ async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
         "and reads its claim's history through the fold"
     );
 
-    // The merge made before: no event, and the old answer.
+    // The merge made before: no claim placed, and the old answer.
     assert_eq!(folded.moved_address(&old_claim).await.expect("reads"), None);
     assert!(
         matches!(
