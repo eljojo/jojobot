@@ -1518,6 +1518,21 @@ async fn dump_store(state_dir: &std::path::Path) -> String {
     text
 }
 
+/// **A dump without the rows of the event log.** A boot that imports the store
+/// again writes its log again, so two dumps of a store booted twice before the
+/// import differ in the log and in nothing else. The table's definition stays in,
+/// and every other table is compared as it was.
+fn without_the_log(dump: &str) -> String {
+    split_sql_statements(dump)
+        .into_iter()
+        .filter(|statement| {
+            !statement.contains("`event_log`")
+                || statement.trim_start().to_uppercase().starts_with("CREATE")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// **After a boot the ledger holds every version the build ships and no migration
 /// is left begun.** The second boot's equal dump cannot say this: a store whose
 /// ledger stays short, or whose marker stays, is equal to itself after any number
@@ -4642,6 +4657,10 @@ async fn a_lost_link_table_is_rebuilt(fixture_dir: &str, label: &str) {
         .execute(editing.pool())
         .await
         .expect("the link table is emptied");
+    // The rebuild is a pass of the boots before the claims import is done: after
+    // it no boot rewrites a claims row by SQL. The second boot is therefore one
+    // before the import, on the store as the first boot left it.
+    leave_the_claims_import_to_the_head_boot(editing.pool()).await;
     editing.stop().await;
 
     let second = boot_current_expecting(

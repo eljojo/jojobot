@@ -1075,6 +1075,13 @@ async fn a_second_boot_keeps_the_store(label: &str, settled: &str, replay: bool)
         // The replacement marker has a new finished_at; the settled boot keeps it.
         after_first = dump_store(&restored.state_dir).await;
     }
+    // **The second boot is a boot before the import**, which is where a pass reads
+    // its marker and says it is done: after the import no claims-row pass runs. The
+    // log is removed, the boot imports the store again, and the dumps are compared
+    // without the log, which a second import writes again.
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    leave_the_claims_import_to_the_head_boot(store.pool()).await;
+    store.stop().await;
     let second = boot_current(&restored.state_dir, restored.store_port, &restored.git_ref).await;
     let quiet = second.log.iter().any(|line| line.contains(settled));
     second.stop().await;
@@ -1083,7 +1090,7 @@ async fn a_second_boot_keeps_the_store(label: &str, settled: &str, replay: bool)
         "the marked pass must report that it is already done: {settled}"
     );
     assert!(
-        dump_store(&restored.state_dir).await == after_first,
+        without_the_log(&dump_store(&restored.state_dir).await) == without_the_log(&after_first),
         "the second boot changed a row of the same prepared store"
     );
 }
