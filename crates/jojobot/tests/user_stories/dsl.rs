@@ -103,9 +103,6 @@ pub struct Blindable {
     /// Writes read back with no moment, as writes the store kept before it
     /// stamped them do.
     unstamped: std::sync::atomic::AtomicBool,
-    /// Writes of a key read back with no run and no writer, as writes made before
-    /// the store pointed each write at the claim write behind it do.
-    unoriginated: std::sync::atomic::AtomicBool,
     /// The handle whose one-document read fails, as a damaged record's does. See
     /// [`Blindable::damages_the_record_of`].
     damaged: std::sync::Mutex<Option<String>>,
@@ -150,7 +147,6 @@ impl Blindable {
             blind: std::sync::atomic::AtomicBool::new(false),
             corpus_blind: std::sync::atomic::AtomicBool::new(false),
             unstamped: std::sync::atomic::AtomicBool::new(false),
-            unoriginated: std::sync::atomic::AtomicBool::new(false),
             damaged: std::sync::Mutex::new(None),
             write_gate: std::sync::Mutex::new(None),
         }
@@ -194,12 +190,6 @@ impl Blindable {
         });
         *self.write_gate.lock().expect("the gate is not poisoned") = Some(gate.clone());
         gate
-    }
-
-    /// From now on every write of a key reads back with no run and no writer.
-    pub fn forgets_who_made_its_key_writes(&self) {
-        self.unoriginated
-            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// The store stops answering the reads that fill the index, the
@@ -384,14 +374,7 @@ impl jojobot_domain::memory::Memory for Blindable {
         entity: &jojobot_domain::memory::EntityId,
         key: &str,
     ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, jojobot_domain::memory::MemoryError> {
-        let mut writes = self.inner.history(entity, key).await?;
-        if self.unoriginated.load(std::sync::atomic::Ordering::Acquire) {
-            for write in &mut writes {
-                write.run = None;
-                write.writer = None;
-            }
-        }
-        Ok(writes)
+        self.inner.history(entity, key).await
     }
 
     async fn key_trails(
@@ -399,12 +382,6 @@ impl jojobot_domain::memory::Memory for Blindable {
         entity: &jojobot_domain::memory::EntityId,
     ) -> Result<jojobot_domain::memory::KeyTrails, jojobot_domain::memory::MemoryError> {
         let mut trails = self.inner.key_trails(entity).await?;
-        if self.unoriginated.load(std::sync::atomic::Ordering::Acquire) {
-            for write in trails.history.values_mut().flatten() {
-                write.run = None;
-                write.writer = None;
-            }
-        }
         if self.unstamped.load(std::sync::atomic::Ordering::Acquire) {
             for write in &mut trails.record_writes {
                 write.written_at = None;

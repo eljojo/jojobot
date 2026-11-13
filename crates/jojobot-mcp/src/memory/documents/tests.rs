@@ -725,6 +725,52 @@ async fn a_thing_that_is_not_a_document_is_refused_and_an_offset_past_the_end_is
     assert_eq!(past["sections"], 1);
 }
 
+/// **A section that rests on a write the store kept before it stamped its writes is
+/// named, never vouched for.** The pair is the same document over a store that
+/// stamps them, which names nothing.
+#[tokio::test]
+async fn a_section_resting_on_an_unstamped_write_is_named_as_one_the_read_could_not_place() {
+    let as_of = |jojobot: Jojobot| async move {
+        json_of(
+            &jojobot
+                .read_document(Parameters(ReadDocumentArgs {
+                    document: "document:homer".into(),
+                    offset: None,
+                    as_of: Some("2999-12-31".into()),
+                    sid: Some(TEST_SID.into()),
+                }))
+                .await
+                .expect("read_document answers"),
+        )
+    };
+    let stamped = handler();
+    put_ok(&stamped, "document:homer", NOTES).await;
+    let read = as_of(stamped).await;
+    assert_eq!(read["markdown"], NOTES, "{read}");
+    assert!(
+        read["as_of"].get("unplaced").is_none(),
+        "a section with a moment of its own is placed: {read}"
+    );
+
+    let unstamped = Jojobot::new(
+        Arc::new(UnstampedWrites(Arc::new(InMemoryMemory::seeded()))),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    put_ok(&unstamped, "document:homer", NOTES).await;
+    let read = as_of(unstamped).await;
+    let unplaced = read["as_of"]["unplaced"].as_array().map(Vec::len);
+    assert!(unplaced.is_some_and(|named| named > 0), "{read}");
+    assert_eq!(
+        unplaced,
+        read["addresses"].as_array().map(Vec::len),
+        "every section rests on a write with no moment: {read}"
+    );
+}
+
 /// **A section cut for size is several pieces, and `sections` and `offset` count
 /// the pieces.** Two headings put one long section and one short one, so a count
 /// by heading would say 2.

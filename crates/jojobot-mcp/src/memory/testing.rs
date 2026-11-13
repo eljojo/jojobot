@@ -686,6 +686,8 @@ pub(crate) use blocked_companion::BlockedCompanionMemory;
 
 mod fold_behind;
 pub(crate) use fold_behind::{FoldBehindMemory, FoldBehindWithoutInstance};
+mod unstamped;
+pub(crate) use unstamped::UnstampedWrites;
 
 /// **A store whose `racer` gains a ceiling in the instant before a merge
 /// runs** — a second session of the same bot writing between whatever a caller
