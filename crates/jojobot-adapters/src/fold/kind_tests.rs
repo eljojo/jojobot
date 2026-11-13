@@ -65,3 +65,44 @@ async fn a_kind_declaration_refreshes_the_kinds_and_reads_no_thing_again() {
         "the fold holds the kind it just declared: {held:?}"
     );
 }
+
+/// **A store whose kinds cannot be read again once it is told to.**
+struct KindsRereadFails {
+    inner: Arc<InMemoryMemory>,
+    fails: std::sync::atomic::AtomicBool,
+}
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
+impl Memory for KindsRereadFails {
+    async fn declared_kinds(&self) -> Result<Vec<(String, Origin)>, MemoryError> {
+        if self.fails.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(MemoryError::Store("the kinds could not be read".into()));
+        }
+        self.inner.declared_kinds().await
+    }
+}
+
+/// **A kind written while the kinds cannot be read again leaves the fold holding
+/// none**, so a read that names the new kind goes to the store, which declares it.
+/// The set held from before the write would refuse the kind just written.
+#[tokio::test]
+async fn a_kind_written_while_the_kinds_cannot_be_read_again_is_not_refused() {
+    let store = Arc::new(KindsRereadFails {
+        inner: Arc::new(InMemoryMemory::booted()),
+        fails: std::sync::atomic::AtomicBool::new(false),
+    });
+    let folded = Folded::new(store.clone());
+    folded.rebuild().await.expect("the fold loads");
+    store.fails.store(true, std::sync::atomic::Ordering::SeqCst);
+    folded
+        .declare_kind("sloth", Origin::Declared, Vec::new())
+        .await
+        .expect("a declaration that landed is not a failure");
+    let asked = folded
+        .referring_to(&EntityId("sloth:slow".to_string()))
+        .await;
+    assert!(
+        asked.is_ok(),
+        "the fold refused the kind just written, by the set held from before: {asked:?}"
+    );
+}

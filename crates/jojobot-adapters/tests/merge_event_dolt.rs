@@ -168,26 +168,22 @@ async fn the_writes_of_an_unmapped_claim_are_read_from_the_image_over_the_real_s
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let store = Arc::new(DoltMemory::open(pool.clone()).journaled());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
-
-    let survivor = thing(&folded, "person:krusty", "Krusty").await;
-    let gone = thing(&folded, "person:skinner", "Skinner").await;
-    let mapped = say(&folded, &gone, "plays the saxophone").await;
-    folded
-        .merge(
-            &gone,
-            &survivor,
-            Some("filed twice"),
-            date(2026, 9, 2),
-            &EntityId("bot:sigma".into()),
-            Some("run-a"),
-        )
-        .await
-        .expect("the fold lands");
+    // **The rows are written before the claims import**, as a store from before the
+    // merge event was kept holds them, and the import is what puts them in the log.
+    let rows = DoltMemory::open(pool.clone());
+    let survivor = thing(&rows, "person:krusty", "Krusty").await;
+    let gone = thing(&rows, "person:skinner", "Skinner").await;
+    let mapped = say(&rows, &gone, "plays the saxophone").await;
+    rows.merge(
+        &gone,
+        &survivor,
+        Some("filed twice"),
+        date(2026, 9, 2),
+        &EntityId("bot:sigma".into()),
+        Some("run-a"),
+    )
+    .await
+    .expect("the fold lands");
 
     // A claim lands under the folded key past the merge: the event holds no id
     // for it.
@@ -199,8 +195,8 @@ async fn the_writes_of_an_unmapped_claim_are_read_from_the_image_over_the_real_s
     for statement in [
         "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
          VALUES (?, 'f9', 'a stray claim', 'inference', 'active', '2026-09-03')",
-        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at)
-         VALUES (?, 'f9', 1, 'a stray claim', 'inference', 'active', '2026-09-03')",
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at, refs, stands_for)
+         VALUES (?, 'f9', 1, 'a stray claim', 'inference', 'active', '2026-09-03', '[]', '[]')",
     ] {
         sqlx::query(statement)
             .bind(&folded_key)
@@ -210,8 +206,13 @@ async fn the_writes_of_an_unmapped_claim_are_read_from_the_image_over_the_real_s
     }
     let stray = FactAddress::new(gone.clone(), jojobot_domain::memory::FactId("f9".into()));
 
-    // The rows were changed past the fold, as a restart finds them.
-    folded.rebuild().await.expect("the fold loads again");
+    // The start imports the rows and fills the fold, as a boot does.
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let store = Arc::new(DoltMemory::open(pool.clone()).journaled());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    jojobot_adapters::testing::open_seam(&folded.writer(), &pool).await;
+    folded.rebuild().await.expect("the fold loads");
     assert_eq!(
         folded
             .unmapped_claims(&survivor)

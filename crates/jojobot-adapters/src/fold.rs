@@ -312,10 +312,21 @@ impl Folded {
         if !self.wanted.load(Ordering::SeqCst) {
             return Ok(());
         }
-        let rows = self.inner.declared_kinds().await?;
-        *self.kinds.write().expect("kinds lock") = Some(HeldKinds::of(rows));
-        self.generation.fetch_add(1, Ordering::SeqCst);
-        Ok(())
+        match self.inner.declared_kinds().await {
+            Ok(rows) => {
+                *self.kinds.write().expect("kinds lock") = Some(HeldKinds::of(rows));
+                self.generation.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            Err(failed) => {
+                // **No kind set is held after a failed read**: the set held is the one
+                // from before the write, and a read admitted by it would refuse the kind
+                // just written. With none held, the reads that need it go to the store.
+                *self.kinds.write().expect("kinds lock") = None;
+                self.generation.fetch_add(1, Ordering::SeqCst);
+                Err(failed)
+            }
+        }
     }
 
     /// Answer from the image when one is held; `None` sends the read to the
@@ -1030,6 +1041,17 @@ impl Memory for Folded {
         self.readable()?;
         if let Some(answer) = self.chain_of(address) {
             return answer;
+        }
+        // **A claim a merge left under the folded thing's key** is no claim of the
+        // folded thing's own now: the survivor names it, and its writes are built for
+        // that claim alone.
+        if self.held(|_| ()).is_some()
+            && let Ok(Some(chain)) = self.claims(|state| {
+                let object = state.resolve(&address.home.0)?;
+                state.unmapped_chains_of(object).remove(address)
+            })
+        {
+            return Ok(chain);
         }
         if let Some(unknown) = self.missed(&address.home) {
             return Err(unknown);
