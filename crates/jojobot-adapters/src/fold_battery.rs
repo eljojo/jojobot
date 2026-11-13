@@ -894,16 +894,15 @@ pub async fn agree_after_a_reload(fresh: &dyn Memory, direct: &dyn Memory) {
     }
 }
 
-/// **A fill asks the store who points at a name only for a name an engine record
-/// points at.** The stores disagree on whether such a record is a holder (a merge's
-/// account of what it folded is one in the fake and none in the real store), so the
-/// store answers for those names and the documents answer for every other. A fill
-/// that asked the store for every name, or for none, gets the count wrong. Returns how
-/// many names engine records point at, so a caller that knows its store holds some can
-/// say so; the case itself requires names pointed at by ordinary records too, or the
-/// count could not tell the two ways apart.
-pub async fn a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at(
-    counted: &std::sync::Arc<Counted>,
+/// **The fold answers who points at every name as the store does**, the names an
+/// engine record points at included. A merge's account of what it folded names the
+/// folded side from an engine record, which is a holder in the fake and may be none
+/// in the real store; the answer of the claims State is held to the store's for each
+/// name, so a store that answers otherwise shows as a name that differs. The case
+/// requires names pointed at by ordinary records too, or it could not tell an engine
+/// record's name from any other. Returns how many names engine records point at.
+pub async fn the_fold_answers_who_points_at_every_name_as_the_store_does(
+    folded: &crate::fold::Folded,
     direct: &dyn Memory,
 ) -> usize {
     use jojobot_domain::memory::capacity::ENGINE_RECORD;
@@ -935,18 +934,15 @@ pub async fn a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at
         every.len(),
         by_engine.len()
     );
-    counted.reset();
-    let fresh = crate::fold::Folded::new(counted.clone());
-    fresh.rebuild().await.expect("the fold fills");
-    let asked = counted.seen().get("referring_to").copied().unwrap_or(0);
-    assert_eq!(
-        asked,
-        by_engine.len(),
-        "the fill asked the store about {asked} names; engine records point at {}, ordinary \
-         records at {} more",
-        by_engine.len(),
-        every.len() - by_engine.len()
-    );
+    for name in &every {
+        let asked = id(name);
+        let from_the_fold = format!("{:?}", folded.referring_to(&asked).await);
+        let from_the_store = format!("{:?}", direct.referring_to(&asked).await);
+        assert_eq!(
+            from_the_fold, from_the_store,
+            "who points at {name} answered differently from the fold than from the store"
+        );
+    }
     by_engine.len()
 }
 

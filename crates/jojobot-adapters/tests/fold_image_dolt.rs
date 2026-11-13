@@ -13,9 +13,9 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::fold_battery::{
-    Probe, a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at,
-    agree_after_a_reload, walk_a_merge_among_holders_of_one_name,
-    walk_a_merge_and_a_rename_among_holders, walk_every_kind_of_write,
+    Probe, agree_after_a_reload, the_fold_answers_who_points_at_every_name_as_the_store_does,
+    walk_a_merge_among_holders_of_one_name, walk_a_merge_and_a_rename_among_holders,
+    walk_every_kind_of_write,
 };
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::Memory;
@@ -126,7 +126,7 @@ async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_real_store_an
     fresh.rebuild().await.expect("the fold loads again");
     agree_after_a_reload(&fresh, &*store).await;
     // Whether the real store holds engine records that point at names is not assumed: the case
-    // requires the ordinary records to outnumber them, and the fill to ask for exactly those.
-    a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at(&counted, &*store).await;
+    // requires the ordinary records to outnumber them, and every name to answer as the store does.
+    the_fold_answers_who_points_at_every_name_as_the_store_does(&fresh, &*store).await;
     server.stop().await;
 }

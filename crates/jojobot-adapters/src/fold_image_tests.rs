@@ -12,9 +12,9 @@ use jojobot_domain::memory::testing::InMemoryMemory;
 use crate::counted::Counted;
 use crate::fold::Folded;
 use crate::fold_battery::{
-    Probe, a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at,
-    agree_after_a_reload, walk_a_merge_among_holders_of_one_name,
-    walk_a_merge_and_a_rename_among_holders, walk_every_kind_of_write,
+    Probe, agree_after_a_reload, the_fold_answers_who_points_at_every_name_as_the_store_does,
+    walk_a_merge_among_holders_of_one_name, walk_a_merge_and_a_rename_among_holders,
+    walk_every_kind_of_write,
 };
 
 /// The reads served from memory once the fold has loaded. Each read is added
@@ -383,9 +383,8 @@ async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_store_answers
     let fresh = Folded::new(counted.clone());
     fresh.rebuild().await.expect("the fold loads again");
     agree_after_a_reload(&fresh, &*store).await;
-    // The merges here leave no engine record that points at a name, so this walk shows the fill
-    // asking the store for none; the case with an engine record is in `fold::tests`.
-    a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at(&counted, &*store).await;
+    // Every name an engine record or an ordinary one points at answers as the store does.
+    the_fold_answers_who_points_at_every_name_as_the_store_does(&fresh, &*store).await;
 }
 
 /// **A kind declared again as it already stands refreshes the kinds no more.** The
