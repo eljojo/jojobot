@@ -1046,12 +1046,18 @@ async fn a_second_boot_keeps_the_store(label: &str, settled: &str, replay: bool)
     let mut after_first = dump_store(&restored.state_dir).await;
     if replay {
         let repaired = repair_tables(&restored).await;
-        // A death after the repair commits but before its marker lands.
+        // A death after the repair commits but before its marker lands. The repair
+        // runs only before the claims import, so the death is one that came before
+        // the import was done: the log is removed with the marker, and the repeated
+        // boot imports the store as the repair left it. A repair owed on a store whose
+        // import is done is named and not run (its own case, in
+        // `boot_pass_owed_after_the_import.rs`).
         let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
         sqlx::query("DELETE FROM store_pass WHERE name = 'old merge events'")
             .execute(store.pool())
             .await
             .expect("the interrupted repair has no marker");
+        leave_the_claims_import_to_the_head_boot(store.pool()).await;
         store.stop().await;
         let repeated =
             boot_current(&restored.state_dir, restored.store_port, &restored.git_ref).await;

@@ -709,13 +709,17 @@ impl DoltMemory {
     /// them: the log is the claims' truth then, and a pass that rewrites a claims
     /// row by SQL makes the rows and the log disagree. The boot names each one
     /// owed instead.
+    ///
+    /// **Only the passes this build runs and marks.** The lowering pass's marker,
+    /// `field value lowering`, is read by the marking pass and written by no
+    /// build that has it, so a new store never holds it and its absence is no pass
+    /// owed.
     pub async fn claims_row_passes_owed(&self) -> Result<Vec<&'static str>, MemoryError> {
         let finished = crate::dolt::finished_passes_checked(&self.pool)
             .await
             .map_err(store)?;
         Ok([
             link_rule::FIELD_MARKS_PASS,
-            link_rule::FIELD_LOWERING_PASS,
             FORWARDED_LINKS_PASS,
             repair::OLD_MERGE_EVENTS_PASS,
         ]
