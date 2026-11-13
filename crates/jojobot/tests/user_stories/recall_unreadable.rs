@@ -24,12 +24,22 @@ async fn a_recall_over_a_kind_names_the_card_it_cannot_read_and_serves_the_rest(
     );
     assert!(whole.get("unreadable").is_none(), "{whole}");
 
-    // ── a second card is written, its record is damaged, and the server reads
-    // the store again, as a restart does: the image follows a write from the
-    // claims State, so only a read of the store meets a record that cannot be read
+    // ── a second card is written and another is merged into it, so its record is
+    // one the claims State leaves to the store; the store's record of it is then
+    // damaged. A read of the State cannot fail for one thing, so only a thing a
+    // merge touched meets the store, where the damage is.
+    // TEMPORARY(9.3.4), owner card `q-934-merge-version-row-in-state`: the case and
+    // the memory side of the unreadable path go when the State serves the merge's
+    // own version row.
     s.add("work:sigma", "Paint the fence").await;
+    s.add("work:tau", "Rake the leaves").await;
+    s.call(
+        "merge_entities",
+        json!({"duplicate": "work:tau", "survivor": "work:sigma",
+               "reason": "one card under two names"}),
+    )
+    .await;
     store.damages_the_record_of("work:sigma");
-    story.the_store_changed_underneath().await;
     let short = s.call("recall", json!({"kind": "work"})).await.json();
     let handles: Vec<&str> = short["objects"]
         .as_array()
