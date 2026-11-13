@@ -5,6 +5,12 @@ use jojobot_query_api::{Question, ViewOutcome};
 use std::sync::Arc;
 use support::ui_board::{seed, set_on};
 
+/// A store held by an `Arc`, which every call goes through to.
+struct SharedStore(Arc<dyn Memory>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for SharedStore {}
+
 async fn recall_board(memory: Arc<dyn Memory>, offset: Option<usize>) -> serde_json::Value {
     let idp = support::TestIdp::new();
     let (_, endpoints) =
@@ -103,10 +109,12 @@ async fn view_read_path_invalid_default_substitution_is_refused_with_its_form() 
 
 async fn fixture() -> (Arc<dyn Memory>, jojobot_query_api::QueryHandle) {
     let supplied = jojobot_mcp::provisions();
-    let memory: Arc<dyn Memory> = Arc::new(jojobot_adapters::provisioned::Provisioned::new(
+    // **The store the board is spawned over is the bare one**, and the spawn lays the
+    // supply over its fold; the query handle below reads through the supply too.
+    let memory: Arc<dyn Memory> = Arc::new(
         jojobot_domain::memory::testing::InMemoryMemory::booted().knowing(supplied.clone()),
-        supplied,
-    ));
+    );
+    support::ui_board::supplied_over(&memory, supplied.clone());
     seed(memory.as_ref()).await;
     for (handle, parent, fields) in [
         (
@@ -139,10 +147,13 @@ async fn fixture() -> (Arc<dyn Memory>, jojobot_query_api::QueryHandle) {
         memory.add_entity(entity).await.unwrap();
         put(&*memory, handle, &fields).await;
     }
+    let supplied_memory: Arc<dyn Memory> = Arc::new(
+        jojobot_adapters::provisioned::Provisioned::new(SharedStore(memory.clone()), supplied),
+    );
     let queries = jojobot_mcp::memory::view_run::handle(
-        memory.clone(),
+        supplied_memory.clone(),
         Arc::new(jojobot_domain::session::testing::InMemorySessions::default()),
-        support::ui_board::search_over(memory.clone()),
+        support::ui_board::search_over(supplied_memory),
     );
     (memory, queries)
 }

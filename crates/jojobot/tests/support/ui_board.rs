@@ -255,30 +255,38 @@ pub async fn seed(store: &dyn Memory) {
         .expect("the prose is written");
 }
 
-/// **What the build supplies over a board's store**, by the store's address. The
+/// **What the build supplies over a board's store**, by the store itself. The
 /// supply layer sits over the fold, so a board that serves shipped views names them
 /// here when it makes its store, and the spawn lays them over the fold it builds.
-static SUPPLIED_OVER: std::sync::Mutex<Vec<(usize, jojobot_domain::memory::owned::Provisions)>> =
-    std::sync::Mutex::new(Vec::new());
+/// **Held by a weak pointer**, so the entry of a store that is gone names nothing: a
+/// later store at the same address is not taken for it.
+static SUPPLIED_OVER: std::sync::Mutex<
+    Vec<(
+        std::sync::Weak<dyn Memory>,
+        jojobot_domain::memory::owned::Provisions,
+    )>,
+> = std::sync::Mutex::new(Vec::new());
 
 /// Say that `memory` is a store the build's `supplied` is laid over at the spawn.
 pub fn supplied_over(
     memory: &Arc<dyn Memory>,
     supplied: jojobot_domain::memory::owned::Provisions,
 ) {
-    SUPPLIED_OVER
-        .lock()
-        .expect("the supply registry")
-        .push((Arc::as_ptr(memory) as *const () as usize, supplied));
+    let mut held = SUPPLIED_OVER.lock().expect("the supply registry");
+    held.retain(|(store, _)| store.strong_count() > 0);
+    held.push((Arc::downgrade(memory), supplied));
 }
 
 fn supplied_of(memory: &Arc<dyn Memory>) -> jojobot_domain::memory::owned::Provisions {
-    let at = Arc::as_ptr(memory) as *const () as usize;
     SUPPLIED_OVER
         .lock()
         .expect("the supply registry")
         .iter()
-        .find(|(held, _)| *held == at)
+        .find(|(store, _)| {
+            store
+                .upgrade()
+                .is_some_and(|held| Arc::ptr_eq(&held, memory))
+        })
         .map(|(_, supplied)| supplied.clone())
         .unwrap_or_default()
 }

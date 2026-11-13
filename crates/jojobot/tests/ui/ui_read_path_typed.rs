@@ -132,10 +132,11 @@ impl Memory for FailingBacking {
 /// instead of the whole page being refused.
 #[tokio::test]
 async fn an_unreadable_backing_marks_its_section_and_leaves_the_page() {
-    let memory = Arc::new(FailingBacking {
-        inner: seeded_memory().await,
-    });
-    let board = seeded_board_over(memory.clone()).await;
+    // **The read fails where the page reads it**, above the fold, which answers a
+    // thing's backing from the claims State without asking the store.
+    let board = seeded_board_over(seeded_memory().await)
+        .await
+        .serving_through(|served| Arc::new(FailingBacking { inner: served }));
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, _) =
@@ -321,10 +322,9 @@ async fn a_topics_standing_decision_comes_with_the_pages_one_answer() {
 #[tokio::test]
 async fn the_org_chart_takes_each_bots_path_from_the_graphs_ancestry() {
     let supplied = jojobot_mcp::provisions();
-    let store = InMemoryMemory::booted().knowing(supplied.clone());
-    let memory: Arc<dyn Memory> = Arc::new(jojobot_adapters::provisioned::Provisioned::new(
-        store, supplied,
-    ));
+    let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted().knowing(supplied.clone()));
+    // The supply layer sits over the fold, so the spawn lays it there.
+    support::ui_board::supplied_over(&memory, supplied);
     let staff = EntityId("topic:widgets".into());
     memory
         .add_entity(NewEntity::new(staff.clone(), "Staff", "the fixture roster"))
