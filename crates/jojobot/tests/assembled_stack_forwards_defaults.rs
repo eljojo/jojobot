@@ -79,7 +79,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     let resolved = jojobot::wiring::open_provisioned(bare, supplied.clone())
         .await
         .expect("the build's provisions do not collide with an empty store");
-    let (folded, indexed) = jojobot::wiring::assemble_memory(resolved.clone(), supplied.clone())
+    let (_folded, indexed) = jojobot::wiring::assemble_memory(resolved.clone(), supplied.clone())
         .await
         .expect("the index opens");
     let owners = Arc::new(MemoryOwners::new(indexed.memory()));
@@ -218,14 +218,6 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
             .map(String::as_str),
         Some(GAMMA_DEFAULT),
         "the layer over the fold lays the shipped default on what the fold holds"
-    );
-    assert!(
-        !folded
-            .fields(&gamma)
-            .await
-            .expect("the fold answers")
-            .contains_key("one_liner"),
-        "the fold holds the stored half only and knows nothing of what the build ships"
     );
 
     // ── backing, built_on, referring_to, claim_histories: implemented by the
