@@ -148,6 +148,15 @@ impl World {
             {
                 edge.object = survivor_key.clone();
             }
+            // A ref a write kept reads as the survivor's too, as the deployed store
+            // resolves the mark of a ref through a merge.
+            if let Some(refs) = &mut write.refs {
+                for target in refs.iter_mut() {
+                    if *target == *folded_key {
+                        *target = survivor_key.clone();
+                    }
+                }
+            }
         }
     }
 }

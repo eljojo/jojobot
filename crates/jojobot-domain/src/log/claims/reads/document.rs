@@ -66,9 +66,10 @@ fn claim_write(state: &State, ordinal: usize, write: &Revision) -> ClaimWrite {
         stale_after: claim.stale_after,
         receipt: claim.receipt.clone(),
         app_stamp: claim.app.clone(),
-        // By the handle each thing wore itself, a merged-away one included: the
-        // store serves a ref as the thing it named, not as its survivor.
-        refs: Some(claim.refs.iter().map(|o| state.handle_worn_by(o)).collect()),
+        // By the handle each thing answers to now: the store resolves the mark of a
+        // ref through a merge, so a ref to a thing a merge folded reads as its
+        // survivor.
+        refs: Some(claim.refs.iter().map(|o| served(state, o)).collect()),
         stands_for: Some(
             claim
                 .stands_for

@@ -18,6 +18,7 @@ use jojobot_adapters::fold_battery::{
     walk_a_merge_and_a_rename_among_holders, walk_every_kind_of_write,
 };
 use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_domain::memory::Memory;
 
 /// The reads the image serves. Each is added in the commit that switches it.
 const SWITCHED: &[&str] = &[
@@ -58,6 +59,22 @@ async fn loaded(pool: sqlx::MySqlPool) -> (Arc<DoltMemory>, Arc<Counted>, Folded
     let folded = Folded::new(counted.clone());
     jojobot_adapters::testing::open_seam(&folded.writer(), &pool).await;
     folded.rebuild().await.expect("the fold loads");
+    // **The shipped declarations the store holds are declared in the log**, as the
+    // boot's reconcile makes them before anything is served, so the State holds the
+    // declarations the store answers with.
+    let shipped = store.declared_types().await.expect("the store's types");
+    let names: Vec<String> = shipped.iter().map(|held| held.name.clone()).collect();
+    jojobot_adapters::claims_import::reconcile_supply_list_once(
+        &folded.writer(),
+        &pool,
+        &jojobot_domain::memory::owned::Provisions::default(),
+        &shipped,
+        &names,
+        jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
+        jiff::civil::date(2026, 9, 1),
+    )
+    .await
+    .expect("the shipped declarations reach the log");
     (store, counted, folded)
 }
 
