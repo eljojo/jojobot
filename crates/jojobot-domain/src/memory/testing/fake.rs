@@ -896,11 +896,26 @@ impl InMemoryMemory {
     /// `add_entity` could have built is built with `add_entity`, however much
     /// tidier this looks: reaching for this because seeding through the port is
     /// tedious grows a second way to create entities that no rule governs.
-    pub fn past_the_guard(&self, entity: Entity) {
+    pub fn past_the_guard(&self, mut entity: Entity) {
+        // The row wears a badge and the claims State hears of it, as a row the
+        // store minted does: a fold serves what its State holds.
+        let badge = entity
+            .badge
+            .get_or_insert_with(|| crate::handle::draw(6))
+            .clone();
+        self.badges
+            .lock()
+            .expect("fake mutex poisoned")
+            .insert(entity.id.clone(), badge);
         self.entities
             .lock()
             .expect("fake mutex poisoned")
-            .push(entity);
+            .push(entity.clone());
+        self.emit_entity_change(
+            &entity,
+            crate::log::claims::entity_change::EntityChange::Created,
+            None,
+        );
     }
 
     /// **Delete a thing and everything written on it, under the store**, as a

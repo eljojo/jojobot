@@ -182,13 +182,11 @@ async fn an_add_entity_dropped_after_the_store_committed_is_in_the_image() {
     assert_eq!(in_image, in_store, "the image misses a committed creation");
 }
 
-/// **The writes of a claim a survivor cannot serve are the store's**: the
-/// survivor is a merge-touched thing, which the State leaves to the store until
-/// it holds the merge's own version rows (TEMPORARY(9.3.4)
-/// `q-934-merge-version-row-in-state`). The one call is that read and nothing
-/// else; the answer is the store's own, and non-empty.
+/// **The writes of a claim a survivor cannot serve are built from the State**, for
+/// that claim alone: the answer is the store's own, non-empty, and no call reaches
+/// the store.
 #[tokio::test]
-async fn the_writes_of_a_claim_a_survivor_cannot_serve_are_read_from_the_store() {
+async fn the_writes_of_a_claim_a_survivor_cannot_serve_are_read_from_the_state() {
     use crate::counted::Counted;
     let store = Arc::new(InMemoryMemory::booted());
     let counted = Arc::new(Counted::new(store.clone()));
@@ -228,9 +226,10 @@ async fn the_writes_of_a_claim_a_survivor_cannot_serve_are_read_from_the_store()
         .await
         .expect("the address reads");
     assert_eq!(
-        counted.seen().keys().copied().collect::<Vec<_>>(),
-        ["claim_history"],
-        "only the claim's own read reaches the store"
+        counted.calls(),
+        0,
+        "the writes of an unmapped claim reached the store: {:?}",
+        counted.seen()
     );
     assert_eq!(
         from_image,

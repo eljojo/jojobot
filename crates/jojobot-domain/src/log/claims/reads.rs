@@ -91,10 +91,12 @@ impl State {
             folded_names: Vec::new(),
             source: body.source.clone(),
             crm: body.metadata.get("crm").cloned(),
-            parent: body
-                .parent
-                .as_ref()
-                .and_then(|parent| self.handle_of(parent)),
+            // A parent no handle answers to is served as the name it was filed under,
+            // so a thing with a dangling parent reads as damaged and not as a root.
+            parent: body.parent.as_ref().map(|parent| {
+                self.handle_of(parent)
+                    .unwrap_or_else(|| EntityId(parent.0.clone()))
+            }),
             boot: memory::Boot::from_token(body.boot.as_deref().unwrap_or_default()),
             badge: body.metadata.get("badge").cloned(),
             archived: body.archived.then(|| memory::Archived {

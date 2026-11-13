@@ -2338,10 +2338,9 @@ async fn a_long_body_and_a_long_beat_are_collapsed_to_their_opening_and_still_wh
 /// calendar would be a case nobody can trust.
 async fn memory_with_views() -> Arc<dyn Memory> {
     let supplied = jojobot_mcp::provisions();
-    let store = InMemoryMemory::booted().knowing(supplied.clone());
-    let memory: Arc<dyn Memory> = Arc::new(jojobot_adapters::provisioned::Provisioned::new(
-        store, supplied,
-    ));
+    let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted().knowing(supplied.clone()));
+    // **The supply layer sits over the fold**, so the spawn lays it there.
+    supplied_over(&memory, supplied);
     seed(memory.as_ref()).await;
 
     for (handle, name) in [
@@ -5870,10 +5869,23 @@ async fn a_page_that_maps_status_words_says_when_the_instance_record_cannot_be_r
         .written()
         .expect("nothing on this board collides with it");
     set_fields(&*inner, "work:omega", "to do", &[("status", "next")]).await;
-    let counted = Arc::new(jojobot_adapters::counted::Counted::new(inner));
-
-    let board = seeded_board_over(counted.clone()).await.unfilled();
+    // **The counter sits where the page reads**, above the supply layer and the fold,
+    // so a read it fails is the page's read of the record and no read beneath it.
+    let slot: Arc<std::sync::OnceLock<Arc<jojobot_adapters::counted::Counted>>> =
+        Arc::new(std::sync::OnceLock::new());
+    let board = seeded_board_over(inner).await.unfilled().serving_through({
+        let slot = slot.clone();
+        move |served| {
+            let counted = Arc::new(jojobot_adapters::counted::Counted::new(served));
+            let _ = slot.set(counted.clone());
+            counted
+        }
+    });
     let (addr, ct, client, cookie) = signed_in_over(board).await;
+    let counted = slot
+        .get()
+        .expect("the spawn wrapped the served memory")
+        .clone();
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();

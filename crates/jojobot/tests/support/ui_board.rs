@@ -255,6 +255,34 @@ pub async fn seed(store: &dyn Memory) {
         .expect("the prose is written");
 }
 
+/// **What the build supplies over a board's store**, by the store's address. The
+/// supply layer sits over the fold, so a board that serves shipped views names them
+/// here when it makes its store, and the spawn lays them over the fold it builds.
+static SUPPLIED_OVER: std::sync::Mutex<Vec<(usize, jojobot_domain::memory::owned::Provisions)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Say that `memory` is a store the build's `supplied` is laid over at the spawn.
+pub fn supplied_over(
+    memory: &Arc<dyn Memory>,
+    supplied: jojobot_domain::memory::owned::Provisions,
+) {
+    SUPPLIED_OVER
+        .lock()
+        .expect("the supply registry")
+        .push((Arc::as_ptr(memory) as *const () as usize, supplied));
+}
+
+fn supplied_of(memory: &Arc<dyn Memory>) -> jojobot_domain::memory::owned::Provisions {
+    let at = Arc::as_ptr(memory) as *const () as usize;
+    SUPPLIED_OVER
+        .lock()
+        .expect("the supply registry")
+        .iter()
+        .find(|(held, _)| *held == at)
+        .map(|(_, supplied)| supplied.clone())
+        .unwrap_or_default()
+}
+
 /// Every store the server is spawned over, kept so a test can read the records
 /// back **after** a page has been served. Asserting that a page changed nothing
 /// needs the store, not the page.
@@ -550,7 +578,7 @@ pub async fn spawn_jojobot_clocked(
     // reads the image a started server reads, with mentions resolved above the
     // fold as there, and not the store fallback.
     let (folded, indexed) =
-        jojobot::wiring::assemble_memory(board.memory.clone(), Default::default())
+        jojobot::wiring::assemble_memory(board.memory.clone(), supplied_of(&board.memory))
             .await
             .expect("the search index opens");
     if board.filled {
