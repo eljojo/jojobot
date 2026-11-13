@@ -38,7 +38,7 @@ pub(super) async fn set_mode(jojobot: &Jojobot, _sid: &str, bot: &str, value: &s
 }
 
 #[tokio::test]
-async fn search_lean_setting_uses_the_fold_image_under_the_served_memory() {
+async fn search_lean_setting_reads_the_claims_state_under_the_served_memory() {
     use jojobot_adapters::{counted::Counted, fold::Folded, search::IndexedMemory};
     use jojobot_domain::memory::mention::Mentioning;
     let mut jojobot = indexed(vec![hit(fact("damper result", None))]);
@@ -52,16 +52,23 @@ async fn search_lean_setting_uses_the_fold_image_under_the_served_memory() {
     jojobot.memory = IndexedMemory::with_writer(Arc::new(Mentioning::new(folded)), writer)
         .unwrap()
         .memory();
-    // A write below the fold distinguishes the held value from a store read.
+    // A write below the fold reaches the State the fake lends, so the setting read
+    // follows it, and the read asks the store for no field.
     let mut writer = indexed(Vec::new());
     writer.memory = stored;
     let other = as_bot(&writer, "otto");
     set_mode(&writer, &other, "bot:otto", "off").await;
     counted.reset();
-    let lean = answer(&jojobot, "damper", Some(sid)).await;
-    assert_eq!(lean.as_object().unwrap().len(), 1, "{lean}");
-    assert_eq!(lean["results"].as_array().unwrap().len(), 1, "{lean}");
-    assert_eq!(counted.calls(), 0, "{:?}", counted.seen());
+    let normal = answer(&jojobot, "damper", Some(sid)).await;
+    assert!(
+        normal["matching"].is_object(),
+        "the setting read follows the State: {normal}"
+    );
+    assert!(
+        !counted.seen().contains_key("fields"),
+        "the setting was read from the store: {:?}",
+        counted.seen()
+    );
 }
 
 #[tokio::test]
