@@ -1221,28 +1221,7 @@ async fn record_snapshot_growth(state: &Scratch) {
 
     for publication in ["first-publication", "same-payload", "small-change"] {
         if publication == "small-change" {
-            use jojobot_domain::log::{Event, claims::ClaimEvent};
-
-            let object = held
-                .declared_names()
-                .next()
-                .expect("the imported State holds a declared type")
-                .clone();
-            let mut body = held.object(&object).expect("the type has a body").clone();
-            body.name.push_str(" alpha");
-            held.apply(&Event {
-                event_kind: "claim".into(),
-                meaning_version: 1,
-                actor: None,
-                run: None,
-                session_card: None,
-                request: None,
-                part: None,
-                occurred_at: None,
-                written_at: None,
-                imported_source_time: None,
-                payload: ClaimEvent::ObjectRevised { object, body },
-            });
+            add_the_probe_object(&mut held);
             snapshot.blob = serde_json::to_vec(&held).expect("the revised State serializes");
             snapshot.serialized_length = snapshot.blob.len() as u64;
             snapshot.checksum = Sha256::digest(&snapshot.blob).into();
@@ -1279,6 +1258,45 @@ async fn record_snapshot_growth(state: &Scratch) {
         }
         before = after;
     }
+}
+
+/// The object the small change adds.
+const PROBE_OBJECT: &str = "growth-probe";
+
+/// **The small change between two publications: one object added.** The measurement builds
+/// the object itself, so the change depends on nothing the imported State holds. A
+/// declared kind is not an object with a body, and a change that looked one up panicked
+/// on the production-sized State.
+fn add_the_probe_object(held: &mut jojobot_domain::log::claims::State) {
+    use jojobot_domain::log::claims::{ClaimEvent, KindId, ObjectBody};
+    use jojobot_domain::log::{Event, ObjectId};
+
+    held.apply(&Event {
+        event_kind: "claim".into(),
+        meaning_version: 1,
+        actor: None,
+        run: None,
+        session_card: None,
+        request: None,
+        part: None,
+        occurred_at: None,
+        written_at: None,
+        imported_source_time: None,
+        payload: ClaimEvent::ObjectCreated {
+            object: ObjectId(PROBE_OBJECT.into()),
+            body: ObjectBody {
+                kind: KindId("thing".into()),
+                parent: None,
+                name: "Growth probe".into(),
+                source: "growth-measurement".into(),
+                aliases: Vec::new(),
+                boot: None,
+                metadata: std::collections::BTreeMap::new(),
+                archived: false,
+                bound_to: None,
+            },
+        },
+    });
 }
 
 /// Both readings cover the stopped store tree, after buffered writes drain.
@@ -1643,6 +1661,28 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         assert!(!line.starts_with("memory-report boot: "), "{line}");
         assert!(!line.starts_with("memory-report second boot: "), "{line}");
         assert!(line.contains("(1101580 kB)"), "{line}");
+    }
+
+    /// **The small change of the growth measurement depends on nothing the State holds.**
+    /// It adds one object the measurement builds itself, so it applies to a State with no
+    /// declared kind and no object, and the serialized State is different after it. A change
+    /// built from an object looked up in the State panicked on the production-sized one.
+    #[test]
+    fn the_growth_measurements_small_change_applies_to_a_state_that_holds_nothing() {
+        let mut held = jojobot_domain::log::claims::State::default();
+        let before = serde_json::to_vec(&held).expect("the empty State serializes");
+        add_the_probe_object(&mut held);
+        let after = serde_json::to_vec(&held).expect("the changed State serializes");
+        assert_ne!(
+            before, after,
+            "the change left the serialized State as it was"
+        );
+        assert!(
+            held.object(&jojobot_domain::log::ObjectId(PROBE_OBJECT.into()))
+                .is_some(),
+            "the probe object is not in the State"
+        );
+        assert_eq!(held.payload().records, 1, "one object was added");
     }
 
     /// **The calibration line names what was done and the day production's bytes were
