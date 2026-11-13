@@ -347,27 +347,7 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
         "and the old handle does not find that page"
     );
 
-    // ── a change made past the application is found once the fold reads again ──
-    let badge: Option<String> = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
-        .bind(holder.as_str())
-        .fetch_one(&pool)
-        .await
-        .expect("the row is readable");
-    assert!(badge.is_some(), "a created entity is given a badge");
-    sqlx::query("UPDATE entity SET name = ? WHERE id = ?")
-        .bind("Renamed By Hand")
-        .bind(holder.as_str())
-        .execute(&pool)
-        .await
-        .expect("the direct edit lands");
-    // The fold holds the store as this process wrote it, so a row changed past
-    // the process is seen when the fold reads the store again, as at a start.
-    folded.rebuild().await.expect("the fold loads");
-    let (hand_hits, _) = counted(retrieval.search(&SearchQuery::text("Renamed By Hand"))).await;
-    assert!(
-        names(&hand_hits.expect("search ok"), &holder),
-        "an edit made past the application is found"
-    );
-
+    // A row edited by hand past the process is not seen: the fold serves what the
+    // log holds, and the process is the store's only writer (decision 292).
     store.stop().await;
 }

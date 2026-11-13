@@ -38,11 +38,39 @@ impl State {
             .map(|fact| fact.address().home)
             .collect();
         if let Some(object) = self.resolve(&target.0) {
-            for record in self.records_homed_on(object) {
+            let claims = self.records_homed_on(object);
+            for record in &claims {
                 for built in self.records_built_on(record) {
                     if let Some(fact) = self.fact(built) {
                         holders.insert(fact.address().home);
                     }
+                }
+            }
+            // A thing filed under it, or under a thing folded into it, serves the
+            // handle it wears as its parent.
+            let root = self.survivor(object);
+            for (child, body) in &self.objects {
+                if body
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| self.survivor(parent) == root)
+                    && let Some(handle) = self.handle_of(child)
+                {
+                    holders.insert(handle);
+                }
+            }
+            // A claim that stands for one of the thing's claims names it in its mark,
+            // which no index holds: one pass over the records, paid by a merge or a
+            // rename and never by a read.
+            for (record, held) in &self.records {
+                if held
+                    .claim
+                    .stands_for
+                    .iter()
+                    .any(|marked| claims.contains(&marked))
+                    && let Some(fact) = self.fact(record)
+                {
+                    holders.insert(fact.address().home);
                 }
             }
         }
