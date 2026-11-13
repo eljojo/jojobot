@@ -484,9 +484,8 @@ async fn with_a_metrics_address_the_binary_reaches_its_serving_line() {
 /// `stats.resident` less it). glibc's totals described an idle arena there: a heap of a
 /// few kilobytes that read as healthy. A booted server's live heap is megabytes, and it
 /// cannot exceed what the process holds resident, nor can heap plus retained.
-/// TODO when `jojobot_payload_bytes` is on the trunk: assert heap in use is at least it,
-/// because the live heap holds at least what the State must hold (the architect's ruling
-/// on the allocator gauges).
+/// The live heap also holds at least the bytes of text the State holds, which
+/// `jojobot_payload_bytes` counts.
 #[tokio::test]
 async fn the_binary_reports_the_heap_jemalloc_holds_and_what_it_keeps_beyond_it() {
     let metrics_port = free_port();
@@ -506,6 +505,11 @@ async fn the_binary_reports_the_heap_jemalloc_holds_and_what_it_keeps_beyond_it(
     let heap = value("process_heap_in_use_bytes");
     let retained = value("process_allocator_retained_bytes");
     let resident = value("process_resident_memory_bytes");
+    let payload = value("jojobot_payload_bytes");
+    assert!(
+        heap >= payload,
+        "the live heap {heap} is below the payload bytes {payload} the State holds"
+    );
     assert!(
         heap > 2.0 * 1024.0 * 1024.0,
         "a booted server's live heap is more than 2 MiB, the reading is {heap}"
