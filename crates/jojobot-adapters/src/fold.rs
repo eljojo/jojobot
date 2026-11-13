@@ -92,15 +92,7 @@ pub struct Folded {
     /// The projection families whose reads are computed two ways and compared
     /// ([`shadow`]); none unless the configuration names one.
     shadow: Arc<shadow::Shadow>,
-    /// Told the address of the next selected fact edit, before it queues for the
-    /// writer.
-    #[cfg(any(test, feature = "testing"))]
-    fact_edit: Arc<FactEditObserver>,
 }
-
-#[cfg(any(test, feature = "testing"))]
-type FactEditObserver =
-    std::sync::Mutex<Option<tokio::sync::oneshot::Sender<jojobot_domain::memory::FactAddress>>>;
 
 /// The kinds the store declares, as rows and as the set every admission asks.
 struct HeldKinds {
@@ -142,8 +134,6 @@ impl Folded {
             before_the_import: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
             shadow: Arc::new(shadow::Shadow::default()),
-            #[cfg(any(test, feature = "testing"))]
-            fact_edit: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -202,17 +192,6 @@ impl Folded {
                     .into(),
             ),
         }
-    }
-
-    /// Observe the next selected fact edit before it waits behind a writer.
-    /// Race fixtures can release that writer after selection, without a sleep.
-    #[cfg(any(test, feature = "testing"))]
-    pub fn signals_the_next_fact_edit(
-        &self,
-    ) -> tokio::sync::oneshot::Receiver<jojobot_domain::memory::FactAddress> {
-        let (send, receive) = tokio::sync::oneshot::channel();
-        *self.fact_edit.lock().expect("the observer is not poisoned") = Some(send);
-        receive
     }
 
     /// Share the serving process's writer with every other rail.
@@ -1139,15 +1118,6 @@ impl Memory for Folded {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        #[cfg(any(test, feature = "testing"))]
-        if let Some(reached) = self
-            .fact_edit
-            .lock()
-            .expect("the observer is not poisoned")
-            .take()
-        {
-            let _ = reached.send(address.clone());
-        }
         owned!(
             self,
             this,
