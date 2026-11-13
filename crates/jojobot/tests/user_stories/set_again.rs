@@ -50,6 +50,51 @@ async fn set_agent(s: &Session, handle: &str, agent: &str) -> Value {
     .json()
 }
 
+/// **Three writes in the writer's queue, in a fixed order, with no timer.** A write
+/// held after it landed keeps the queue; `theirs` is admitted behind it and has not
+/// landed; `ours` then reads what is true so far and is admitted behind `theirs`.
+/// The writer counts each write it admits, and the held write is let go only once
+/// both have been counted, so `ours` selected before `theirs` landed.
+async fn ours_selects_before_theirs_lands<T>(
+    story: &Story,
+    store: &super::dsl::Blindable,
+    held: impl std::future::Future<Output = String>,
+    theirs: impl std::future::Future<Output = T>,
+    ours: impl std::future::Future<Output = Value>,
+) -> Value {
+    let writer = story.memory_fold.writer();
+    let gate = store.holds_the_next_write();
+    let theirs_may_start = tokio::sync::Notify::new();
+    let ours_may_start = tokio::sync::Notify::new();
+    let admitted = |count: u64| {
+        let writer = writer.clone();
+        async move {
+            while writer.submitted_jobs() < count {
+                tokio::task::yield_now().await;
+            }
+        }
+    };
+    let order = async {
+        gate.reached().await;
+        let holding = writer.submitted_jobs();
+        theirs_may_start.notify_one();
+        admitted(holding + 1).await;
+        ours_may_start.notify_one();
+        admitted(holding + 2).await;
+        gate.release();
+    };
+    let theirs = async {
+        theirs_may_start.notified().await;
+        theirs.await
+    };
+    let ours = async {
+        ours_may_start.notified().await;
+        ours.await
+    };
+    let (_, _, written, ()) = tokio::join!(held, theirs, ours, order);
+    written
+}
+
 #[tokio::test]
 async fn a_bot_setting_the_same_key_again_rewrites_its_own_record() {
     let story = Story::begin("bot:otto").await;
@@ -99,29 +144,17 @@ async fn a_set_selected_before_another_bots_edit_appends_instead_of_rewriting_it
     let before = set_records(&gamma, "role:gamma").await;
     let address = before[0]["address"].as_str().expect("an address");
 
-    let gate = store.holds_the_next_document_read();
-    let theirs = marge.call(
-        "update_fact",
-        json!({"address": address, "sets": {"agent": "a2"}}),
-    );
-    let ours = async {
-        gate.reached().await;
-        let selected = story.memory_fold.signals_the_next_fact_edit();
-        let release = async {
-            let selected = selected
-                .await
-                .expect("the selected edit reached the write path");
-            gate.release();
-            assert_eq!(
-                selected.to_string(),
-                address,
-                "the original claim was selected"
-            );
-        };
-        let (written, ()) = tokio::join!(set_agent(&gamma, "role:gamma", "a3"), release);
-        written
-    };
-    tokio::join!(theirs, ours);
+    ours_selects_before_theirs_lands(
+        &story,
+        &store,
+        marge.fact("bot:marge", "a note that holds the queue"),
+        marge.call(
+            "update_fact",
+            json!({"address": address, "sets": {"agent": "a2"}}),
+        ),
+        set_agent(&gamma, "role:gamma", "a3"),
+    )
+    .await;
 
     let records = set_records(&gamma, "role:gamma").await;
     assert_eq!(records.len(), 2, "the stale selection appends: {records:?}");
@@ -152,26 +185,14 @@ async fn a_set_selected_before_another_bots_newer_claim_on_the_key_appends() {
     let before = set_records(&gamma, "role:gamma").await;
     let address = before[0]["address"].as_str().expect("an address");
 
-    let gate = store.holds_the_next_document_read();
-    let theirs = set_agent(&marge, "role:gamma", "a2");
-    let ours = async {
-        gate.reached().await;
-        let selected = story.memory_fold.signals_the_next_fact_edit();
-        let release = async {
-            let selected = selected
-                .await
-                .expect("the selected edit reached the write path");
-            gate.release();
-            assert_eq!(
-                selected.to_string(),
-                address,
-                "the original claim was selected"
-            );
-        };
-        let (written, ()) = tokio::join!(set_agent(&gamma, "role:gamma", "a3"), release);
-        written
-    };
-    tokio::join!(theirs, ours);
+    ours_selects_before_theirs_lands(
+        &story,
+        &store,
+        marge.fact("bot:marge", "a note that holds the queue"),
+        set_agent(&marge, "role:gamma", "a2"),
+        set_agent(&gamma, "role:gamma", "a3"),
+    )
+    .await;
 
     let records = set_records(&gamma, "role:gamma").await;
     assert_eq!(records.len(), 3, "the newer claim stays: {records:?}");

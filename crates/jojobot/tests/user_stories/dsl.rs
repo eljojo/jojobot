@@ -109,9 +109,6 @@ pub struct Blindable {
     /// The handle whose one-document read fails, as a damaged record's does. See
     /// [`Blindable::damages_the_record_of`].
     damaged: std::sync::Mutex<Option<String>>,
-    /// The next read of one document waits here, once armed. See
-    /// [`Blindable::holds_the_next_document_read`].
-    document_gate: std::sync::Mutex<Option<Arc<DocumentGate>>>,
     /// The next write waits after it has landed. See [`Blindable::holds_the_next_write`].
     write_gate: std::sync::Mutex<Option<Arc<DocumentGate>>>,
 }
@@ -155,7 +152,6 @@ impl Blindable {
             unstamped: std::sync::atomic::AtomicBool::new(false),
             unoriginated: std::sync::atomic::AtomicBool::new(false),
             damaged: std::sync::Mutex::new(None),
-            document_gate: std::sync::Mutex::new(None),
             write_gate: std::sync::Mutex::new(None),
         }
     }
@@ -173,18 +169,6 @@ impl Blindable {
     pub fn deletes_the_thing(&self, handle: &str) {
         self.inner
             .delete_entity_past_the_guard(&jojobot_domain::memory::EntityId(handle.to_string()));
-    }
-
-    /// **The next read of one document waits until the gate is released.** The
-    /// read is the one the index makes after a write, so the write has landed in
-    /// the store and is not yet in the index.
-    pub fn holds_the_next_document_read(&self) -> Arc<DocumentGate> {
-        let gate = Arc::new(DocumentGate {
-            reached: tokio::sync::Notify::new(),
-            released: tokio::sync::Notify::new(),
-        });
-        *self.document_gate.lock().expect("the gate is not poisoned") = Some(gate.clone());
-        gate
     }
 
     /// Wait on the armed gate, once, if there is one.
@@ -267,8 +251,7 @@ impl Blindable {
         rename_entity,
         restore_entity,
         retract,
-        set_prose,
-        update_entity_with_claim
+        set_prose
     )
 )]
 impl jojobot_domain::memory::Memory for Blindable {
@@ -310,6 +293,27 @@ impl jojobot_domain::memory::Memory for Blindable {
         jojobot_domain::memory::MemoryError,
     > {
         let landed = self.inner.update_entity(handle, patch).await;
+        self.held_after_the_write().await;
+        landed
+    }
+
+    /// The write of an edit with its companion claim is held as the others are.
+    async fn update_entity_with_claim(
+        &self,
+        handle: &jojobot_domain::memory::EntityId,
+        patch: jojobot_domain::memory::EntityPatch,
+        claim: jojobot_domain::memory::NewFact,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<(
+            jojobot_domain::memory::Entity,
+            jojobot_domain::memory::Fact,
+        )>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        let landed = self
+            .inner
+            .update_entity_with_claim(handle, patch, claim)
+            .await;
         self.held_after_the_write().await;
         landed
     }
@@ -371,15 +375,6 @@ impl jojobot_domain::memory::Memory for Blindable {
             return Err(jojobot_domain::memory::MemoryError::Store(
                 "the record cannot be read".into(),
             ));
-        }
-        let gate = self
-            .document_gate
-            .lock()
-            .expect("the gate is not poisoned")
-            .take();
-        if let Some(gate) = gate {
-            gate.reached.notify_one();
-            gate.released.notified().await;
         }
         self.inner.scan_entity(entity).await
     }
