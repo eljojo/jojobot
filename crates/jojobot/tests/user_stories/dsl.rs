@@ -172,15 +172,6 @@ impl Blindable {
     /// **The record of one thing cannot be read from here on**, as a damaged row
     /// cannot: the read of that one document fails and every other answers. The
     /// story asks through the served surface and jojobot works out what to say.
-    /// Whether the record of `handle` was told to be damaged.
-    fn is_damaged(&self, handle: &str) -> bool {
-        self.damaged
-            .lock()
-            .expect("the damage is not poisoned")
-            .as_deref()
-            == Some(handle)
-    }
-
     pub fn damages_the_record_of(&self, handle: &str) {
         *self.damaged.lock().expect("the damage is not poisoned") = Some(handle.to_string());
     }
@@ -482,62 +473,6 @@ impl jojobot_domain::memory::Memory for Blindable {
 /// to an earlier one's ledger.
 static LEDGERS: std::sync::Mutex<Vec<WiredLedger>> = std::sync::Mutex::new(Vec::new());
 
-/// **The damage a store that can go away shows at the layer the server serves
-/// through**, by the store it belongs to, held weakly. A read the claims State
-/// answers never reaches the store beneath the fold, so a damaged record fails where
-/// the page and the verbs read it.
-static SERVED_DAMAGE: std::sync::Mutex<Vec<DamagedStore>> = std::sync::Mutex::new(Vec::new());
-
-/// A store that can go away, held weakly by the store the server was wired over.
-type DamagedStore = (
-    std::sync::Weak<dyn jojobot_domain::memory::Memory>,
-    Arc<Blindable>,
-);
-
-/// The memory the server serves through, with the damage of the store beneath it laid
-/// over when that store is one that can go away.
-fn served_over(
-    store: &Arc<dyn jojobot_domain::memory::Memory>,
-    served: Arc<dyn jojobot_domain::memory::Memory>,
-) -> Arc<dyn jojobot_domain::memory::Memory> {
-    let blindable = SERVED_DAMAGE
-        .lock()
-        .expect("the damage table is poisoned")
-        .iter()
-        .find(|(held, _)| held.upgrade().is_some_and(|live| Arc::ptr_eq(&live, store)))
-        .map(|(_, blindable)| blindable.clone());
-    match blindable {
-        Some(blindable) => Arc::new(ServedDamage {
-            inner: served,
-            store: blindable,
-        }),
-        None => served,
-    }
-}
-
-/// A served memory that fails the one-document read of the record a store that can go
-/// away was told is damaged.
-struct ServedDamage {
-    inner: Arc<dyn jojobot_domain::memory::Memory>,
-    store: Arc<Blindable>,
-}
-
-#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
-impl jojobot_domain::memory::Memory for ServedDamage {
-    async fn scan_entity(
-        &self,
-        entity: &jojobot_domain::memory::EntityId,
-    ) -> Result<Option<jojobot_domain::memory::search::DocScan>, jojobot_domain::memory::MemoryError>
-    {
-        if self.store.is_damaged(entity.as_str()) {
-            return Err(jojobot_domain::memory::MemoryError::Store(
-                "the record cannot be read".into(),
-            ));
-        }
-        self.inner.scan_entity(entity).await
-    }
-}
-
 /// A wired store, held weakly, and the ledger it spends into.
 type WiredLedger = (
     std::sync::Weak<dyn jojobot_domain::memory::Memory>,
@@ -583,10 +518,6 @@ impl Story {
             .lock()
             .expect("the ledger table is poisoned")
             .push((Arc::downgrade(&memory), ledger));
-        SERVED_DAMAGE
-            .lock()
-            .expect("the damage table is poisoned")
-            .push((Arc::downgrade(&memory), store.clone()));
         let story = Self::serve_over_runs(bot, memory, runs).await;
         (story, store)
     }
@@ -1187,7 +1118,6 @@ impl Story {
         // declaration changed the store under a filled image and cost a
         // second fill on every started or restarted Story.
         let _ = jojobot_mcp::seed::ensure_kinds(&store).await;
-        let bottom = store.clone();
         let (folded, indexed) = jojobot::wiring::assemble_memory(store, jojobot_mcp::provisions())
             .await
             .expect("index opens");
@@ -1267,7 +1197,7 @@ impl Story {
             issuer: Some(crate::support::ISS.to_string()),
             validator: None,
             metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-            memory: served_over(&bottom, indexed.memory()),
+            memory: indexed.memory(),
             search,
             mailboxes: boxes,
             sessions: sessions_mentioned,
