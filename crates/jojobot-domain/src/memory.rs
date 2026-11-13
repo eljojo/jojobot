@@ -28,7 +28,6 @@ mod typed_guard;
 pub use typed_guard::{guard_fit, validate_edge, validate_resolved_edge};
 
 pub mod authorship;
-pub mod boot_reader;
 pub mod bot_request;
 pub mod capacity;
 pub mod claim_walk;

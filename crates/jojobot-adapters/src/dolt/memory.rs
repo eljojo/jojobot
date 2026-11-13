@@ -8528,7 +8528,6 @@ async fn append_merge_event(
 mod adopt;
 mod ages;
 mod assembly;
-mod boot_reads;
 mod claim_events;
 mod entity_events;
 #[cfg(test)]
