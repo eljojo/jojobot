@@ -51,11 +51,11 @@ pub(super) fn held_ordinals(
 }
 
 /// The legacy lowering mark W18 reads to retain earlier text decisions.
-const FIELD_LOWERING_PASS: &str = "field value lowering";
+pub(super) const FIELD_LOWERING_PASS: &str = "field value lowering";
 
 /// **The name the marking of every link in a stored field value is done under**
 /// in `store_pass`.
-const FIELD_MARKS_PASS: &str = "field value links marked";
+pub(super) const FIELD_MARKS_PASS: &str = "field value links marked";
 
 impl DoltMemory {
     pub(super) async fn references_checked(

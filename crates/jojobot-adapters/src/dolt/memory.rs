@@ -704,6 +704,26 @@ impl DoltMemory {
             )))
         }
     }
+    /// **The one-time passes over claims rows whose marker is not in `store_pass`**,
+    /// by the name each is marked under. A boot after the claims import runs none of
+    /// them: the log is the claims' truth then, and a pass that rewrites a claims
+    /// row by SQL makes the rows and the log disagree. The boot names each one
+    /// owed instead.
+    pub async fn claims_row_passes_owed(&self) -> Result<Vec<&'static str>, MemoryError> {
+        let finished = crate::dolt::finished_passes_checked(&self.pool)
+            .await
+            .map_err(store)?;
+        Ok([
+            link_rule::FIELD_MARKS_PASS,
+            link_rule::FIELD_LOWERING_PASS,
+            FORWARDED_LINKS_PASS,
+            repair::OLD_MERGE_EVENTS_PASS,
+        ]
+        .into_iter()
+        .filter(|pass| !finished.contains(*pass))
+        .collect())
+    }
+
     // LEGACY_READER(forwarded-field-link): work:q-gate-binary-coverage
     /// **Links a fold left on the forwarding row, repointed at the thing the fold
     /// ended in.** A build that swept edges, refs and parents at a fold but not

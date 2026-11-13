@@ -584,16 +584,38 @@ pub async fn boot_store_observed(
     // that could not be reached here is a store the boot already reports on —
     // and refusing to start over a column nothing reads would be worse than
     // saying so.
+    //
+    // **Once the claims import is done, no boot pass writes a claims row by SQL.**
+    // The log is the claims' truth from then on and the rows are its projection: a
+    // pass that rewrites a row on a later boot leaves the two disagreeing, and
+    // nothing reconciles them. The passes below that do (the badge, the adoption of a
+    // handle, the stale pointers, the field links, the forwarded links and the stored
+    // row repairs) therefore run only before the import, which takes in what they
+    // wrote. **After it, one that is still owed is named at error level and not
+    // run**, so a build that adds or renames one cannot pass the upgrade gate.
+    // Answered once, here, for this and for the journal switch further down.
+    let import_done = jojobot_adapters::claims_import::claims_import_done(
+        &jojobot_adapters::writer::Writer::default(),
+        store.pool(),
+    )
+    .await
+    .map_err(|why| {
+        let line = claims_import_failure(&why);
+        tracing::error!("{line}");
+        anyhow::anyhow!("{line}")
+    })?;
     let badging = DoltMemory::open(store.pool().clone());
-    match timed("badge-the-unbadged", badging.badge_the_unbadged()).await {
-        Ok(0) => {}
-        Ok(given) => tracing::info!(given, "store: gave a badge to rows written before it"),
-        Err(e) => tracing::warn!(
-            error = %e,
-            "BADGES NOT FILLED — rows written before the badge column still carry none. Nothing \
-             was lost and nothing reads them yet; a restart once the store is reachable fills \
-             them."
-        ),
+    if !import_done {
+        match timed("badge-the-unbadged", badging.badge_the_unbadged()).await {
+            Ok(0) => {}
+            Ok(given) => tracing::info!(given, "store: gave a badge to rows written before it"),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "BADGES NOT FILLED — rows written before the badge column still carry none. \
+                 Nothing was lost and nothing reads them yet; a restart once the store is \
+                 reachable fills them."
+            ),
+        }
     }
 
     // **One set, read by both halves.** The layer above resolves what the
@@ -638,124 +660,148 @@ pub async fn boot_store_observed(
              once the store is reachable records them."
         );
     }
-    match timed(
-        "adopt-handles-without-a-row",
-        linking.adopt_handles_without_a_row(),
-    )
-    .await
-    {
-        Ok(report) => {
-            for handle in &report.adopted {
-                tracing::info!(
-                    %handle,
-                    "store: gave a row to a handle whose writes outlived its record, so it reads \
-                     back as a stored thing"
-                );
+    if import_done {
+        // **An owed one-time pass is named, not run.** The claims-row passes below
+        // do not run after the import; a missing marker here is a pass a build
+        // added, renamed or never finished, and a repair of it goes through the
+        // served stack, where it carries an event.
+        match linking.claims_row_passes_owed().await {
+            Ok(owed) => {
+                for pass in owed {
+                    tracing::error!(
+                        pass,
+                        "CLAIMS-ROW PASS OWED AFTER THE IMPORT: {pass}. Not run: after the \
+                         import a repair is a write through the served stack, where it carries \
+                         an event."
+                    );
+                }
             }
-            for key in &report.left {
-                tracing::warn!(
-                    %key,
-                    "WRITES FILED UNDER A HANDLE OF A KIND THIS BUILD DOES NOT DECLARE — they \
-                     were not given a row and no read reaches them. A person has to say what \
-                     they are."
-                );
-            }
-        }
-        Err(e) => tracing::error!(
-            error = %e,
-            "HANDLES WITHOUT A ROW NOT ADOPTED — what the operator wrote on a handle the build \
-             no longer supplies is still in the store and not reachable. Nothing was lost; a \
-             restart once the store is reachable repeats the pass."
-        ),
-    }
-
-    // **`fact.edge_object` (and its `fact_write` mirror), `fact_event_ref.entity`
-    // and `entity.parent` onto the badge each names, for a row written before
-    // this build resolved them at write time** (rule 268). Runs after the two
-    // passes above for the same reason: it reads the badge and the rename
-    // history they just made current. **And after the adoption above**: a
-    // pointer at a handle the build stopped supplying names nothing until the
-    // adoption gives that handle a row, so a scan that ran first would report
-    // it as unresolvable at every upgrade. **Over the instance that is told what
-    // the build supplies**, which `badging` is not: a pointer at a shipped record
-    // has no row to resolve through, and is valid as it stands.
-    //
-    // **Louder than its two neighbours, on purpose.** Those two leave a row
-    // merely unreachable until the next restart. This one, left unresolved,
-    // leaves a stale handle sitting in a row a later handle collision could
-    // still hijack — the exact defect this rule exists to make unrepresentable
-    // — so an operator reading the log has to see it as a problem to repair,
-    // not a routine retry. It is still not fatal to boot: refusing to serve a
-    // live instance over historical rows would be a worse outcome than
-    // reporting on itself loudly and continuing.
-    match timed(
-        "resolve-stale-pointer-columns",
-        linking.resolve_stale_pointer_columns(),
-    )
-    .await
-    {
-        Ok(0) => {}
-        Ok(rewritten) => tracing::info!(
-            rewritten,
-            "store: resolved stale pointer columns onto the badges they name"
-        ),
-        Err(e) => tracing::error!(
-            error = %e,
-            "POINTERS NOT RESOLVED — the values named above still hold a stale handle rather than \
-             a badge, and a person has to repair them. Nothing already resolved was undone; a \
-             restart repeats the scan and finds less to do."
-        ),
-    }
-
-    // **The field-link step**, after kinds load. It marks
-    // links and reconciles their rows. Unresolved and ambiguous handles stay
-    // text and are reported, because the pass does not guess. A finished pass keeps
-    // its text decisions; the link table is checked and rebuilt when it disagrees.
-    // **Over an instance that is told what the build supplies**, which `badging`
-    // is not: a value naming a shipped record has no row to resolve through, and
-    // an instance with no provisions reads that handle as naming nothing and
-    // leaves the value as text with no link.
-    timed("field-links", field_links::boot_field_links(&linking)).await;
-
-    // **Links a fold of an older build left on the forwarding row, repointed at
-    // the thing it ended in.** Runs after the field-link pass, which makes the link
-    // table agree with the writes it reads. Marked finished once it has
-    // committed and skipped no forward, so it is made once; a forward it could
-    // not place keeps it open and is warned about once, the first boot that meets it.
-    match timed("migrate-forwarded-links", linking.migrate_forwarded_links()).await {
-        Ok(report) if report.settled => {
-            tracing::info!("store: links on forwarding rows: already done");
-        }
-        Ok(report) => tracing::info!(
-            repointed = report.repointed,
-            skipped = report.skipped.len(),
-            "store: repointed the field links that named a folded thing onto the thing it \
-             ended in"
-        ),
-        Err(e) => tracing::error!(
-            error = %e,
-            "FIELD LINKS ON FORWARDING ROWS NOT REPOINTED — a field that names a folded thing \
-             still names the row that forwards. Nothing was lost; a restart repeats the pass."
-        ),
-    }
-
-    // **The one-off repairs of stored rows**, such as old merges.
-    // A row a repair cannot place is named and left for the storage check.
-    for (pass, outcome) in timed("repair-stored-rows", linking.repair_stored_rows()).await {
-        match outcome {
-            jojobot_adapters::dolt::Migrated::Ran(rows) => {
-                tracing::info!(pass, rows, "store: repair pass finished")
-            }
-            jojobot_adapters::dolt::Migrated::Settled => {
-                tracing::info!(pass, "store: repair pass already done")
-            }
-            jojobot_adapters::dolt::Migrated::Skipped(reason)
-            | jojobot_adapters::dolt::Migrated::Failed(reason) => tracing::error!(
-                pass,
-                error = %reason,
-                "STORE REPAIR NOT FINISHED — nothing the pass already wrote was undone, and the \
-                 storage check below still reports what it left. A restart repeats the pass."
+            Err(e) => tracing::error!(
+                error = %e,
+                "CLAIMS-ROW PASSES OWED AFTER THE IMPORT COULD NOT BE READ — which one-time \
+                 passes are still owed on this store is not known. Nothing was run."
             ),
+        }
+    } else {
+        match timed(
+            "adopt-handles-without-a-row",
+            linking.adopt_handles_without_a_row(),
+        )
+        .await
+        {
+            Ok(report) => {
+                for handle in &report.adopted {
+                    tracing::info!(
+                        %handle,
+                        "store: gave a row to a handle whose writes outlived its record, so it reads \
+                         back as a stored thing"
+                    );
+                }
+                for key in &report.left {
+                    tracing::warn!(
+                        %key,
+                        "WRITES FILED UNDER A HANDLE OF A KIND THIS BUILD DOES NOT DECLARE — they \
+                         were not given a row and no read reaches them. A person has to say what \
+                         they are."
+                    );
+                }
+            }
+            Err(e) => tracing::error!(
+                error = %e,
+                "HANDLES WITHOUT A ROW NOT ADOPTED — what the operator wrote on a handle the build \
+                 no longer supplies is still in the store and not reachable. Nothing was lost; a \
+                 restart once the store is reachable repeats the pass."
+            ),
+        }
+
+        // **`fact.edge_object` (and its `fact_write` mirror), `fact_event_ref.entity`
+        // and `entity.parent` onto the badge each names, for a row written before
+        // this build resolved them at write time** (rule 268). Runs after the two
+        // passes above for the same reason: it reads the badge and the rename
+        // history they just made current. **And after the adoption above**: a
+        // pointer at a handle the build stopped supplying names nothing until the
+        // adoption gives that handle a row, so a scan that ran first would report
+        // it as unresolvable at every upgrade. **Over the instance that is told what
+        // the build supplies**, which `badging` is not: a pointer at a shipped record
+        // has no row to resolve through, and is valid as it stands.
+        //
+        // **Louder than its two neighbours, on purpose.** Those two leave a row
+        // merely unreachable until the next restart. This one, left unresolved,
+        // leaves a stale handle sitting in a row a later handle collision could
+        // still hijack — the exact defect this rule exists to make unrepresentable
+        // — so an operator reading the log has to see it as a problem to repair,
+        // not a routine retry. It is still not fatal to boot: refusing to serve a
+        // live instance over historical rows would be a worse outcome than
+        // reporting on itself loudly and continuing.
+        match timed(
+            "resolve-stale-pointer-columns",
+            linking.resolve_stale_pointer_columns(),
+        )
+        .await
+        {
+            Ok(0) => {}
+            Ok(rewritten) => tracing::info!(
+                rewritten,
+                "store: resolved stale pointer columns onto the badges they name"
+            ),
+            Err(e) => tracing::error!(
+                error = %e,
+                "POINTERS NOT RESOLVED — the values named above still hold a stale handle rather than \
+                 a badge, and a person has to repair them. Nothing already resolved was undone; a \
+                 restart repeats the scan and finds less to do."
+            ),
+        }
+
+        // **The field-link step**, after kinds load. It marks
+        // links and reconciles their rows. Unresolved and ambiguous handles stay
+        // text and are reported, because the pass does not guess. A finished pass keeps
+        // its text decisions; the link table is checked and rebuilt when it disagrees.
+        // **Over an instance that is told what the build supplies**, which `badging`
+        // is not: a value naming a shipped record has no row to resolve through, and
+        // an instance with no provisions reads that handle as naming nothing and
+        // leaves the value as text with no link.
+        timed("field-links", field_links::boot_field_links(&linking)).await;
+
+        // **Links a fold of an older build left on the forwarding row, repointed at
+        // the thing it ended in.** Runs after the field-link pass, which makes the link
+        // table agree with the writes it reads. Marked finished once it has
+        // committed and skipped no forward, so it is made once; a forward it could
+        // not place keeps it open and is warned about once, the first boot that meets it.
+        match timed("migrate-forwarded-links", linking.migrate_forwarded_links()).await {
+            Ok(report) if report.settled => {
+                tracing::info!("store: links on forwarding rows: already done");
+            }
+            Ok(report) => tracing::info!(
+                repointed = report.repointed,
+                skipped = report.skipped.len(),
+                "store: repointed the field links that named a folded thing onto the thing it \
+             ended in"
+            ),
+            Err(e) => tracing::error!(
+                error = %e,
+                "FIELD LINKS ON FORWARDING ROWS NOT REPOINTED — a field that names a folded thing \
+                 still names the row that forwards. Nothing was lost; a restart repeats the pass."
+            ),
+        }
+
+        // **The one-off repairs of stored rows**, such as old merges.
+        // A row a repair cannot place is named and left for the storage check.
+        for (pass, outcome) in timed("repair-stored-rows", linking.repair_stored_rows()).await {
+            match outcome {
+                jojobot_adapters::dolt::Migrated::Ran(rows) => {
+                    tracing::info!(pass, rows, "store: repair pass finished")
+                }
+                jojobot_adapters::dolt::Migrated::Settled => {
+                    tracing::info!(pass, "store: repair pass already done")
+                }
+                jojobot_adapters::dolt::Migrated::Skipped(reason)
+                | jojobot_adapters::dolt::Migrated::Failed(reason) => tracing::error!(
+                    pass,
+                    error = %reason,
+                    "STORE REPAIR NOT FINISHED — nothing the pass already wrote was undone, and the \
+                     storage check below still reports what it left. A restart repeats the pass."
+                ),
+            }
         }
     }
 
@@ -785,14 +831,7 @@ pub async fn boot_store_observed(
     // every row they write has an event. Before the import they write bare rows and
     // the import takes them in; a refresh then reads the store, because the log
     // holds no State yet.
-    let import_done =
-        jojobot_adapters::claims_import::claims_import_done(&folded.writer(), store.pool())
-            .await
-            .map_err(|why| {
-                let line = claims_import_failure(&why);
-                tracing::error!("{line}");
-                anyhow::anyhow!("{line}")
-            })?;
+    // `import_done` was answered before the first linking-store pass above.
     match import_done {
         true => bare_memory.start_journaling(),
         false => folded.before_the_import(true),

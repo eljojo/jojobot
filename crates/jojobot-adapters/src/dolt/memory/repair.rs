@@ -19,7 +19,7 @@ use super::*;
 
 /// **The pass that gives a merge made before merge events existed its event**,
 /// by the name it logs under and its marker carries.
-const OLD_MERGE_EVENTS_PASS: &str = "old merge events";
+pub(super) const OLD_MERGE_EVENTS_PASS: &str = "old merge events";
 
 /// The `session` a backfilled event wears when the store holds no moment for the
 /// merge, so a reader can tell it from an event a run made.

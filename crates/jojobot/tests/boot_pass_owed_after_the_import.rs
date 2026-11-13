@@ -66,7 +66,8 @@ fn writes_of(events: &[ClaimEvent], key: &str) -> usize {
 }
 
 /// **One boot of the real binary over the store, which serves and stops in order.**
-fn boot(state: &Path, port: u16) {
+/// Gives back the lines it logged up to its serving line.
+fn boot(state: &Path, port: u16) -> Vec<String> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_jojobot"))
         .env_clear()
         .env(
@@ -130,6 +131,7 @@ fn boot(state: &Path, port: u16) {
         }
     };
     assert_eq!(status.code(), Some(0), "the stop was not orderly");
+    seen
 }
 
 /// **A store as an earlier build left it**, seeded through the bare store, with the
@@ -284,6 +286,169 @@ async fn a_role_claim_moved_by_a_pass_owed_after_the_import_is_carried_by_an_eve
         "the rows hold the claim {on_the_role:?} that the pass moved after the import, and no \
          event writes a claim moment ({} events in the log), so the State holds no such role",
         events.len()
+    );
+    drop(scratch);
+}
+
+/// The stored names of the one-time passes that rewrite claims rows of the linking
+/// store. Written out here: nothing outside this process declares the spelling, so a
+/// rename in the code must fail a case and not follow silently.
+const FIELD_MARKS_PASS: &str = "field value links marked";
+const FORWARDED_LINKS_PASS: &str = "forwarded field links repaired";
+
+/// The permanent key a thing is stored under: its badge, else its handle.
+async fn key_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
+    sqlx::query_scalar::<_, String>("SELECT COALESCE(badge, id) FROM entity WHERE id = ?")
+        .bind(handle)
+        .fetch_one(pool)
+        .await
+        .expect("the thing is stored")
+}
+
+/// The value of the one `spouse` write the case holds.
+async fn the_spouse_value(path: &Path, port: u16) -> String {
+    let mut store = Dolt::start(path, port).await.expect("the store reopens");
+    let value: Option<String> =
+        sqlx::query_scalar("SELECT value FROM field_write WHERE `key` = 'spouse'")
+            .fetch_one(store.pool())
+            .await
+            .expect("the write reads");
+    store.stop().await;
+    value.expect("the write holds a value")
+}
+
+/// **A link row no mark implies is left alone on a boot after the import.** The
+/// link table is checked on every boot, and a disagreement reruns the reconcile,
+/// which marks the write by SQL. After the import the log is the claims' truth and a
+/// rewrite of `field_write.value` that no event carries makes the rows and the log
+/// disagree, with nothing to reconcile them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_link_row_with_no_mark_is_not_marked_by_a_boot_after_the_import() {
+    let state = jojobot_adapters::testing::scratch_path("jojobot-link-row-after-import");
+    let path = state.join("db");
+    std::fs::create_dir_all(&path).expect("a scratch directory");
+    let scratch = Scratch(state.clone());
+    let port = free_port();
+
+    seeded(&path, port, FIELD_MARKS_PASS, async |rows| {
+        let homer = thing(rows, "person:homer", None).await;
+        thing(rows, "person:marge", None).await;
+        rows.capture(memory::state(NewFact {
+            fields: [("spouse", "person:marge")]
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..NewFact::about(homer, "married", date(2026, 9, 1))
+        }))
+        .await
+        .expect("capture ok");
+    })
+    .await;
+    boot(&state, port);
+
+    // The write holds plain text, and a link row that no mark implies stands for it:
+    // what a store written while the rule was off holds.
+    let mut store = Dolt::start(&path, port).await.expect("the store reopens");
+    sqlx::query("UPDATE field_write SET value = 'person:marge' WHERE `key` = 'spouse'")
+        .execute(store.pool())
+        .await
+        .expect("the write is plain text");
+    let marge = key_of(store.pool(), "person:marge").await;
+    sqlx::query("DELETE FROM field_link WHERE `key` = 'spouse'")
+        .execute(store.pool())
+        .await
+        .expect("the link rows are cleared");
+    sqlx::query(
+        "INSERT INTO field_link (entity, `key`, ordinal, target) \
+         SELECT entity, `key`, ordinal, ? FROM field_write WHERE `key` = 'spouse'",
+    )
+    .bind(&marge)
+    .execute(store.pool())
+    .await
+    .expect("the link row is planted");
+    store.stop().await;
+
+    boot(&state, port);
+
+    assert_eq!(
+        the_spouse_value(&path, port).await,
+        "person:marge",
+        "a boot after the import marked a write by SQL, and no event carries it"
+    );
+    drop(scratch);
+}
+
+/// **A forward that became placeable is not repointed by a boot after the import**,
+/// and the boot names the pass owed at error level, which the upgrade gate fails on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_forward_made_placeable_is_not_repointed_by_a_boot_after_the_import() {
+    let state = jojobot_adapters::testing::scratch_path("jojobot-forward-after-import");
+    let path = state.join("db");
+    std::fs::create_dir_all(&path).expect("a scratch directory");
+    let scratch = Scratch(state.clone());
+    let port = free_port();
+
+    seeded(&path, port, FORWARDED_LINKS_PASS, async |rows| {
+        let homer = thing(rows, "person:homer", None).await;
+        let marge = thing(rows, "person:marge", None).await;
+        let lisa = thing(rows, "person:lisa", None).await;
+        rows.capture(memory::state(NewFact {
+            fields: [("spouse", "person:marge")]
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..NewFact::about(homer, "married", date(2026, 9, 1))
+        }))
+        .await
+        .expect("capture ok");
+        rows.merge(
+            &marge,
+            &lisa,
+            Some("the same person"),
+            date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the merge lands");
+    })
+    .await;
+    boot(&state, port);
+
+    // The write names the folded thing, as a fold of an older build left it, and the
+    // pass is owed again.
+    let mut store = Dolt::start(&path, port).await.expect("the store reopens");
+    let marge = key_of(store.pool(), "person:marge").await;
+    let on_the_husk = jojobot_domain::memory::marked_stored_handle(&marge);
+    sqlx::query("UPDATE field_write SET value = ? WHERE `key` = 'spouse'")
+        .bind(&on_the_husk)
+        .execute(store.pool())
+        .await
+        .expect("the write names the folded thing");
+    sqlx::query("UPDATE field_link SET target = ? WHERE `key` = 'spouse'")
+        .bind(&marge)
+        .execute(store.pool())
+        .await
+        .expect("the link names the folded thing");
+    sqlx::query("DELETE FROM store_pass WHERE name = ?")
+        .bind(FORWARDED_LINKS_PASS)
+        .execute(store.pool())
+        .await
+        .expect("the pass is owed");
+    store.stop().await;
+
+    let lines = boot(&state, port);
+
+    assert_eq!(
+        the_spouse_value(&path, port).await,
+        on_the_husk,
+        "a boot after the import repointed a link by SQL, and no event carries it"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("ERROR")
+            && line.contains("CLAIMS-ROW PASS OWED AFTER THE IMPORT")
+            && line.contains(FORWARDED_LINKS_PASS)),
+        "the boot names the pass owed at error level, which the upgrade gate fails on: {lines:#?}"
     );
     drop(scratch);
 }
