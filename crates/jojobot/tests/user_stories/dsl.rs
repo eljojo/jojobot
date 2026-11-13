@@ -116,15 +116,6 @@ pub struct Blindable {
     write_gate: std::sync::Mutex<Option<Arc<DocumentGate>>>,
 }
 
-/// A State that cannot answer: behind the log.
-struct BehindTheLog;
-
-impl jojobot_domain::log::claims::ClaimsLender for BehindTheLog {
-    fn lend(&self, _read: &mut dyn FnMut(&jojobot_domain::log::claims::State)) -> bool {
-        false
-    }
-}
-
 /// **A read of one document held until the story lets it go.** The image of the
 /// memory reads a document again after each write, so a read held here is a
 /// write that has reached the store and not yet the image.
@@ -233,12 +224,6 @@ impl Blindable {
         self.blind.store(true, std::sync::atomic::Ordering::Release);
     }
 
-    /// Only the instance settings read fails; the stored writes still land.
-    pub fn the_instance_fields_cannot_be_read(&self) {
-        self.instance_blind
-            .store(true, std::sync::atomic::Ordering::Release);
-    }
-
     /// **Only the whole-corpus read stops answering.** A read of one document
     /// still does, as the real store reads it by its own query.
     pub fn the_corpus_read_fails(&self) {
@@ -329,13 +314,10 @@ impl jojobot_domain::memory::Memory for Blindable {
         landed
     }
 
-    /// **A store that has gone away lends no State a reader can trust**, so the
-    /// refresh after a write that landed cannot be made: the image is dropped, as
-    /// it is when the seam is behind the log after an uncertain commit.
+    /// **A store that has gone away still lends its State**, as the seam does in
+    /// production: only the reads that reach the store fail, which are the reads of a
+    /// thing the State leaves to it.
     fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
-        if self.blind.load(std::sync::atomic::Ordering::Acquire) {
-            return Some(Arc::new(BehindTheLog));
-        }
         self.inner.claims_lender()
     }
 

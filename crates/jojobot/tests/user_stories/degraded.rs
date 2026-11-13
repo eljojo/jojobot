@@ -15,72 +15,52 @@ use serde_json::json;
 
 use super::dsl::Story;
 
+/// **A search through a store that came and went says which way it is behind.**
+/// The world holds a role, which the claims State leaves to the store to read, so a
+/// scan of the corpus meets the store: when the store goes away that scan fails, the
+/// index keeps what it read, and the answer says `stale` and not `unscanned`. `recall`
+/// of a person is served from the State and still answers while the store is away.
+/// TEMPORARY(9.3.4), owner card `q-934-role-lease-read-from-heartbeat-home`: the
+/// staging goes with the decline that sends a role's read to the store. The
+/// `unscanned` half is gone: a boot cannot complete without the store, so no production
+/// server starts with its corpus unread.
 #[tokio::test]
 async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missing() {
     let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
-    let earlier = story.session().await.asking_whole();
+    let s = story.session().await.asking_whole();
 
-    // ── yesterday · something recorded while everything worked ──────────────
-    earlier.add("person:milhouse", "Milhouse").await;
-    earlier
-        .fact("person:milhouse", "allergic to shellfish")
-        .await;
-
-    // ── this morning · the server starts while the store cannot be read ─────
-    //
-    // The boot's read of the whole store fails and is not fatal. The run kept
-    // its key across the restart, so it goes on without booting again, and
-    // adds what it learns today.
-    store.the_corpus_read_fails();
-    let restarted = story.restarted().await;
-    let s = restarted.session_carried_from(&earlier).await;
-    s.add("person:homer", "Homer").await;
-
-    let behind = s.find("shellfish").await;
-    // Searched — the hits are real, and an answer carrying hits must never
-    // claim it searched nothing.
-    behind.says("\"searched\":true");
-    // …and WHICH WAY it is behind, which is the whole of what a caller does
-    // with this. `unscanned` says trust an empty answer about nothing older
-    // than this server; `stale` would say trust it about everything but the
-    // newest write. Told one when it is in the other, a session reads an empty
-    // result as "nothing says that", which is the conclusion this block exists
-    // to prevent.
-    behind.says("\"behind\":\"unscanned\"");
-    behind.never_says("allergic to shellfish");
-    // The way past the index is named, and it works: `recall` reads the store,
-    // which is still answering everything except the read that fills the
-    // index.
-    s.recall("person:milhouse")
-        .await
-        .says("allergic to shellfish");
-    s.find("Homer").await.says("person:homer");
-
-    // ── it comes back ───────────────────────────────────────────────────────
-    //
-    // The next search refreshes, so the index catches up without anybody
-    // restarting anything, and the answer stops hedging.
-    store.comes_back();
-
+    // ── something recorded while everything worked, and a role beside it ────
+    s.add("person:milhouse", "Milhouse").await;
+    s.fact("person:milhouse", "allergic to shellfish").await;
+    s.add("role:gamma", "Gamma").await;
     let whole = s.find("shellfish").await;
     whole.says("\"searched\":true").never_says("\"behind\"");
     whole.says("allergic to shellfish");
 
-    // ── and it goes away again ──────────────────────────────────────────────
+    // ── the store goes away ─────────────────────────────────────────────────
     //
-    // Now the index has read the store once and holds nearly all of it, so the
-    // claim is a different one: what is here is real and one thing may be a
-    // version the store has moved past. The token changes with it.
-    store.the_corpus_read_fails();
-
+    // The index holds what it read. A write on the role lands, the index cannot
+    // re-read the role from the store, and the search is answered from the index
+    // with the way it is behind.
+    store.goes_away();
+    s.fact("role:gamma", "holds the kitchen rota").await;
     let stale = s.find("shellfish").await;
     stale.says("\"searched\":true");
     stale.says("\"behind\":\"stale\"");
     stale.says("allergic to shellfish");
+    // `recall` of a person is the State's: the store is not asked.
+    s.recall("person:milhouse")
+        .await
+        .says("allergic to shellfish");
 
-    s.wrap("searched through a store that came and went, and was told so each time")
+    // ── it comes back ───────────────────────────────────────────────────────
+    store.comes_back();
+    let again = s.find("shellfish").await;
+    again.says("\"searched\":true").never_says("\"behind\"");
+    again.says("allergic to shellfish");
+
+    s.wrap("searched through a store that came and went, and was told so")
         .await;
-    restarted.finish().await;
     story.finish().await;
 }
 
