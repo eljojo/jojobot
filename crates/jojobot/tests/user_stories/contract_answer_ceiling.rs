@@ -927,9 +927,12 @@ async fn a_walk_of_list_entities_returns_each_entity_once_under_the_ceiling() {
     walked.sort();
     walked.dedup();
     assert_eq!(walked.len(), seen.len(), "no entity came back twice");
+    // The oracle is the served port's listing: a browse answers from the claims
+    // State, and the store beneath may hold rows the State was not told of.
     let mut stored: Vec<String> = world
         ._story
-        .memory_store()
+        .memory_index
+        .memory()
         .list_entities(None)
         .await
         .expect("the store lists its entities")
