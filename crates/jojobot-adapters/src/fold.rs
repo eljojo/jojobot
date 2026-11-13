@@ -1476,7 +1476,11 @@ impl Memory for Folded {
         self.readable()?;
         // **Each listed thing's document is its own scan**, built from the State
         // and not held; a thing the State declines is read from the store, as its
-        // own scan reads it.
+        // own scan reads it. TEMPORARY(9.3.4) `q-934-merge-version-row-in-state` and
+        // `q-934-role-lease-read-from-heartbeat-home`: **the loss is that a scan which
+        // lists such a thing is refused whole while the rail is uncertain**, since the
+        // one read for it may not cross the rail (pinned by
+        // `a_scan_listing_a_declined_thing_is_refused_whole_while_the_rail_is_uncertain`).
         let Some(listed) = self.held(|image| image.list(None)) else {
             return self.inner.scan().await;
         };
