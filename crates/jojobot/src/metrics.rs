@@ -878,6 +878,10 @@ mod tests {
             "a failed read left a zero as the heap: {second}"
         );
         assert!(
+            line(&second, "process_allocator_retained_bytes").ends_with(" 4000"),
+            "a failed read left a zero as the retained bytes: {second}"
+        );
+        assert!(
             line(&second, "jojobot_scrape_read_ok{read=\"allocator\"}").ends_with(" 0"),
             "{second}"
         );
