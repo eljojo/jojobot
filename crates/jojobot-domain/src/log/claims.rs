@@ -895,6 +895,13 @@ impl State {
                 }
                 target.push(write);
             }
+            // **The joined stream is in ordinal order**, so the last write of a claim
+            // is its newest to every reader, whether it takes it by position or by
+            // ordinal. A tie keeps the survivor's write first.
+            target.sort_by_key(|write| write.ordinal);
+            // The sort can change which write is newest for a claim of the survivor's
+            // own stream too, so every writer of the joined stream names again.
+            moved_writers.extend(target.iter().map(|write| write.record.clone()));
             self.payload.bytes = self.payload.bytes - before + stream_bytes(&key, target);
             let highest = target.iter().map(|write| write.ordinal).max();
             self.indexes

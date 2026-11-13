@@ -408,6 +408,59 @@ fn a_merge_renumbers_the_survivors_writes_it_places_a_folded_write_before() {
     assert_eq!(held(&state, "alpha"), map(&[("mood", "steady")]));
 }
 
+/// **One claim that wrote a key under both merged things serves its newest write by
+/// the same order everywhere**: the claim ordinal. The folded thing's write
+/// takes the place before the survivor's newest, so the stream joins with that
+/// write last in position and first in ordinal; the claim's own fields and the
+/// thing's fold both name the survivor's, which has the higher ordinal.
+#[test]
+fn one_claim_that_wrote_a_key_under_both_merged_things_serves_the_higher_ordinal() {
+    let events = [
+        ClaimEvent::AddressBound {
+            object: object("alpha"),
+            address: "thing:alpha".into(),
+        },
+        created("r1", claim("f1", "alpha", "alpha says", 1)),
+        created("r9", claim("f2", "alpha", "alpha again", 2)),
+        write("r9", "alpha", "mood", 1, "steady"),
+        write("r1", "alpha", "mood", 2, "tense"),
+        write("r1", "beta", "mood", 1, "calm"),
+        ClaimEvent::ObjectsMerged {
+            folded: object("beta"),
+            survivor: object("alpha"),
+            records: Vec::new(),
+            writes: vec![
+                MovedWrite {
+                    record: record("r1"),
+                    key: key("mood"),
+                    from_ordinal: 1,
+                    ordinal: 1,
+                },
+                MovedWrite {
+                    record: record("r9"),
+                    key: key("mood"),
+                    from_ordinal: 1,
+                    ordinal: 2,
+                },
+                MovedWrite {
+                    record: record("r1"),
+                    key: key("mood"),
+                    from_ordinal: 2,
+                    ordinal: 3,
+                },
+            ],
+        },
+    ];
+    let state = replay(&events);
+    let fact = state.fact(&record("r1")).expect("the claim is served");
+    assert_eq!(
+        fact.fields.get("mood").map(String::as_str),
+        Some("tense"),
+        "the claim's own fields name its write of the higher ordinal"
+    );
+    assert_eq!(held(&state, "alpha"), map(&[("mood", "tense")]));
+}
+
 /// **The pair a claim was created under finds that claim after a merge moved it**,
 /// and the survivor's own claim under the label the moved one is now served by is
 /// found by its own pair. The expected records are the ones the events name, not

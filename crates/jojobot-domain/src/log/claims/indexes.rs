@@ -719,7 +719,8 @@ impl State {
         &'a self,
         stream: &'a [super::Write],
     ) -> Option<&'a super::Write> {
-        // The stream is kept in arrival order; the ordinal says which is newest.
+        // A write joins the end of its stream, and a merge sorts the streams it joins
+        // by ordinal; the ordinal says which write is newest.
         let mut reaching: Vec<&super::Write> = stream
             .iter()
             .filter(|write| {
