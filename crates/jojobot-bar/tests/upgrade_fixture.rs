@@ -1091,11 +1091,11 @@ fn memory_day_verdict_says_when_the_import_boots_share_was_not_read() {
 }
 
 /// **The deadline leaves room for the case on a loaded runner and stays under the
-/// job's own timeout.** The day took 1,756 to 2,000 s on a free runner and about 3,450 s
-/// on a loaded one, with the boots before it under 300 s; the memory job is stopped at 100
-/// minutes. Nothing outside the script declares its default, so the value is pinned here.
+/// job's own timeout.** With the server on jemalloc the whole case took 1,450 to 1,527 s;
+/// the memory job is stopped at 70 minutes. Nothing outside the script declares its
+/// default, so the value is pinned here.
 #[test]
-fn memory_day_default_deadline_is_4800_seconds_under_the_jobs_hundred_minutes() {
+fn memory_day_default_deadline_is_3000_seconds_under_the_jobs_seventy_minutes() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/memory-day");
     let out = support::output_fenced(
         Command::new("python3")
@@ -1109,7 +1109,7 @@ fn memory_day_default_deadline_is_4800_seconds_under_the_jobs_hundred_minutes() 
     )
     .unwrap();
     let deadline: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
-    assert_eq!(deadline, 4800);
+    assert_eq!(deadline, 3000);
     let workflow = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.forgejo/workflows/pull-request.yml"),
     )
