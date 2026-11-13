@@ -451,7 +451,17 @@ fn one_claim_that_wrote_a_key_under_both_merged_things_serves_the_higher_ordinal
             ],
         },
     ];
-    let state = replay(&events);
+    // The kept payload counts the newest write of the claim, and the two values differ
+    // in length: a count taken before the sort would be off by a byte.
+    let mut state = State::default();
+    for (at, event) in events.iter().enumerate() {
+        apply(&mut state, event);
+        assert_eq!(
+            state.payload(),
+            state.payload_by_walk(),
+            "after event {at}: {event:?}"
+        );
+    }
     let fact = state.fact(&record("r1")).expect("the claim is served");
     assert_eq!(
         fact.fields.get("mood").map(String::as_str),
