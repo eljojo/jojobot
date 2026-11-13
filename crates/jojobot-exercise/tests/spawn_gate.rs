@@ -53,3 +53,39 @@ fn scripts_written_and_run_on_many_threads_are_never_busy() {
         "scripts failed to start while others were being written"
     );
 }
+
+/// **A script another process still holds open for writing starts once that write
+/// ends.** The lock above keeps this process's own forks away from a script being
+/// written; a fork it does not control (a store the adapters start on another
+/// thread) can still copy the descriptor, and the exec then reads `ETXTBSY` for the
+/// moment between that child's fork and its exec. The case holds a write descriptor
+/// open on a script through the first exec and lets go of it a few milliseconds
+/// later, which is that window made long enough to see.
+#[test]
+fn a_script_still_open_for_writing_starts_once_the_write_ends() {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = std::env::temp_dir().join(jojobot_ports::scratch::name("spawn-busy"));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let script = dir.join("busy-script");
+    let mut open = std::fs::File::create(&script).expect("the script is created");
+    open.write_all(b"#!/bin/sh\nexit 0\n")
+        .expect("the script is written");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("the script is runnable");
+
+    let letting_go = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        drop(open);
+    });
+    let started = spawn_gate::spawn_retrying_when_busy(|| Command::new(&script).spawn());
+    letting_go.join().expect("the other holder lets go");
+
+    let mut child = started.expect("a script busy for a moment starts once the write ends");
+    let finished = child.wait().expect("the script finishes").success();
+    // The interpreter opens the script by its path after the exec, so the
+    // directory stays until the child has ended.
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(finished);
+}

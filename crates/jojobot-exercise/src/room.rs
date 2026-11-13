@@ -459,7 +459,7 @@ impl Room {
             die_with_this_run(&mut spawning);
         }
         let claims = vec![served_held.release(), store_held.release()];
-        let mut server = crate::spawn_gate::guarded(|| spawning.spawn())
+        let mut server = crate::spawn_gate::spawn_retrying_when_busy(|| spawning.spawn())
             .with_context(|| format!("spawning {}", binary.display()))?;
 
         let serving = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1551,8 +1551,8 @@ mod tests {
             .stderr(std::process::Stdio::null());
         super::die_with_this_run(&mut spawning);
         let _claims = [served_held.release(), store_held.release()];
-        let mut server =
-            crate::spawn_gate::guarded(|| spawning.spawn()).expect("the server starts");
+        let mut server = crate::spawn_gate::spawn_retrying_when_busy(|| spawning.spawn())
+            .expect("the server starts");
         let log = server.stdout.take().expect("the server's own log");
 
         let wanted = super::serving_line(&endpoint);

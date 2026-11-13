@@ -213,14 +213,15 @@ async fn within(
         // still costs money; `wait_with_output` takes the child, so dropping it
         // on the deadline is what has to do the killing.
         .kill_on_drop(true);
-    let child = crate::spawn_gate::guarded(|| command.spawn()).with_context(|| {
-        format!(
-            "running {} — the agent CLI is the operator's own tool, the same one they are \
+    let child =
+        crate::spawn_gate::spawn_retrying_when_busy(|| command.spawn()).with_context(|| {
+            format!(
+                "running {} — the agent CLI is the operator's own tool, the same one they are \
                  already logged in to, and this project neither ships nor installs it: it has to \
              be on PATH before a run starts",
-            invocation.program,
-        )
-    })?;
+                invocation.program,
+            )
+        })?;
     match tokio::time::timeout(deadline, child.wait_with_output()).await {
         Ok(done) => Ok(Some(done.with_context(|| {
             format!("waiting for {} to finish", invocation.program)

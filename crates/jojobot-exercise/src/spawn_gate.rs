@@ -14,11 +14,37 @@
 //! script and every fork in this process take it, so a fork can never find a
 //! script open for writing. There is no retry in it and no wait: the lock is
 //! held for the length of one write or one `spawn` call.
+//!
+//! **The lock cannot reach a fork it does not hold.** A store the adapters start
+//! on another thread forks without it, and its child can hold a script open for
+//! writing for the moment between its fork and its exec. A start that reads
+//! "Text file busy" is tried once more after a short wait
+//! ([`spawn_retrying_when_busy`]); the window is the child's fork-to-exec and ends
+//! on its own.
 
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::Duration;
 
 static GATE: Mutex<()> = Mutex::new(());
+
+/// How long a start that read "Text file busy" waits before it tries once more.
+const BUSY_WAIT: Duration = Duration::from_millis(50);
+
+/// **Start a child with the lock held, and once more after a short wait when the
+/// program it runs is "Text file busy".** Anything else that fails is the caller's
+/// to read, and a second busy answer is returned as it is.
+pub fn spawn_retrying_when_busy<C>(
+    mut start: impl FnMut() -> std::io::Result<C>,
+) -> std::io::Result<C> {
+    match guarded(&mut start) {
+        Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+            std::thread::sleep(BUSY_WAIT);
+            guarded(start)
+        }
+        done => done,
+    }
+}
 
 /// Run `act` with no other fork or script write in this process in flight.
 /// A panicking holder does not wedge the rest.

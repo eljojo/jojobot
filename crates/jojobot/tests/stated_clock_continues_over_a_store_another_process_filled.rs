@@ -198,7 +198,8 @@ async fn one_boot_of_the_binary(
     state_dir: &std::path::Path,
     store_port: u16,
 ) -> Result<Timestamp, String> {
-    let mut child = tokio::process::Command::new(binary)
+    let mut command = tokio::process::Command::new(binary);
+    command
         .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
         .env("JOJOBOT_BIND", "127.0.0.1:0")
@@ -208,8 +209,10 @@ async fn one_boot_of_the_binary(
         .env("RUST_LOG", "info")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
+        .kill_on_drop(true);
+    // The binary may be a script a case wrote, and a store another thread starts can hold
+    // it open for writing for a moment: a busy start is tried once more.
+    let mut child = jojobot_exercise::spawn_gate::spawn_retrying_when_busy(|| command.spawn())
         .expect("the binary runs");
     // The shared wait: on a boot that never serves, it says how the process ended
     // and quotes the last lines of its stderr.
