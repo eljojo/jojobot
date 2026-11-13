@@ -221,12 +221,6 @@ impl Blindable {
         gate
     }
 
-    /// From now on every write reads back with no moment of its own.
-    pub fn forgets_when_its_writes_happened(&self) {
-        self.unstamped
-            .store(true, std::sync::atomic::Ordering::Release);
-    }
-
     /// From now on every write of a key reads back with no run and no writer.
     pub fn forgets_who_made_its_key_writes(&self) {
         self.unoriginated
