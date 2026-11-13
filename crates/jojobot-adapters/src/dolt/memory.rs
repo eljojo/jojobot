@@ -8534,9 +8534,10 @@ mod entity_events;
 #[cfg(test)]
 mod entity_events_tests;
 pub mod import_rows;
+mod key_trails;
 #[cfg(test)]
 mod row_writer_tests;
-use boot_reads::trails_from;
+use key_trails::trails_from;
 mod held_kinds;
 mod link_rule;
 mod numbered;
