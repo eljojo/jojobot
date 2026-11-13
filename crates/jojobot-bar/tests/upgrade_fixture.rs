@@ -252,6 +252,44 @@ fn upgrade_fixture_cache_key_follows_everything_the_recording_reads() {
     }
 }
 
+/// The tag the script records, read from the recorder's own log in the scratch repository.
+fn recorded_tags(dir: &Path) -> Vec<String> {
+    fs::read_to_string(dir.join("recorded"))
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// **A pre-release tag ranks below the release of its number.** The PM tags what
+/// production runs as `deploy-N-pre` before `deploy-N` exists; git's default version sort
+/// puts the longer name above the release, so the gate would record from the build
+/// production already runs and no later release would be tested against its own
+/// predecessor. The gate records from the release once it exists.
+#[test]
+fn upgrade_fixture_records_the_release_and_not_its_pre_tag() {
+    let dir = recording_repository();
+    for tag in ["deploy-9.3.3", "deploy-9.3.3.1-pre", "deploy-9.3.3.1"] {
+        git(&dir, &["tag", tag]);
+    }
+    prepared(&dir);
+    assert_eq!(recorded_tags(&dir), ["deploy-9.3.3.1"]);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// **With no release of its number yet, the pre tag is the newest.** It records what
+/// production runs, which is the right last-deployed build until the release is tagged.
+#[test]
+fn upgrade_fixture_records_the_pre_tag_when_its_release_does_not_exist() {
+    let dir = recording_repository();
+    for tag in ["deploy-9.3.3", "deploy-9.3.3.1-pre"] {
+        git(&dir, &["tag", tag]);
+    }
+    prepared(&dir);
+    assert_eq!(recorded_tags(&dir), ["deploy-9.3.3.1-pre"]);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn upgrade_fixture_branch_run_watches_for_a_red_sibling_while_it_records() {
     // A recording lasts up to twenty minutes. A rooms job that goes red during it

@@ -92,7 +92,10 @@ def complete(directory, tag, revision):
 def main():
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("upgrade fixture refused: old releases are built only in CI")
-    tags = git("tag", "--list", "deploy-*", "--sort=-version:refname").splitlines()
+    # `-pre` sorts below the release of its number: `deploy-N-pre` records what production
+    # runs before `deploy-N` exists, and git's default order would put it above that release.
+    tags = git("-c", "versionsort.suffix=-pre", "tag", "--list", "deploy-*",
+               "--sort=-version:refname").splitlines()
     if not tags:
         raise SystemExit("upgrade fixture refused: no deployed tag is available")
     tag = tags[0]
