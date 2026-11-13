@@ -202,6 +202,19 @@ impl Writer {
             .cloned()
     }
 
+    /// **Open the ledgers over the store now**, as the first job of the writer would
+    /// have. The claims State answers nothing until they are open, and every read of
+    /// a fold goes to the store until it does, so the boot opens them before it
+    /// fills anything. The database holds the claims import before this runs.
+    pub async fn open_ledgers(
+        &self,
+        pool: &sqlx::MySqlPool,
+    ) -> Result<(), crate::ledger_log::LedgerError> {
+        let (opener, pool) = (self.clone(), sql::Pool::from(pool.clone()));
+        self.run(async move { opener.ensure_seam(&pool).await.map(|_| ()) })
+            .await
+    }
+
     pub(crate) fn current() -> Option<Self> {
         OWNER.try_with(Weak::upgrade).ok().flatten().map(Self)
     }

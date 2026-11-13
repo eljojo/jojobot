@@ -122,3 +122,89 @@ async fn ten_times_the_things_fill_the_fold_in_the_same_statements() {
     );
     store.stop().await;
 }
+
+/// A name no other fixture wears, so a case with many things meets neither a
+/// duplicate name nor the near-miss screen.
+fn spelled(n: usize) -> String {
+    let mut state = (n as u64 + 1).wrapping_mul(6364136223846793005);
+    (0..12)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (b'a' + ((state >> 33) % 26) as u8) as char
+        })
+        .collect()
+}
+
+/// **The boot opens the ledgers before it fills the search index, so the index's
+/// scan is served from the claims State and not read thing by thing from the
+/// store.** The ledgers open on the first job the writer runs, and a boot over a
+/// store whose import is done runs none before the fill. Until they open, the State
+/// answers nothing and every read goes to the store: a scan of thousands of things
+/// then made thousands of reads before the server served.
+///
+/// The case fills a fold over an imported store twice: once with the ledgers
+/// closed, which shows the store being read for the scan, and once after
+/// `open_ledgers`, which reads it not at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_scan_after_the_ledgers_open_reads_no_thing_from_the_store() {
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-open-ledgers");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "open_ledgers")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let rows = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&rows)
+        .await
+        .expect("the kinds are seeded");
+    for n in 0..20 {
+        let slug = spelled(n);
+        let id = EntityId(format!("{}:{}", "thing", slug));
+        let new = NewEntity::new(id.clone(), slug, "fill-fixture");
+        rows.add_entity(new)
+            .await
+            .expect("added")
+            .written()
+            .expect("not blocked");
+        let mut fact = NewFact::about(id, "holds a value", date(2026, 9, 2));
+        fact.provenance = jojobot_domain::memory::Provenance::Testimony;
+        rows.capture(fact)
+            .await
+            .expect("captured")
+            .written()
+            .expect("not blocked");
+    }
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+
+    let counted = Arc::new(jojobot_adapters::counted::Counted::new(Arc::new(
+        DoltMemory::open(pool.clone()).journaled(),
+    )));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold fills");
+
+    counted.reset();
+    folded.scan().await.expect("a scan with the ledgers closed");
+    let closed = counted.seen();
+    assert!(
+        closed.contains_key("scan_entity") || closed.contains_key("scan"),
+        "with the ledgers closed the scan reads the store: {closed:?}"
+    );
+
+    folded
+        .writer()
+        .open_ledgers(&pool)
+        .await
+        .expect("the ledgers open over the imported log");
+    counted.reset();
+    folded.scan().await.expect("a scan with the ledgers open");
+    let open = counted.seen();
+    assert_eq!(open.get("scan_entity"), None, "{open:?}");
+    assert_eq!(open.get("scan"), None, "{open:?}");
+    server.stop().await;
+}

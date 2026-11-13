@@ -140,9 +140,8 @@ pub async fn imported_database(
 /// read and not from its first write. The database holds the claims import
 /// ([`import_claims_now`]) before this runs.
 pub async fn open_seam(writer: &crate::writer::Writer, pool: &sqlx::MySqlPool) {
-    let (opener, pool) = (writer.clone(), crate::writer::sql::Pool::from(pool.clone()));
     writer
-        .run(async move { opener.ensure_seam(&pool).await })
+        .open_ledgers(pool)
         .await
         .expect("the ledgers open over the imported log");
 }

@@ -822,6 +822,22 @@ pub async fn boot_store_observed(
     // It says so loudly instead.
     let (folded, indexed) =
         assemble_memory_with(observation.memory(resolved), supplied.clone(), clock).await?;
+    // **The ledgers open before anything fills, when the import is done**: the State
+    // answers nothing until they are open, and a fill that ran first would read the
+    // store thing by thing for every document of the index. A store whose import is
+    // still owed has no State to open; its fill reads the store, once.
+    if import_done {
+        Box::pin(timed(
+            "open-ledgers",
+            folded.writer().open_ledgers(store.pool()),
+        ))
+        .await
+        .map_err(|why| {
+            let line = format!("the ledgers could not be opened at startup: {why}");
+            tracing::error!("{line}");
+            anyhow::anyhow!("{line}")
+        })?;
+    }
     fill_memory(&folded, &indexed).await;
     // **A boot write is bare only before the import.** Once the import is done the
     // State exists, so the repair passes below write through a journaled store and
