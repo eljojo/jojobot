@@ -816,6 +816,17 @@ fn declaration(name: &str, must: Option<&str>) -> DeclaredType {
     }
 }
 
+/// A declaration that names one key, so the port lists it as a type.
+fn keyed(name: &str) -> DeclaredType {
+    DeclaredType {
+        fields: vec![memory::types::Field::new(
+            "rank",
+            memory::types::ValueType::Number,
+        )],
+        ..declaration(name, None)
+    }
+}
+
 /// Each declaration of a kind is one event; the newest is in force and the
 /// earlier ones stay in the history, oldest first.
 #[test]
@@ -915,7 +926,7 @@ fn the_declared_types_are_one_shared_snapshot_rebuilt_by_a_declaration() {
     let (pet, toy) = (object("pet"), object("toy"));
     state.apply(&envelope(ClaimEvent::TypeDeclared {
         kind: pet.clone(),
-        declaration: declaration("pet", None),
+        declaration: keyed("pet"),
     }));
     let first = state.declared_types_shared();
     assert!(
@@ -937,7 +948,7 @@ fn the_declared_types_are_one_shared_snapshot_rebuilt_by_a_declaration() {
     ));
     state.apply(&envelope(ClaimEvent::TypeDeclared {
         kind: toy.clone(),
-        declaration: declaration("toy", None),
+        declaration: keyed("toy"),
     }));
     let second = state.declared_types_shared();
     assert!(!std::sync::Arc::ptr_eq(&first, &second));

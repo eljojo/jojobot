@@ -909,7 +909,14 @@ impl State {
     }
 
     fn rebuild_declared_snapshot(&mut self) {
-        self.declared_snapshot = std::sync::Arc::new(self.declared_types());
+        // A declaration that names no key is no type the port lists, as the store lists
+        // none: a kind that holds no key has no row of a type.
+        self.declared_snapshot = std::sync::Arc::new(
+            self.declared_types()
+                .into_iter()
+                .filter(|held| !held.fields.is_empty())
+                .collect(),
+        );
     }
 
     /// Every name the State holds a declaration for.

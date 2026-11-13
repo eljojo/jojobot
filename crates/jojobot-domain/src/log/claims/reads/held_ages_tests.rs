@@ -292,6 +292,41 @@ fn a_replayed_state_holds_the_ages_and_newest_change_of_the_live_one() {
     assert_eq!(restored.held_fields_are_what_a_fold_makes(), Ok(()));
 }
 
+/// **A declaration that names no key is no type the port lists**, as the store
+/// lists none: a kind that holds no key has no row of a type. The declaration stays in
+/// force for what it says of the kind.
+#[test]
+fn a_declaration_with_no_keys_is_not_listed_as_a_type() {
+    let mut state = State::default();
+    for (kind, fields) in [
+        ("pet", Vec::new()),
+        ("person", vec![Field::new("due", ValueType::Date)]),
+    ] {
+        apply_at(
+            &mut state,
+            1,
+            ClaimEvent::TypeDeclared {
+                kind: object(kind),
+                declaration: DeclaredType::new(kind, fields),
+            },
+        );
+    }
+    let listed: Vec<String> = state
+        .declared_types_shared()
+        .iter()
+        .map(|held| held.name.clone())
+        .collect();
+    assert_eq!(
+        listed,
+        ["person"],
+        "only a declaration with a key is listed"
+    );
+    assert!(
+        state.declared(&object("pet")).is_some(),
+        "the keyless declaration is still in force"
+    );
+}
+
 /// **A merge holds the survivor's newest change with the folded thing's claims in
 /// it.** The folded thing's claim is revised after its last field write; the
 /// merge joins that claim to the survivor, so the survivor's newest change is the
