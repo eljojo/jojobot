@@ -606,7 +606,8 @@ pub struct State {
     indexes: indexes::Indexes,
 }
 
-/// The inverse of [`serialize_entries`]: the entries read back into the map they came from.
+/// The inverse of [`serialize_entries`]: the entries read back into the map they came from, and a
+/// key that appears twice is refused.
 fn deserialize_entries<
     'de,
     K: serde::Deserialize<'de> + Ord,
@@ -616,7 +617,17 @@ fn deserialize_entries<
     deserializer: D,
 ) -> Result<BTreeMap<K, V>, D::Error> {
     let entries: Vec<(K, V)> = serde::Deserialize::deserialize(deserializer)?;
-    Ok(entries.into_iter().collect())
+    let mut map = BTreeMap::new();
+    for (key, value) in entries {
+        // A key twice would let the later entry replace the earlier without a word.
+        if map.contains_key(&key) {
+            return Err(serde::de::Error::custom(
+                "an entry appears twice under one key",
+            ));
+        }
+        map.insert(key, value);
+    }
+    Ok(map)
 }
 
 // JSON object keys cannot hold tuples; entries preserve their structure.

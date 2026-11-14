@@ -148,3 +148,37 @@ fn a_state_with_no_event_restores_to_the_empty_state() {
     let empty = State::default();
     same(&restored_from(&empty), &empty, "an empty State");
 }
+
+/// **An entry that appears twice is refused when a State is read back.** The maps whose keys
+/// are not text are stored as lists of entries; reading them into a map would let the later of
+/// two entries for one key replace the earlier without a word, so a damaged snapshot would load
+/// as a State that differs from any the events built.
+#[test]
+fn an_entry_that_appears_twice_is_refused_on_load() {
+    let built = replay(&events());
+    let json = serde_json::to_value(&built).expect("the State serializes");
+    let lists: [&[&str]; 4] = [
+        &["streams"],
+        &["indexes", "top_ordinal"],
+        &["indexes", "labels"],
+        &["indexes", "origins"],
+    ];
+    for path in lists {
+        let mut doubled = json.clone();
+        let list = path
+            .iter()
+            .fold(&mut doubled, |value, name| &mut value[*name])
+            .as_array_mut()
+            .unwrap_or_else(|| panic!("{path:?} is not a list of entries"));
+        assert!(
+            !list.is_empty(),
+            "{path:?}: the fixture holds nothing here, so the case proves nothing"
+        );
+        let first = list[0].clone();
+        list.push(first);
+        assert!(
+            serde_json::from_value::<State>(doubled).is_err(),
+            "{path:?}: an entry that appears twice was read back"
+        );
+    }
+}
