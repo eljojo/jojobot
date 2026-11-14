@@ -154,6 +154,49 @@ async fn the_restored_log_holds_a_batch(pool: &sqlx::MySqlPool) -> bool {
     batches > 0
 }
 
+/// **The log as the recorded store has it: before snapshots had a table.** The recording is
+/// older than the head's schema, and the head's boot is what migrates it, so this seeding must
+/// not read or write a snapshot table that the recording does not hold yet.
+struct BeforeSnapshots(jojobot_adapters::writer_log::WriterLog);
+
+#[async_trait::async_trait]
+impl jojobot_domain::log::LogStore for BeforeSnapshots {
+    async fn validity(
+        &self,
+    ) -> Result<jojobot_domain::log::Validity, jojobot_domain::log::LogError> {
+        self.0.validity().await
+    }
+
+    async fn append(
+        &self,
+        expected_head: jojobot_domain::log::Position,
+        batch: &jojobot_domain::log::SealedBatch,
+    ) -> Result<jojobot_domain::log::Append, jojobot_domain::log::LogError> {
+        self.0.append(expected_head, batch).await
+    }
+
+    async fn read_from(
+        &self,
+        position: jojobot_domain::log::Position,
+        bound: usize,
+    ) -> Result<Vec<jojobot_domain::log::SealedBatch>, jojobot_domain::log::LogError> {
+        self.0.read_from(position, bound).await
+    }
+
+    async fn load_snapshot(
+        &self,
+    ) -> Result<Option<jojobot_domain::log::ValidatedSnapshot>, jojobot_domain::log::LogError> {
+        Ok(None)
+    }
+
+    async fn store_snapshot(
+        &self,
+        _snapshot: &jojobot_domain::log::ValidatedSnapshot,
+    ) -> Result<(), jojobot_domain::log::LogError> {
+        Ok(())
+    }
+}
+
 /// Seed the legacy rows explicitly beside the log, as the recorded release
 /// wrote them. The current ledger no longer keeps that retired representation.
 async fn seed_the_teaching_marks_through_the_log(
@@ -162,11 +205,11 @@ async fn seed_the_teaching_marks_through_the_log(
     use jojobot_adapters::teaching_log::LoggedTeachings;
     use jojobot_adapters::{writer::Writer, writer_log::WriterLog};
     use jojobot_domain::teaching::Teachings;
-    let log = std::sync::Arc::new(
+    let log = std::sync::Arc::new(BeforeSnapshots(
         WriterLog::open(pool.clone(), Writer::default())
             .await
             .expect("the event log opens"),
-    );
+    ));
     let rows = jojobot_adapters::teaching_log::import_marks(pool)
         .await
         .expect("the teaching rows read back");
