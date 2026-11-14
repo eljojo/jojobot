@@ -731,7 +731,8 @@ async fn the_history_of_a_claim_with_no_mention_reads_no_roster() {
     let layer = Mentioning::new(counted.clone());
     let handle = |n: usize| EntityId(format!("{}:{}", "person", spelled(n)));
     let (plain, mentioning, other) = (handle(1), handle(2), handle(3));
-    for id in [&plain, &mentioning, &other] {
+    let in_details = handle(4);
+    for id in [&plain, &mentioning, &other, &in_details] {
         layer
             .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
             .await
@@ -748,31 +749,58 @@ async fn the_history_of_a_claim_with_no_mention_reads_no_roster() {
         fact.session = Some("fold-image".into());
         fact
     };
-    for (about, words) in [
-        (&plain, "plays the saxophone".to_string()),
-        (&mentioning, format!("saw @{}", other.0)),
+    let mut written = Vec::new();
+    for (about, words, details) in [
+        (&plain, "plays the saxophone".to_string(), None),
+        (&mentioning, format!("saw @{}", other.0), None),
+        (
+            &in_details,
+            "keeps bees".to_string(),
+            Some(format!("met @{}", other.0)),
+        ),
     ] {
-        layer
-            .capture(claim(about, words))
-            .await
-            .expect("captured")
-            .written()
-            .expect("not blocked");
+        let mut fact = claim(about, words);
+        fact.details = details;
+        written.push(
+            layer
+                .capture(fact)
+                .await
+                .expect("captured")
+                .written()
+                .expect("not blocked"),
+        );
     }
 
     counted.reset();
-    layer.claim_histories(&plain).await.expect("histories");
+    let chains = layer.claim_histories(&plain).await.expect("histories");
     let seen = counted.seen();
     assert_eq!(
         seen.get("list_entities"),
         None,
         "a claim with no mention read the roster: {seen:?}"
     );
-    counted.reset();
-    layer.claim_histories(&mentioning).await.expect("histories");
-    let seen = counted.seen();
-    assert!(
-        seen.contains_key("list_entities"),
-        "a claim with a mention reads the roster: {seen:?}"
-    );
+    // The chain is what the store gave: the claim, its one write, words as written.
+    assert_eq!(chains.len(), 1, "{chains:?}");
+    let write = &chains[&written[0].id][0];
+    assert_eq!(write.content, "plays the saxophone");
+
+    for (about, fact) in [(&mentioning, &written[1]), (&in_details, &written[2])] {
+        counted.reset();
+        let chains = layer.claim_histories(about).await.expect("histories");
+        let seen = counted.seen();
+        assert!(
+            seen.contains_key("list_entities"),
+            "a claim with a mention reads the roster: {seen:?}"
+        );
+        let rendered = &chains[&fact.id][0];
+        let text = format!(
+            "{} {}",
+            rendered.content,
+            rendered.details.clone().unwrap_or_default()
+        );
+        assert!(
+            text.contains(&format!("@{}", other.0)),
+            "the mention reads as its handle: {text}"
+        );
+    }
 }
