@@ -151,7 +151,7 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     let label = format!("interrupted-{version}-{how:?}");
     let restored = restore_a_fixture(&fixture, &label).await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
-    let mut retained = if version == "0126_event_log_snapshots_leave" {
+    let retained = if version == "0126_event_log_snapshots_leave" {
         Some(RetainedLog::read(store.pool()).await)
     } else {
         None
@@ -186,14 +186,10 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     leave_interrupted(store.pool(), version, how)
         .await
         .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
-    if let Some(retained) = &mut retained {
+    if let Some(retained) = &retained {
         retained
             .assert_retained(store.pool(), "after interruption")
             .await;
-        if how == Interruption::BeforeTheChange {
-            // Only the post-recovery comparison can see this deliberately wrong expectation.
-            retained.validity.3.push(b' ');
-        }
     }
     let begun: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration_begun")
         .fetch_all(store.pool())
