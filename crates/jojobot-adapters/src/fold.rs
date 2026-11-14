@@ -1483,6 +1483,7 @@ impl Memory for Folded {
             })
             .collect();
         let declined = slots.iter().filter(|slot| slot.is_err()).count();
+        let started = std::time::Instant::now();
         // **A whole read that fails reads nothing**: it builds every document, one the
         // State serves included, so an unreadable row elsewhere in the store would
         // otherwise fail a scan that needs only the declined things. Each of those is
@@ -1490,14 +1491,22 @@ impl Memory for Folded {
         let mut from_store = HashMap::new();
         if declined * 6 > slots.len() * 5 {
             self.unheld()?;
-            if let Ok(whole) = self.inner.scan().await {
-                from_store = whole
-                    .into_iter()
-                    .filter_map(|doc| {
-                        let id = doc.entity.as_ref()?.id.clone();
-                        Some((id, doc))
-                    })
-                    .collect();
+            match self.inner.scan().await {
+                Ok(whole) => {
+                    from_store = whole
+                        .into_iter()
+                        .filter_map(|doc| {
+                            let id = doc.entity.as_ref()?.id.clone();
+                            Some((id, doc))
+                        })
+                        .collect();
+                }
+                Err(error) => tracing::warn!(
+                    %error,
+                    declined,
+                    "A WHOLE READ OF THE STORE FAILED for a scan, so each declined thing is read \
+                     on its own, which costs a read of the store for each."
+                ),
             }
         }
         let mut scanned = Vec::with_capacity(slots.len());
@@ -1510,6 +1519,14 @@ impl Memory for Folded {
                 },
             };
             scanned.extend(doc);
+        }
+        if declined > 0 {
+            tracing::info!(
+                listed = scanned.len(),
+                declined,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "fold scan: the things the State declines were read from the store"
+            );
         }
         Ok(scanned)
     }

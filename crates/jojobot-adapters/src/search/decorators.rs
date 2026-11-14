@@ -174,14 +174,20 @@ impl IndexedMemory {
         // is what was already marked when it looked; a write that fails its
         // re-read while the scan is in flight is not covered by it.
         let began = self.index.reading_begins();
+        let phase = std::time::Instant::now();
         let scan = self.inner.scan().await?;
+        phase_finished("scan", scan.len(), phase);
+        let phase = std::time::Instant::now();
         let mut history = CorpusHistoryTerms::new();
         for doc in &scan {
             if let Some(entity) = &doc.entity {
                 history.insert(entity.id.clone(), self.history_terms(&entity.id).await?);
             }
         }
+        phase_finished("history", history.len(), phase);
+        let phase = std::time::Instant::now();
         self.index.ingest_all(&scan, began, &history)?;
+        phase_finished("ingest", scan.len(), phase);
         if let Some(summary) = summary {
             *self.last_scan.write().expect("scan cache poisoned") = Some((summary, scan.clone()));
         }
@@ -282,6 +288,17 @@ impl std::ops::Deref for IndexedMemory {
     fn deref(&self) -> &Self::Target {
         &*self.inner
     }
+}
+
+/// **One phase of the index's full scan, with what it handled and how long it took**,
+/// as the fold's fill names its own, so a slow boot says which phase held it.
+fn phase_finished(phase: &'static str, count: usize, started: std::time::Instant) {
+    tracing::info!(
+        phase,
+        count,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "search scan phase finished"
+    );
 }
 
 impl IndexedMemory {

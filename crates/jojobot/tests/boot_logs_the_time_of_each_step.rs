@@ -100,6 +100,24 @@ async fn a_boot_logs_the_time_of_every_step_that_touches_the_store() {
         "the search scan ran before the import finished:\n{text}"
     );
 
+    // **And the corpus is filled**: the step line is logged whether the scan worked
+    // or not, so the case reads the scan's own line and the absence of the warning.
+    assert!(
+        !text.contains("SEARCH INDEX EMPTY"),
+        "the search fill failed:\n{text}"
+    );
+    let built = text
+        .lines()
+        .find(|line| line.contains("search: index built from a full scan"))
+        .unwrap_or_else(|| panic!("no line says the index was built:\n{text}"));
+    let docs: usize = built
+        .split("docs=")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|number| number.parse().ok())
+        .unwrap_or_else(|| panic!("the line names no document count: {built}"));
+    assert!(docs > 0, "the index was built from an empty scan: {built}");
+
     let mut store = booted.store;
     store.stop().await;
     drop(scratch);
