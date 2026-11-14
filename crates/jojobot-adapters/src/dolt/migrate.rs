@@ -920,7 +920,38 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0124_field_write_live_clear.sql"),
         leaves: Leaves::Column("field_write", "live_clear"),
     },
+    Migration {
+        version: "0125_log_snapshot",
+        sql: include_str!("../../migrations/0125_log_snapshot.sql"),
+        leaves: Leaves::Table("log_snapshot"),
+    },
+    Migration {
+        version: "0126_event_log_snapshots_leave",
+        sql: include_str!("../../migrations/0126_event_log_snapshots_leave.sql"),
+        leaves: Leaves::NoRows("event_log", "slot LIKE 'snapshot:%'"),
+    },
 ];
+
+/// **The tables derived from the log**, which no commit holds. The runner names each in
+/// `dolt_ignore` before any migration runs, so no mark ever sees one unignored: a mark
+/// stages with `DOLT_ADD('-A')`, which skips an ignored table, and a table committed once is
+/// no longer protected by the row. The names are the tables the migrations create.
+const DERIVED_TABLES: &[&str] = &["log_snapshot"];
+
+/// **Name each derived table in `dolt_ignore`**, once and before the table exists. A row
+/// that is already there is left as it is, so every start may run it.
+async fn keep_derived_tables_out_of_commits(pool: &MySqlPool) -> Result<(), MigrateError> {
+    for table in DERIVED_TABLES {
+        fail_as(
+            sqlx::query("INSERT IGNORE INTO dolt_ignore VALUES (?, true)")
+                .bind(*table)
+                .execute(pool)
+                .await,
+            "dolt_ignore",
+        )?;
+    }
+    Ok(())
+}
 
 /// The table recording what has run. Created by hand rather than by a
 /// migration, because it is what says whether a migration has run.
@@ -1111,6 +1142,7 @@ struct Run {
 async fn account_of_apply(pool: &MySqlPool, migrations: &[Migration]) -> Result<Run, MigrateError> {
     fail_as(sqlx::raw_sql(LEDGER).execute(pool).await, "the ledger")?;
     fail_as(sqlx::raw_sql(BEGUN).execute(pool).await, "the ledger")?;
+    keep_derived_tables_out_of_commits(pool).await?;
 
     let done: Vec<String> = fail_as(
         sqlx::query_scalar("SELECT version FROM schema_migration")

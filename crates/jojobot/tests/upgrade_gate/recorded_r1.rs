@@ -102,11 +102,13 @@ pub(super) fn recorded_r1_counts_match(seen: &[String], expected: &[String]) -> 
     })
 }
 
-/// Whether the store holds a snapshot of the event log. A store with no event log
-/// table holds none; any other failure of the count is an error, because reading it
-/// as "none held" would let a boot that lost its snapshot pass the gate.
+/// Whether the store holds a snapshot of the event log, a row of the table the snapshots are
+/// kept in. A store with no such table holds none, which is every store a build before the
+/// table recorded: the snapshot it held was a row of the event log, which this build does not
+/// read. Any other failure of the count is an error, because reading it as "none held" would
+/// let a boot that lost its snapshot pass the gate.
 pub(super) async fn snapshots_held(pool: &sqlx::MySqlPool) -> Result<bool, sqlx::Error> {
-    match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM event_log WHERE slot LIKE 'snapshot%'")
+    match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM log_snapshot")
         .fetch_one(pool)
         .await
     {
@@ -188,9 +190,14 @@ async fn a_snapshot_row_reads_as_held_and_an_empty_log_as_none() {
         .await
         .expect("a migrated database");
     let empty = snapshots_held(&pool).await;
-    sqlx::query(
-        "INSERT INTO event_log (slot, last_position, payload) VALUES ('snapshot:alpha', 1, X'00')",
-    )
+    let thirty_two_bytes = "00".repeat(32);
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO log_snapshot (slot, covered_position, snapshot_format_version, \
+         projection_version, log_identity, representation_epoch, erasure_epoch, batch_checksum, \
+         created_at, checksum, serialized_length, body) \
+         VALUES ('snapshot:1', 1, 1, 1, 'alpha', 0, 0, X'{thirty_two_bytes}', \
+         '1970-01-01T00:00:00Z', X'{thirty_two_bytes}', 1, X'00')"
+    )))
     .execute(&pool)
     .await
     .expect("a snapshot row lands");

@@ -236,19 +236,28 @@ async fn a_failed_read_of_the_log_is_a_store_error_and_leaves_the_log_certain() 
         log.append(Position(0), &first).await.unwrap(),
         Append::Committed(first.range())
     );
-    sqlx::query("RENAME TABLE event_log TO event_log_away")
+    // The snapshot is a table of its own, so it is moved away with the log.
+    for table in ["event_log", "log_snapshot"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "RENAME TABLE {table} TO {table}_away"
+        )))
         .execute(&pool)
         .await
         .unwrap();
+    }
     let answers = [
         ("validity", log.validity().await.err()),
         ("read_from", log.read_from(Position(0), 10).await.err()),
         ("load_snapshot", log.load_snapshot().await.err()),
     ];
-    sqlx::query("RENAME TABLE event_log_away TO event_log")
+    for table in ["event_log", "log_snapshot"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "RENAME TABLE {table}_away TO {table}"
+        )))
         .execute(&pool)
         .await
         .unwrap();
+    }
     for (read, error) in answers {
         assert!(
             matches!(error, Some(LogError::Store(_))),
@@ -270,7 +279,7 @@ async fn a_failed_read_of_the_log_is_a_store_error_and_leaves_the_log_certain() 
         };
         tokio::time::timeout(Duration::from_secs(5), dropped.notified())
             .await
-            .unwrap();
+            .unwrap_or_else(|_| panic!("{read}: no statement of the read was dropped: {lost:?}"));
         assert!(
             matches!(lost, Some(LogError::Store(_))),
             "{read} with a lost connection answers a store error: {lost:?}"

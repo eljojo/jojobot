@@ -12,7 +12,17 @@ use std::{sync::Arc, time::Duration};
 /// because the store takes only SQL that is a literal.
 macro_rules! newest_snapshot_first {
     () => {
-        "last_position DESC, slot DESC"
+        "covered_position DESC, slot DESC"
+    };
+}
+
+/// **The columns of a stored snapshot**, in the order [`decode_snapshot`] reads them by name.
+/// A macro, because the store takes only SQL that is a literal.
+macro_rules! snapshot_columns {
+    () => {
+        "slot, covered_position, snapshot_format_version, projection_version, log_identity, \
+         representation_epoch, erasure_epoch, batch_checksum, created_at, checksum, \
+         serialized_length, body"
     };
 }
 
@@ -381,20 +391,24 @@ impl DoltLog {
     /// fingerprint as its reason for not using it, and does not report none held.
     pub(crate) async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
         let mut reader = self.reader().await?;
-        let own: Option<Vec<u8>> =
-            sqlx::query_scalar("SELECT payload FROM event_log WHERE slot = ?")
-                .bind(snapshot_slot(crate::log_snapshot::PROJECTION_FINGERPRINT))
-                .fetch_optional(reader.connection())
-                .await
-                .map_err(failed)?;
-        let bytes = match own {
-            Some(bytes) => Some(bytes),
-            None => sqlx::query_scalar(concat!(
-                "SELECT payload FROM event_log WHERE slot LIKE ? ORDER BY ",
+        let own = sqlx::query(concat!(
+            "SELECT ",
+            snapshot_columns!(),
+            " FROM log_snapshot WHERE slot = ?"
+        ))
+        .bind(snapshot_slot(crate::log_snapshot::PROJECTION_FINGERPRINT))
+        .fetch_optional(reader.connection())
+        .await
+        .map_err(failed)?;
+        let row = match own {
+            Some(row) => Some(row),
+            None => sqlx::query(concat!(
+                "SELECT ",
+                snapshot_columns!(),
+                " FROM log_snapshot ORDER BY ",
                 newest_snapshot_first!(),
                 " LIMIT 1"
             ))
-            .bind(format!("{SNAPSHOT_SLOT_PREFIX}%"))
             .fetch_optional(reader.connection())
             .await
             .map_err(failed)?,
@@ -402,8 +416,8 @@ impl DoltLog {
         // **A stored snapshot this build cannot decode is a snapshot it will not
         // use**, not a log it cannot read: it is handed back as one in no format,
         // the boot names the format as its reason and replays the whole log.
-        Ok(bytes.map(|bytes| {
-            decode_snapshot(&bytes).unwrap_or_else(|error| {
+        Ok(row.map(|row| {
+            decode_snapshot(&row).unwrap_or_else(|error| {
                 tracing::warn!(%error, "a stored snapshot cannot be decoded; it is not used");
                 unreadable_snapshot()
             })
@@ -420,27 +434,37 @@ impl DoltLog {
         {
             return Err(LogError::Conflict);
         }
-        let bytes = encode_snapshot(snapshot)?;
-        sqlx::query("REPLACE INTO event_log (slot, first_position, last_position, payload) VALUES (?, NULL, ?, ?)")
-            .bind(snapshot_slot(snapshot.projection_version))
-            .bind(snapshot.covered_position.0)
-            .bind(bytes)
-            .execute(&mut *connection)
-            .await
-            .map_err(failed)?;
+        sqlx::query(concat!(
+            "REPLACE INTO log_snapshot (",
+            snapshot_columns!(),
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ))
+        .bind(snapshot_slot(snapshot.projection_version))
+        .bind(snapshot.covered_position.0)
+        .bind(snapshot.snapshot_format_version)
+        .bind(snapshot.projection_version)
+        .bind(&snapshot.log_identity)
+        .bind(snapshot.representation_epoch)
+        .bind(snapshot.erasure_epoch)
+        .bind(&snapshot.batch_checksum[..])
+        .bind(snapshot.created_at.to_string())
+        .bind(&snapshot.checksum[..])
+        .bind(snapshot.serialized_length)
+        .bind(&snapshot.blob)
+        .execute(&mut *connection)
+        .await
+        .map_err(failed)?;
         // **Bounded to the publisher's slot and the newest other**: a release that
         // changes the shape would otherwise leave one more snapshot of the whole
-        // State in the log for good.
+        // State in the store for good.
         sqlx::query(concat!(
-            "DELETE FROM event_log WHERE slot LIKE ? AND slot <> ? AND slot NOT IN \
-             (SELECT slot FROM (SELECT slot FROM event_log WHERE slot LIKE ? AND slot <> ? \
+            "DELETE FROM log_snapshot WHERE slot <> ? AND slot NOT IN \
+             (SELECT slot FROM (SELECT slot FROM log_snapshot WHERE slot <> ? \
               ORDER BY ",
             newest_snapshot_first!(),
             " LIMIT 1) AS newest)"
         ))
-        .bind(format!("{SNAPSHOT_SLOT_PREFIX}%"))
         .bind(snapshot_slot(snapshot.projection_version))
-        .bind(format!("{SNAPSHOT_SLOT_PREFIX}%"))
         .bind(snapshot_slot(snapshot.projection_version))
         .execute(connection)
         .await
@@ -459,22 +483,6 @@ fn snapshot_slot(fingerprint: u32) -> String {
     format!("{SNAPSHOT_SLOT_PREFIX}{fingerprint}")
 }
 
-fn encode_snapshot(s: &ValidatedSnapshot) -> Result<Vec<u8>, LogError> {
-    serde_json::to_vec(&(
-        s.snapshot_format_version,
-        s.projection_version,
-        &s.log_identity,
-        s.representation_epoch,
-        s.erasure_epoch,
-        s.covered_position,
-        s.batch_checksum,
-        s.created_at,
-        s.checksum,
-        s.serialized_length,
-        &s.blob,
-    ))
-    .map_err(failed)
-}
 /// **What a snapshot nobody can decode stands for.** Format 0 is no format any
 /// build reads, so the boot refuses it by name and nothing else of it is looked at.
 fn unreadable_snapshot() -> ValidatedSnapshot {
@@ -493,32 +501,32 @@ fn unreadable_snapshot() -> ValidatedSnapshot {
     }
 }
 
-fn decode_snapshot(bytes: &[u8]) -> Result<ValidatedSnapshot, LogError> {
-    let (
-        snapshot_format_version,
-        projection_version,
-        log_identity,
-        representation_epoch,
-        erasure_epoch,
-        covered_position,
-        batch_checksum,
-        created_at,
-        checksum,
-        serialized_length,
-        blob,
-    ) = serde_json::from_slice(bytes).map_err(failed)?;
+/// **A stored snapshot, read from its row by column name.** A checksum that is not 32 bytes or
+/// a moment that does not parse is an error here, and the caller hands the boot a snapshot in
+/// no format instead.
+fn decode_snapshot(row: &sqlx::mysql::MySqlRow) -> Result<ValidatedSnapshot, LogError> {
+    let thirty_two = |column: &str| -> Result<[u8; 32], LogError> {
+        let bytes: Vec<u8> = row.try_get(column).map_err(failed)?;
+        <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+            failed(format!(
+                "the column {column} is {} bytes, not 32",
+                bytes.len()
+            ))
+        })
+    };
+    let created_at: String = row.try_get("created_at").map_err(failed)?;
     Ok(ValidatedSnapshot {
-        snapshot_format_version,
-        projection_version,
-        log_identity,
-        representation_epoch,
-        erasure_epoch,
-        covered_position,
-        batch_checksum,
-        created_at,
-        checksum,
-        serialized_length,
-        blob,
+        snapshot_format_version: row.try_get("snapshot_format_version").map_err(failed)?,
+        projection_version: row.try_get("projection_version").map_err(failed)?,
+        log_identity: row.try_get("log_identity").map_err(failed)?,
+        representation_epoch: row.try_get("representation_epoch").map_err(failed)?,
+        erasure_epoch: row.try_get("erasure_epoch").map_err(failed)?,
+        covered_position: Position(row.try_get("covered_position").map_err(failed)?),
+        batch_checksum: thirty_two("batch_checksum")?,
+        created_at: created_at.parse().map_err(failed)?,
+        checksum: thirty_two("checksum")?,
+        serialized_length: row.try_get("serialized_length").map_err(failed)?,
+        blob: row.try_get("body").map_err(failed)?,
     })
 }
 

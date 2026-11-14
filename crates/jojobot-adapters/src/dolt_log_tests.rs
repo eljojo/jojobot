@@ -142,8 +142,11 @@ pub(crate) async fn dropped_read_proxy(
                     loop {
                         let bytes = packet(&mut from_client).await?;
                         let statement = matches!(bytes.get(4), Some(0x03 | 0x16));
+                        // The log is two tables: the events, and the snapshots kept beside them.
+                        let names_the_log = bytes.windows(9).any(|part| part == b"event_log")
+                            || bytes.windows(12).any(|part| part == b"log_snapshot");
                         if statement
-                            && bytes.windows(9).any(|part| part == b"event_log")
+                            && names_the_log
                             && armed.swap(false, std::sync::atomic::Ordering::SeqCst)
                         {
                             signal.notify_one();
@@ -571,16 +574,74 @@ async fn a_snapshot_is_kept_for_each_shape_and_a_build_loads_its_own() {
     );
     put(&pool, &newer).await;
     assert_eq!(log.load_snapshot().await.unwrap(), Some(mine));
-    let theirs_now: Vec<u8> = sqlx::query_scalar("SELECT payload FROM event_log WHERE slot = ?")
-        .bind(snapshot_slot(old))
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let (body, covered): (Vec<u8>, u64) =
+        sqlx::query_as("SELECT body, covered_position FROM log_snapshot WHERE slot = ?")
+            .bind(snapshot_slot(old))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(
-        decode_snapshot(&theirs_now).unwrap(),
-        newer,
+        (body, covered),
+        (newer.blob.clone(), newer.covered_position.0),
         "the old build's slot holds the snapshot it published last"
     );
+    server.stop().await;
+}
+
+/// **A snapshot is kept as bytes in a table of its own that no commit holds.** The blob is the
+/// column's bytes, not a JSON array of numbers; the header is columns; no row of the event log
+/// is a snapshot; the table is named in `dolt_ignore`; and after a mark that commits other rows
+/// no commit of the store holds the table. A snapshot is derived from the log, which is its
+/// history, so a copy of it in a commit would be a copy kept for nothing.
+#[tokio::test]
+async fn a_snapshot_is_kept_as_bytes_in_an_ignored_table_no_commit_holds() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let own = crate::log_snapshot::PROJECTION_FINGERPRINT;
+    let first = batch("alpha", 0, &[b"a"]);
+    appended(&log, &pool, Position(0), &first).await;
+    let validity = log.validity().await.unwrap();
+    let mine = snapshot_for(own, &validity, first.range().last, first.header().checksum);
+    put(&pool, &mine).await;
+
+    let (body, identity, projection): (Vec<u8>, String, u32) = sqlx::query_as(
+        "SELECT body, log_identity, projection_version FROM log_snapshot WHERE slot = ?",
+    )
+    .bind(snapshot_slot(own))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(body, mine.blob, "the blob is the column's bytes");
+    assert_eq!((identity, projection), (mine.log_identity.clone(), own));
+    let in_the_log: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM event_log WHERE slot LIKE 'snapshot:%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(in_the_log, 0, "a snapshot is a row of the event log");
+    let named: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM dolt_ignore WHERE pattern = 'log_snapshot'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(named, 1, "the table is not named in dolt_ignore");
+
+    crate::dolt::snapshot(&pool, "snapshot-table-1f7b").await;
+    let commits: Vec<String> = sqlx::query_scalar("SELECT commit_hash FROM dolt_log")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert!(commits.len() > 1, "the mark committed nothing");
+    for commit in &commits {
+        let read = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM log_snapshot AS OF '{commit}'"
+        )))
+        .fetch_one(&pool)
+        .await;
+        assert!(
+            read.is_err(),
+            "the commit {commit} holds the snapshot table"
+        );
+    }
     server.stop().await;
 }
 
@@ -628,11 +689,10 @@ async fn publishing_keeps_the_publishers_slot_and_the_newest_other_only() {
     )
     .await;
 
-    let slots: Vec<String> =
-        sqlx::query_scalar("SELECT slot FROM event_log WHERE slot LIKE 'snapshot:%' ORDER BY slot")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
+    let slots: Vec<String> = sqlx::query_scalar("SELECT slot FROM log_snapshot ORDER BY slot")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
     let mut expected = vec![
         format!("snapshot:{own}"),
         format!("snapshot:{}", own.wrapping_add(3)),
@@ -675,13 +735,12 @@ async fn the_snapshot_a_build_is_handed_is_the_one_a_publication_keeps() {
         &snapshot_for(own, &validity, first.range().last, first.header().checksum),
     )
     .await;
-    let kept: Vec<String> = sqlx::query_scalar(
-        "SELECT slot FROM event_log WHERE slot LIKE 'snapshot:%' AND slot <> ? ORDER BY slot",
-    )
-    .bind(format!("snapshot:{own}"))
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let kept: Vec<String> =
+        sqlx::query_scalar("SELECT slot FROM log_snapshot WHERE slot <> ? ORDER BY slot")
+            .bind(format!("snapshot:{own}"))
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     assert_eq!(
         kept,
         vec![format!("snapshot:{handed}")],

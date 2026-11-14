@@ -165,6 +165,8 @@ const ALL_VERSIONS: &[&str] = &[
     "0122_session_agent_history_index",
     "0123_session_agent_index",
     "0124_field_write_live_clear",
+    "0125_log_snapshot",
+    "0126_event_log_snapshots_leave",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An
@@ -1658,6 +1660,17 @@ async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
                 .execute(pool)
                 .await
                 .expect("the index goes");
+        }
+        // **A snapshot in the old place**, which the migration exists to remove: the
+        // round states "the marker is there and the change did not land".
+        "0126_event_log_snapshots_leave" => {
+            sqlx::query(
+                "INSERT INTO event_log (slot, first_position, last_position, payload) \
+                     VALUES ('snapshot:1', NULL, 1, X'00')",
+            )
+            .execute(pool)
+            .await
+            .expect("a snapshot in the event log lands");
         }
         "0024_rhythm_kind_takes_its_name" => {
             sqlx::query(

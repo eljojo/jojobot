@@ -1074,7 +1074,7 @@ async fn without_the_snapshot(state: &Scratch) {
     let mut store = Dolt::start(&state.0.join("db"), free_port())
         .await
         .expect("the store comes up to lose its snapshot");
-    sqlx::query("DELETE FROM event_log WHERE slot LIKE 'snapshot%'")
+    sqlx::query("DELETE FROM log_snapshot")
         .execute(store.pool())
         .await
         .expect("the snapshot rows are removed");
