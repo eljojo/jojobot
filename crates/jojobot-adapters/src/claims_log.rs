@@ -34,8 +34,10 @@ pub(crate) fn apply(state: &mut State, event: &Event<ClaimEvent>) {
 }
 
 /// **The claims State an independent replay of the durable batches builds**: each claims member
-/// decoded and applied to an empty State, in log order. It shares nothing with the seam, so a
-/// State the seam holds wrongly cannot also be what a test compares it with.
+/// decoded and applied to an empty State, in log order. It shares the codec and the domain
+/// State's apply with the seam, and nothing else: not the seam's staging, its adapter apply, its
+/// commit bookkeeping or its recovery, so a State the seam holds wrongly through any of those
+/// cannot also be what a test compares it with.
 #[cfg(test)]
 pub(crate) async fn replayed_from(log: &dyn jojobot_domain::log::LogStore) -> State {
     use jojobot_domain::log::Position;

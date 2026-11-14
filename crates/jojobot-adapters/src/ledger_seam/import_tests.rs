@@ -180,7 +180,8 @@ async fn canonical_handle_seam_refuses_duplicates_before_staging_import_or_live_
 }
 
 /// **A retirement of a spelling the object does not hold is refused before staging**, at the
-/// live entrance: the spelling is another object's, or nobody's. The log is unchanged.
+/// live entrance: the spelling is another object's, or nobody's. The transaction commits even on
+/// the refusal, so a refusal that had staged anything first would leave it in the durable log.
 #[tokio::test]
 async fn canonical_handle_seam_refuses_retirement_of_an_unheld_spelling() {
     let scratch = Scratch::new("seam-unheld-retirement");
@@ -210,7 +211,18 @@ async fn canonical_handle_seam_refuses_retirement_of_an_unheld_spelling() {
             },
             ..thing("k1", "person:homer").remove(0)
         }];
-        let result = staged(&writer, &pool, &seam, vec![], retire, false).await;
+        let (staging, pool, retire) = (seam.clone(), pool.clone(), retire);
+        let result = writer
+            .run(async move {
+                let mut tx = pool.writer().begin().await.unwrap();
+                let result = staging
+                    .stage_with(&mut tx, vec![spent()], retire, at(1))
+                    .await;
+                // Commit even on refusal: admission itself must have staged nothing.
+                sql::commit(tx).await.unwrap();
+                result.map(|pending| pending.committed())
+            })
+            .await;
         assert!(
             matches!(result, Err(LedgerError::Refused(_))),
             "an unheld retirement of {address} for {object} must be refused: {result:?}"
@@ -297,15 +309,92 @@ async fn a_restarted_seam_holds_the_state_the_first_one_held() {
     drop(seam);
     drop(first);
 
+    // **An oracle the seam does not hold**: the replay of the durable batches, which applies
+    // every claims member through the domain State alone. It reads before the restarted writer
+    // opens, because the log admits one writer at a time. A seam that skipped a record or a
+    // field write on commit and on replay alike would hold equal, empty States and pass the
+    // comparison with the first seam below.
+    let oracle = Writer::default();
+    let reading = crate::writer_log::WriterLog::open(store.clone(), oracle.clone())
+        .await
+        .unwrap();
+    let independent = crate::claims_log::replayed_from(&reading).await;
+    drop(reading);
+    oracle.drain().await;
+    drop(oracle);
+
     let second = Writer::default();
     let restarted = opened(&second, &pool).await;
+    let restarted_state = restarted.read_claims(Clone::clone);
     assert_eq!(
-        restarted.read_claims(Clone::clone),
-        held,
+        restarted_state, held,
         "a restart replays to the State the first seam held"
+    );
+    assert_eq!(
+        restarted_state, independent,
+        "the restarted State is the one an independent replay of the log builds"
+    );
+    let mood_writes = restarted_state.key_trails(
+        restarted_state
+            .resolve("person:homer")
+            .expect("the thing a live write bound resolves"),
+    );
+    assert_eq!(
+        mood_writes.history.get("mood").map(Vec::len),
+        Some(1),
+        "the field write reaches the replayed State"
     );
     second.drain().await;
     server.stop().await;
+}
+
+/// **The admission rule's positive controls.** A check that refused too much would still pass
+/// the refusals above, so what it must admit is stated beside them: the same handle bound again,
+/// a numbered alias, and a rename (a retirement then a new binding). The State it runs on is
+/// applied between checks as the seam applies it.
+#[test]
+fn canonical_handle_check_admits_the_same_handle_an_alias_and_a_rename() {
+    use jojobot_domain::log::claims::State;
+    let mut state = State::default();
+    let created = thing("k1", "person:homer");
+    let bound = |address: &str| Event {
+        payload: ClaimEvent::AddressBound {
+            object: ObjectId("k1".into()),
+            address: address.into(),
+        },
+        ..created[0].clone()
+    };
+    let admitted = [
+        created[0].clone(),
+        created[1].clone(),
+        created[1].clone(),
+        bound("person:homer/1"),
+    ];
+    state
+        .check(&admitted)
+        .expect("the same handle again and a numbered alias are admitted");
+    for event in &admitted {
+        let _ = state.apply(event);
+    }
+    let duplicate = bound("person:marge");
+    assert!(
+        state.check(std::slice::from_ref(&duplicate)).is_err(),
+        "a second live handle is still refused"
+    );
+    let rename = [
+        Event {
+            payload: ClaimEvent::AddressRetired {
+                object: ObjectId("k1".into()),
+                address: "person:homer".into(),
+                day: jiff::civil::date(2026, 11, 5),
+            },
+            ..created[0].clone()
+        },
+        duplicate,
+    ];
+    state
+        .check(&rename)
+        .expect("a retirement then a binding is a rename");
 }
 
 /// **Before a completed import the seam stages no claims event**, whatever else
