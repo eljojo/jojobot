@@ -2264,6 +2264,76 @@ pub(crate) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn the_collection_gc_child_uses_the_guarded_physical_pwd() {
+        const CASE: &str = "dolt::tests::the_collection_gc_child_uses_the_guarded_physical_pwd";
+        // Reusing the test binary as `dolt` observes the actual GC spawn's environment.
+        // Its `gc` argument selects this case; the executable name selects the observer.
+        if std::env::args()
+            .next()
+            .is_some_and(|arg| Path::new(&arg).ends_with("dolt"))
+        {
+            std::fs::write(
+                std::env::var_os("COLLECTION_PWD_OUTPUT").unwrap(),
+                std::env::var("PWD").expect("the child PWD"),
+            )
+            .expect("record the child environment");
+            return;
+        }
+        if let Some(database) = std::env::var_os("COLLECTION_PWD_DATABASE") {
+            let database = PathBuf::from(database);
+            let physical = database.canonicalize().unwrap();
+            assert_ne!(std::env::var_os("PWD").unwrap(), physical.as_os_str());
+            assert_eq!(
+                PathBuf::from(std::env::var_os("PWD").unwrap())
+                    .canonicalize()
+                    .unwrap(),
+                physical,
+                "the inherited logical PWD really names this working directory"
+            );
+            assert_eq!(std::env::current_dir().unwrap(), physical);
+            let home = database.parent().unwrap().join("home");
+            assert!(Dolt::collect_garbage(&database, &home).await);
+            let observed =
+                std::fs::read_to_string(std::env::var_os("COLLECTION_PWD_OUTPUT").unwrap())
+                    .expect("the GC child wrote its environment");
+            assert_eq!(
+                Path::new(&observed),
+                physical,
+                "the child must walk the guard's ancestry"
+            );
+            return;
+        }
+        let scratch = Scratch::new("collection-pwd");
+        let physical = scratch.0.join("beta").join(DATABASE);
+        let logical = scratch.0.join("alpha").join(DATABASE);
+        std::fs::create_dir_all(&physical).unwrap();
+        std::fs::create_dir_all(logical.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&physical, &logical).unwrap();
+        let bin = scratch.0.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        std::os::unix::fs::symlink(std::env::current_exe().unwrap(), bin.join("dolt")).unwrap();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", CASE, "--nocapture"])
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("PWD", &logical)
+            .env("COLLECTION_PWD_DATABASE", &logical)
+            .env("COLLECTION_PWD_OUTPUT", scratch.0.join("observed-pwd"))
+            .current_dir(&logical)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+    }
+
     /// **The collection never runs against a store a server is serving.** The command line's
     /// collection is offline only when nothing holds the store: the pinned command finds a live
     /// server through the files it leaves beside the database and runs the collection ON it,
