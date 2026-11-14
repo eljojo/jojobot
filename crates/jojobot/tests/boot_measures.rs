@@ -194,6 +194,13 @@ fn spawn_binary(state: Scratch, binary: &str, http_port: u16, metrics_port: u16)
         while matches!(log.read_until(b'\n', &mut line), Ok(n) if n > 0) {
             let text = String::from_utf8_lossy(&line).trim_end().to_string();
             line.clear();
+            // **A line the server timed is kept as it arrives**, so a boot the bar
+            // kills at its deadline still leaves the phases it finished: the
+            // measures are written after a boot, and a boot that never ends
+            // writes none.
+            if text.contains("elapsed_ms") {
+                record(&format!("server {pid}: {text}"));
+            }
             if said.send(text).is_err() {
                 return;
             }
