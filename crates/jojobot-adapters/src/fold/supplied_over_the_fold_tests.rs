@@ -679,37 +679,56 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
             .and_then(|entity| entity.badge.clone())
             .unwrap_or_else(|| panic!("{id:?} wears a badge"))
     };
-    let mut texts: Vec<String> = Vec::new();
-    for handle in [
-        new_name.0.clone(),
-        renamed.0.clone(),
-        merged_a.0.clone(),
-        merged_b.0.clone(),
-        merged_c.0.clone(),
-        archived.0.clone(),
-        plain.0.clone(),
-        format!("{}/2", collection.0),
-        format!("{}/9", collection.0),
+    // Each text, and whether the names read answers every name it holds. A name that
+    // is no thing is a miss, and a write of it takes the whole roster for the offers a
+    // refusal carries; every other text is answered by the scoped read alone.
+    let mut texts: Vec<(String, bool)> = Vec::new();
+    for (handle, answered) in [
+        (new_name.0.clone(), true),
+        (renamed.0.clone(), true),
+        (merged_a.0.clone(), true),
+        (merged_b.0.clone(), true),
+        (merged_c.0.clone(), true),
+        (archived.0.clone(), true),
+        (plain.0.clone(), true),
+        (format!("{}/2", collection.0), true),
+        (format!("{}/9", collection.0), false),
         // A slash and digits that are no number: the mention ends at the slash, and
         // the collection it ends at is what the text names.
-        format!("{}/01", collection.0),
-        format!("{}/0", collection.0),
-        format!("{}/99999999999999999999999", collection.0),
-        format!("{}/01", plain.0),
-        "view:loops".to_string(),
-        format!("{}:{}", "person", spelled_slug(99)),
+        (format!("{}/01", collection.0), false),
+        (format!("{}/0", collection.0), false),
+        (format!("{}/99999999999999999999999", collection.0), false),
+        (format!("{}/01", plain.0), false),
+        ("view:loops".to_string(), true),
+        (format!("{}:{}", "person", spelled_slug(99)), false),
     ] {
-        texts.push(format!("saw @{handle} again"));
+        texts.push((format!("saw @{handle} again"), answered));
     }
     for id in [
         &new_name, &merged_a, &merged_b, &merged_c, &archived, &plain,
     ] {
-        texts.push(format!("kept @#{} here", badge_of(id)));
+        texts.push((format!("kept @#{} here", badge_of(id)), true));
     }
-    texts.push("a mark nothing wears @#zzzzzz here".to_string());
-    texts.push(format!("both @{} and @#{}", plain.0, badge_of(&merged_a)));
+    texts.push(("a mark nothing wears @#zzzzzz here".to_string(), true));
+    texts.push((
+        format!("both @{} and @#{}", plain.0, badge_of(&merged_a)),
+        true,
+    ));
 
-    for text in &texts {
+    for (text, answered) in &texts {
+        let names = provisioned
+            .names(&jojobot_domain::memory::mention::wanted_by(
+                &[text.as_str()],
+            ))
+            .await
+            .expect("names")
+            .expect("the stack answers a names read");
+        assert_eq!(
+            names.missed.is_empty(),
+            *answered,
+            "the names read answers every name of {text:?}: {:?}",
+            names.missed
+        );
         let scoped = known_among(&*provisioned, &[text.as_str()])
             .await
             .expect("names");
