@@ -386,7 +386,18 @@ async fn who_holds_a_key_through_the_supply_layer_is_who_the_full_read_finds() {
         Provision::field(with_own.clone(), "rank", "5"),
     ]);
     let (stack, _) = the_stack_counted_above_the_fold(supplied).await;
-    for id in [&without_default, &with_own, &with_default, &bare] {
+    // A role and a pair a merge joins: things the fold declines and reads from the store.
+    let role = EntityId("role:kappa".into());
+    let (survivor, folded_away) = (spelled_thing(5), spelled_thing(6));
+    for id in [
+        &without_default,
+        &with_own,
+        &with_default,
+        &bare,
+        &role,
+        &survivor,
+        &folded_away,
+    ] {
         stack
             .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
             .await
@@ -394,7 +405,23 @@ async fn who_holds_a_key_through_the_supply_layer_is_who_the_full_read_finds() {
             .written()
             .expect("not blocked");
     }
-    for (id, value) in [(&without_default, "5"), (&with_own, "9")] {
+    stack
+        .merge(
+            &folded_away,
+            &survivor,
+            Some("filed twice"),
+            jiff::civil::date(2026, 9, 3),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("merged");
+    for (id, value) in [
+        (&without_default, "5"),
+        (&with_own, "9"),
+        (&role, "5"),
+        (&survivor, "9"),
+    ] {
         let mut fact = jojobot_domain::memory::testing::contract::state(NewFact::about(
             id.clone(),
             "holds a rank",
@@ -419,14 +446,16 @@ async fn who_holds_a_key_through_the_supply_layer_is_who_the_full_read_finds() {
         ("selects", Test::Equals("work".into())),
         ("name", Test::Exists),
     ] {
-        let forwarded = stack
-            .keys_holding(key, &test, None)
-            .await
-            .expect("who holds");
-        let read = holding_by_reading(&stack, key, &test, None)
-            .await
-            .expect("the full read");
-        assert_eq!(forwarded, read, "{key} {test:?}");
+        for kind in [None, Some(EntityKind::ROLE)] {
+            let forwarded = stack
+                .keys_holding(key, &test, kind)
+                .await
+                .expect("who holds");
+            let read = holding_by_reading(&stack, key, &test, kind)
+                .await
+                .expect("the full read");
+            assert_eq!(forwarded, read, "{key} {test:?} {kind:?}");
+        }
     }
     let rank = stack
         .keys_holding("rank", &Test::Exists, None)
