@@ -2,6 +2,65 @@
 use super::*;
 use jojobot_adapters::dolt::migrate::Interruption;
 
+type LogRow = (String, Option<u64>, u64, Vec<u8>);
+
+pub(super) struct RetainedLog {
+    validity: LogRow,
+    batch: LogRow,
+    identity: String,
+}
+
+impl RetainedLog {
+    async fn read(pool: &sqlx::MySqlPool) -> Self {
+        let validity: LogRow = sqlx::query_as(
+            "SELECT slot, first_position, last_position, payload FROM event_log WHERE slot = 'validity'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("the original validity row reads before interruption");
+        let decoded: jojobot_domain::log::Validity =
+            serde_json::from_slice(&validity.3).expect("the original validity bytes decode");
+        let batch: LogRow = sqlx::query_as(
+            "SELECT slot, first_position, last_position, payload FROM event_log
+             WHERE first_position IS NOT NULL ORDER BY first_position LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("a real batch from the restore's teaching writer exists before interruption");
+        assert!(!decoded.log_identity.is_empty());
+        assert!(!batch.3.is_empty());
+        Self {
+            validity,
+            batch,
+            identity: decoded.log_identity,
+        }
+    }
+
+    pub(super) async fn assert_retained(&self, pool: &sqlx::MySqlPool) {
+        for (label, original) in [("validity", &self.validity), ("batch", &self.batch)] {
+            let found: Option<LogRow> = sqlx::query_as(
+                "SELECT slot, first_position, last_position, payload FROM event_log WHERE slot = ?",
+            )
+            .bind(&original.0)
+            .fetch_optional(pool)
+            .await
+            .expect("the retained row reads");
+            assert!(
+                found.as_ref() == Some(original),
+                "original {label} row and bytes changed"
+            );
+            if label == "validity" {
+                let decoded: jojobot_domain::log::Validity =
+                    serde_json::from_slice(&found.unwrap().3).unwrap();
+                assert_eq!(
+                    decoded.log_identity, self.identity,
+                    "the original log identity changed"
+                );
+            }
+        }
+    }
+}
+
 macro_rules! deaths_beyond_the_last_release {
     ($($case:ident => $version:literal),* $(,)?) => {
         const DEATH_VERSIONS: &[&str] = &[$($version),*];
@@ -37,6 +96,11 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     let label = format!("interrupted-{version}-{how:?}");
     let restored = restore_a_fixture(&fixture, &label).await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    let retained = if version == "0126_event_log_snapshots_leave" {
+        Some(RetainedLog::read(store.pool()).await)
+    } else {
+        None
+    };
     if version == "0126_event_log_snapshots_leave" {
         // **The migration's own target, in the shape the build before wrote it**: the restore
         // removes every log row but the identity, so without this the migration has nothing
@@ -60,6 +124,25 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     leave_interrupted(store.pool(), version, how)
         .await
         .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
+    if let Some(retained) = &retained {
+        // Red-first witnesses: each death state damages a different retained row.
+        match how {
+            Interruption::BeforeTheChange => {
+                sqlx::query("DELETE FROM event_log WHERE slot = 'validity'")
+                    .execute(store.pool())
+                    .await
+                    .unwrap();
+            }
+            Interruption::AfterTheChange => {
+                sqlx::query("DELETE FROM event_log WHERE slot = ?")
+                    .bind(&retained.batch.0)
+                    .execute(store.pool())
+                    .await
+                    .unwrap();
+            }
+        }
+        retained.assert_retained(store.pool()).await;
+    }
     let begun: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration_begun")
         .fetch_all(store.pool())
         .await
@@ -77,7 +160,7 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
         "{version} {how:?}: already recorded"
     );
     store.stop().await;
-    boots_on_a_restored_store(&fixture, restored).await;
+    boots_on_a_restored_store_with_retained_log(&fixture, restored, retained.as_ref()).await;
 }
 
 // Add a named pair here with each migration introduced beyond the cached

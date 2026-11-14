@@ -827,6 +827,14 @@ async fn boots_on_a_store_recorded_earlier(fixture_dir: &str, label: &str, earli
 /// store differently (an interrupted migration) is held to the same bar as a
 /// clean boot and not to a copy of it.
 async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
+    boots_on_a_restored_store_with_retained_log(fixture_dir, restored, None).await;
+}
+
+async fn boots_on_a_restored_store_with_retained_log(
+    fixture_dir: &str,
+    restored: Restored,
+    retained: Option<&deaths::RetainedLog>,
+) {
     let Restored {
         scratch,
         state_dir,
@@ -847,6 +855,11 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     let old_ledger = read_the_old_ledger(&state_dir, store_port, &git_ref).await;
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
+    if let Some(retained) = retained {
+        let mut store = open_the_store(&state_dir, store_port).await;
+        retained.assert_retained(store.pool()).await;
+        store.stop().await;
+    }
     assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
     assert_the_legacy_snapshots_are_gone(&state_dir, &git_ref).await;
     assert_the_teaching_marks_cover_the_rows(&state_dir, store_port, &git_ref).await;
