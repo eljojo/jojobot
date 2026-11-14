@@ -407,6 +407,12 @@ pub struct Booted {
 /// refusing to start because a projection could not be built is worse than a thin
 /// `search`. It says so loudly instead.
 pub async fn fill_memory(folded: &Folded, indexed: &IndexedMemory) {
+    fill_fold(folded).await;
+    fill_search(indexed).await;
+}
+
+/// **The fold's fill**: one full read of the store's lists and merge events.
+async fn fill_fold(folded: &Folded) {
     let filling = std::time::Instant::now();
     match folded.rebuild().await {
         Ok(things) => tracing::info!(
@@ -421,6 +427,13 @@ pub async fn fill_memory(folded: &Folded, indexed: &IndexedMemory) {
              correct and only slower until then."
         ),
     }
+}
+
+/// **The search index's fill**: a full scan of the memory the fold serves. It reads
+/// the claims State, so it runs once the ledgers are open and, on a store whose import
+/// is owed, once the import has run: before that the State holds no claims and every
+/// document is read from the store one thing at a time.
+async fn fill_search(indexed: &IndexedMemory) {
     match timed("search-memory", indexed.rebuild_scanned()).await {
         Ok(scan) => {
             tracing::info!(docs = scan.len(), "search: index built from a full scan");
@@ -838,7 +851,12 @@ pub async fn boot_store_observed(
             anyhow::anyhow!("{line}")
         })?;
     }
-    fill_memory(&folded, &indexed).await;
+    // **A store whose import is owed fills the index after the import**, below.
+    if import_done {
+        fill_memory(&folded, &indexed).await;
+    } else {
+        fill_fold(&folded).await;
+    }
     // **A boot write is bare only before the import.** Once the import is done the
     // State exists, so the repair passes below write through a journaled store and
     // every row they write has an event. Before the import they write bare rows and
@@ -1210,6 +1228,12 @@ pub async fn boot_store_observed(
             tracing::error!("{line}");
             anyhow::bail!("{line}");
         }
+    }
+
+    // **The search index fills from the State now that the import has run.** The
+    // import opened the ledgers and the State holds every claim.
+    if !import_done {
+        fill_search(&indexed).await;
     }
 
     // **The served store takes part in the event log from here** when the import

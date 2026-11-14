@@ -88,6 +88,18 @@ async fn a_boot_logs_the_time_of_every_step_that_touches_the_store() {
         );
     }
 
+    // **A boot whose import is still owed fills the search index after the import.**
+    // The State holds no claims until the import has run, and a scan before it reads
+    // the store one thing at a time: minutes over a store of thousands of things.
+    let at = |step: &str| {
+        text.find(&format!("step=\"{step}\""))
+            .unwrap_or_else(|| panic!("no line names the step {step}"))
+    };
+    assert!(
+        at("claims-reconcile") < at("search-memory"),
+        "the search scan ran before the import finished:\n{text}"
+    );
+
     let mut store = booted.store;
     store.stop().await;
     drop(scratch);
