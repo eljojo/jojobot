@@ -714,3 +714,65 @@ async fn a_scan_whose_whole_read_fails_reads_the_declined_things_on_their_own() 
         .expect("the declined things are read one by one");
     assert_eq!(scanned.len(), 7, "every thing is listed");
 }
+
+/// **The history of a claim that holds no mention reads no roster.** The roster is
+/// every thing the store holds, listed for each call, and the search index asks the
+/// history of every thing it scans: a boot over thousands of things listed them all
+/// thousands of times. Text with no at sign has nothing to render, so the history of
+/// such a claim comes back as the store gave it; a claim with a mention still reads
+/// the roster, which is the pair.
+#[tokio::test]
+async fn the_history_of_a_claim_with_no_mention_reads_no_roster() {
+    use jojobot_domain::memory::mention::Mentioning;
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+
+    let counted = Arc::new(Counted::new(Arc::new(InMemoryMemory::booted())));
+    let layer = Mentioning::new(counted.clone());
+    let handle = |n: usize| EntityId(format!("{}:{}", "person", spelled(n)));
+    let (plain, mentioning, other) = (handle(1), handle(2), handle(3));
+    for id in [&plain, &mentioning, &other] {
+        layer
+            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let claim = |about: &EntityId, words: String| {
+        let mut fact = state(NewFact::about(
+            about.clone(),
+            words,
+            jiff::civil::date(2026, 9, 2),
+        ));
+        fact.session = Some("fold-image".into());
+        fact
+    };
+    for (about, words) in [
+        (&plain, "plays the saxophone".to_string()),
+        (&mentioning, format!("saw @{}", other.0)),
+    ] {
+        layer
+            .capture(claim(about, words))
+            .await
+            .expect("captured")
+            .written()
+            .expect("not blocked");
+    }
+
+    counted.reset();
+    layer.claim_histories(&plain).await.expect("histories");
+    let seen = counted.seen();
+    assert_eq!(
+        seen.get("list_entities"),
+        None,
+        "a claim with no mention read the roster: {seen:?}"
+    );
+    counted.reset();
+    layer.claim_histories(&mentioning).await.expect("histories");
+    let seen = counted.seen();
+    assert!(
+        seen.contains_key("list_entities"),
+        "a claim with a mention reads the roster: {seen:?}"
+    );
+}

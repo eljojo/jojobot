@@ -1658,7 +1658,13 @@ impl super::Memory for Mentioning {
     ) -> Result<std::collections::HashMap<super::FactId, Vec<super::ClaimWrite>>, super::MemoryError>
     {
         let mut chains = self.inner.claim_histories(entity).await?.open();
-        if chains.values().all(Vec::is_empty) {
+        // **The roster is read only when some write holds a mention.** It is every
+        // thing the store holds, and the search index asks the history of every thing
+        // it scans: text with no at sign has nothing to render.
+        let holds_a_mention = |text: &str| text.contains('@');
+        if !chains.values().flatten().any(|write| {
+            holds_a_mention(&write.content) || write.details.as_deref().is_some_and(holds_a_mention)
+        }) {
             return Ok(chains);
         }
         let known = self.known().await?;
