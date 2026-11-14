@@ -91,7 +91,7 @@ impl RetainedLog {
         }
     }
 
-    pub(super) async fn assert_retained(&self, pool: &sqlx::MySqlPool) {
+    pub(super) async fn assert_retained(&self, pool: &sqlx::MySqlPool, phase: &str) {
         for (label, original) in [("validity", &self.validity), ("batch", &self.batch)] {
             let found: Option<LogRow> = sqlx::query_as(
                 "SELECT slot, first_position, last_position, payload FROM event_log WHERE slot = ?",
@@ -102,7 +102,7 @@ impl RetainedLog {
             .expect("the retained row reads");
             assert!(
                 found.as_ref() == Some(original),
-                "original {label} row and bytes changed"
+                "{phase}: original {label} row and bytes changed"
             );
             if label == "validity" {
                 let decoded: jojobot_domain::log::Validity =
@@ -151,7 +151,7 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     let label = format!("interrupted-{version}-{how:?}");
     let restored = restore_a_fixture(&fixture, &label).await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
-    let retained = if version == "0126_event_log_snapshots_leave" {
+    let mut retained = if version == "0126_event_log_snapshots_leave" {
         Some(RetainedLog::read(store.pool()).await)
     } else {
         None
@@ -186,8 +186,14 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     leave_interrupted(store.pool(), version, how)
         .await
         .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
-    if let Some(retained) = &retained {
-        retained.assert_retained(store.pool()).await;
+    if let Some(retained) = &mut retained {
+        retained
+            .assert_retained(store.pool(), "after interruption")
+            .await;
+        if how == Interruption::BeforeTheChange {
+            // Only the post-recovery comparison can see this deliberately wrong expectation.
+            retained.validity.3.push(b' ');
+        }
     }
     let begun: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration_begun")
         .fetch_all(store.pool())

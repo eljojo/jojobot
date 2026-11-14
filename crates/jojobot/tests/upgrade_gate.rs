@@ -857,7 +857,9 @@ async fn boots_on_a_restored_store_with_retained_log(
     first.stop().await;
     if let Some(retained) = retained {
         let mut store = open_the_store(&state_dir, store_port).await;
-        retained.assert_retained(store.pool()).await;
+        retained
+            .assert_retained(store.pool(), "after recovery")
+            .await;
         store.stop().await;
     }
     assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
