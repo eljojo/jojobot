@@ -62,7 +62,10 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
 
 // Add a named pair here with each migration introduced beyond the cached
 // store's ledger. The deploy-9.3.3 store holds every migration shipped so far.
-deaths_beyond_the_last_release!();
+deaths_beyond_the_last_release!(
+    log_snapshot => "0125_log_snapshot",
+    event_log_snapshots_leave => "0126_event_log_snapshots_leave",
+);
 
 #[tokio::test]
 async fn every_migration_added_since_the_last_release_has_a_death_case() {

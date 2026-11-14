@@ -446,13 +446,7 @@ async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
         .execute(pool)
         .await
         .expect("the recording's snapshot is removed before its log is aged");
-    // A store a build with the snapshot table has booted keeps it there; a recording of an
-    // earlier build has no such table, and that is not a failure.
-    match sqlx::query("DELETE FROM log_snapshot").execute(pool).await {
-        Ok(_) => {}
-        Err(sqlx::Error::Database(refusal)) if refusal.message().contains("table not found") => {}
-        Err(other) => panic!("the snapshot table's rows could not be removed: {other}"),
-    }
+    remove_the_snapshot_table_rows(pool).await;
     let batches = log
         .read_from(Position(0), 100_000)
         .await
@@ -4277,6 +4271,20 @@ pub(crate) async fn leave_the_claims_import_to_the_head_boot(pool: &sqlx::MySqlP
         .execute(pool)
         .await
         .expect("the recording's events and snapshots are removed");
+    // **The snapshot sits in a table of its own**, and one left behind names a batch the log no
+    // longer holds, which the next boot refuses and warns about.
+    remove_the_snapshot_table_rows(pool).await;
+}
+
+/// **Remove the rows of the snapshot table.** A store a build with the snapshot table has
+/// booted keeps it there; a recording of an earlier build has no such table, and that is not a
+/// failure.
+async fn remove_the_snapshot_table_rows(pool: &sqlx::MySqlPool) {
+    match sqlx::query("DELETE FROM log_snapshot").execute(pool).await {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(refusal)) if refusal.message().contains("table not found") => {}
+        Err(other) => panic!("the snapshot table's rows could not be removed: {other}"),
+    }
 }
 
 /// **Rows for a thread with five active records**, written below the surface into
