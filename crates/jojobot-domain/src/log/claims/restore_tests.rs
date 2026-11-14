@@ -3,8 +3,27 @@
 //! restore leaves out, a later event reads wrong. The cases compare the whole State, the fields
 //! no equality compares included, and then go on from both with the same events.
 
-use super::tests::{body, claim, clear, created, envelope, key, object, record, replay, write};
+use super::tests::{body, claim, clear, created, envelope, key, object, record, write};
 use super::*;
+
+/// **An event as the log carries it**: the operator's envelope with a run and a moment of its
+/// own, later for each event. A fold's ages and a thing's newest change are worked out from the
+/// moments, so events with none would leave them empty and a restore that lost them unseen.
+fn stamped(index: usize, payload: ClaimEvent) -> Event<ClaimEvent> {
+    let mut event = envelope(payload);
+    event.run = Some(RunId("run-a".into()));
+    event.written_at =
+        Some(Timestamp::from_second(1_700_000_000 + 60 * index as i64).expect("a moment in range"));
+    event
+}
+
+fn replay_stamped(events: &[ClaimEvent]) -> State {
+    let mut state = State::default();
+    for (index, event) in events.iter().enumerate() {
+        state.apply(&stamped(index, event.clone()));
+    }
+    state
+}
 
 fn bound(name: &str, address: &str) -> ClaimEvent {
     ClaimEvent::AddressBound {
@@ -85,17 +104,74 @@ fn events() -> Vec<ClaimEvent> {
             folded: object("gamma"),
             survivor: object("alpha"),
         },
+        // A child of alpha, with a claim of its own that carries a number under alpha, which
+        // numbers its members by that key: a seat held, and one issued.
+        ClaimEvent::ObjectCreated {
+            object: object("epsilon"),
+            body: ObjectBody {
+                parent: Some(object("alpha")),
+                ..body("thing", "Epsilon")
+            },
+        },
+        bound("epsilon", "thing:epsilon"),
+        created("r4", claim("f4", "epsilon", "epsilon says", 4)),
+        write("r1", "alpha", memory::numbered::NUMBERS_BY, 6, "number"),
+        write("r4", "epsilon", "number", 1, "7"),
+        // A link: a write that names another object, so the reference indexes hold it.
+        ClaimEvent::FieldWritten {
+            record: record("r4"),
+            subject: object("epsilon"),
+            key: key("friend"),
+            ordinal: 1,
+            class: WriteClass::Sets,
+            write: FieldValue::Set("thing:beta".into()),
+            targets: vec![object("beta")],
+        },
+        // A claim worked out from another, and the record that carries the release notes.
+        created(
+            "r5",
+            ClaimBody {
+                derived_from: Some(record("r1")),
+                ..claim("f5", "alpha", "worked out", 5)
+            },
+        ),
+        write(
+            "r5",
+            "alpha",
+            memory::capacity::ENGINE_RECORD,
+            7,
+            memory::capacity::RELEASE_NOTES_RECORD,
+        ),
+        // The write of an object's own row that an import observed.
+        ClaimEvent::ObjectWriteObserved {
+            object: object("alpha"),
+            filed_under: "alpha".into(),
+            ordinal: 1,
+            snapshot: Some(ObjectSnapshot {
+                kind: "thing".into(),
+                name: "Alpha".into(),
+                source: "user-named".into(),
+                crm: None,
+                parent: None,
+                boot: String::new(),
+                archived_reason: None,
+                archived_at: None,
+                merged_into: None,
+                aliases: vec!["A".into()],
+                prose: "the first".into(),
+            }),
+        },
         ClaimEvent::ImportCompleted { events: 20 },
     ]
 }
 
-/// What goes on after the restore: a write the declaration folds, a declaration made again, and
-/// a write to a thing the merge folded away.
+/// What goes on after the restore: a write the declaration folds, a declaration made again, a
+/// write that changes what a thing holds, and a withdrawal.
 fn tail() -> Vec<ClaimEvent> {
     vec![
         write("r1", "alpha", "rank", 2, "11"),
         declaring("thing", None),
-        write("r1", "beta", "mood", 7, "late"),
+        write("r1", "alpha", "mood", 9, "late"),
         ClaimEvent::TypeWithdrawn {
             kind: object("thing"),
         },
@@ -117,15 +193,18 @@ fn same(restored: &State, built: &State, what: &str) {
         format!("{built:?}"),
         "{what}: a part no equality compares differs"
     );
+    built
+        .held_fields_are_what_a_fold_makes()
+        .unwrap_or_else(|why| panic!("{what}: the State the events built: {why}"));
     restored
         .held_fields_are_what_a_fold_makes()
-        .unwrap_or_else(|why| panic!("{what}: {why}"));
+        .unwrap_or_else(|why| panic!("{what}: the restored State: {why}"));
 }
 
 #[test]
 fn a_restored_state_is_the_state_the_events_built_and_goes_on_as_it_does() {
     let all = events();
-    let built = replay(&all);
+    let built = replay_stamped(&all);
     assert!(
         !built.declared_types().is_empty(),
         "the fixture declares a type, or the shared declarations are never exercised"
@@ -136,10 +215,11 @@ fn a_restored_state_is_the_state_the_events_built_and_goes_on_as_it_does() {
     // The same tail applied to both: a part the restore lost shows as a difference here even
     // when the States looked equal before it.
     let mut built = built;
-    for event in tail() {
-        built.apply(&envelope(event.clone()));
-        restored.apply(&envelope(event));
-        same(&restored, &built, "after a tail event");
+    let after = all.len();
+    for (index, event) in tail().into_iter().enumerate() {
+        built.apply(&stamped(after + index, event.clone()));
+        restored.apply(&stamped(after + index, event));
+        same(&restored, &built, &format!("after tail event {index}"));
     }
 }
 
@@ -155,7 +235,7 @@ fn a_state_with_no_event_restores_to_the_empty_state() {
 /// as a State that differs from any the events built.
 #[test]
 fn an_entry_that_appears_twice_is_refused_on_load() {
-    let built = replay(&events());
+    let built = replay_stamped(&events());
     let json = serde_json::to_value(&built).expect("the State serializes");
     let lists: [&[&str]; 4] = [
         &["streams"],
@@ -181,4 +261,56 @@ fn an_entry_that_appears_twice_is_refused_on_load() {
             "{path:?}: an entry that appears twice was read back"
         );
     }
+}
+
+/// **The parts of a serialized State the fixture leaves empty**, by path: every list and map
+/// under the State and under its indexes, and the folded fields' ages and newest moments. A
+/// part the fixture does not populate is a part the restore case cannot catch a loss of.
+fn empty_parts(state: &State) -> Vec<String> {
+    let json = serde_json::to_value(state).expect("the State serializes");
+    let mut empty = Vec::new();
+    let mut visit = |prefix: &str, value: &serde_json::Value| {
+        if let Some(fields) = value.as_object() {
+            for (name, part) in fields {
+                let hollow = match part {
+                    serde_json::Value::Array(items) => items.is_empty(),
+                    serde_json::Value::Object(entries) => entries.is_empty(),
+                    _ => false,
+                };
+                if hollow {
+                    empty.push(format!("{prefix}{name}"));
+                }
+            }
+        }
+    };
+    visit("", &json);
+    visit("indexes.", &json["indexes"]);
+    visit("held_fields.", &json["held_fields"]);
+    let things = json["held_fields"]["things"].as_object();
+    let aged = things.is_some_and(|things| {
+        things.values().any(|thing| {
+            thing["keys"]
+                .as_object()
+                .is_some_and(|keys| keys.values().any(|key| !key["age"].is_null()))
+        })
+    });
+    if !aged {
+        empty.push("held_fields.things.*.keys.*.age (no held key carries an age)".into());
+    }
+    let dated =
+        things.is_some_and(|things| things.values().any(|thing| !thing["newest"].is_null()));
+    if !dated {
+        empty.push("held_fields.things.*.newest (no thing carries a newest moment)".into());
+    }
+    empty
+}
+
+#[test]
+fn the_fixture_populates_every_part_of_the_state() {
+    let empty = empty_parts(&replay_stamped(&events()));
+    assert!(
+        empty.is_empty(),
+        "the restore fixture leaves these parts of the State empty, so a restore that lost them \
+         would pass: {empty:?}"
+    );
 }
