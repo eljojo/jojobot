@@ -683,19 +683,28 @@ async fn a_connection_that_times_out_answers_a_store_error_to_a_read_and_to_the_
 async fn one_slot_publication_replaces_old_slots() {
     let (_scratch, mut server, pool, log) = fixture().await;
     let validity = log.validity().await.unwrap();
+    put(&pool, &snapshot_for(0, &validity, Position(0), [0; 32])).await;
     for version in [1, 2, 3] {
-        put(
-            &pool,
-            &snapshot_for(version, &validity, Position(0), [0; 32]),
+        sqlx::query(
+            "INSERT INTO log_snapshot SELECT ?, covered_position, snapshot_format_version, ?, \
+             log_identity, representation_epoch, erasure_epoch, batch_checksum, created_at, \
+             checksum, serialized_length, body FROM log_snapshot WHERE slot = 'snapshot'",
         )
-        .await;
-        sqlx::query("UPDATE log_snapshot SET slot = ? WHERE projection_version = ?")
-            .bind(format!("snapshot:{version}"))
-            .bind(version)
-            .execute(&pool)
-            .await
-            .unwrap();
+        .bind(format!("snapshot:{version}"))
+        .bind(version)
+        .execute(&pool)
+        .await
+        .unwrap();
     }
+    sqlx::query("DELETE FROM log_snapshot WHERE slot = 'snapshot'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let legacy: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM log_snapshot")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(legacy, 3, "all legacy slots exist before publication");
     put(&pool, &snapshot_for(4, &validity, Position(0), [0; 32])).await;
     let slots: Vec<String> = sqlx::query_scalar("SELECT slot FROM log_snapshot")
         .fetch_all(&pool)
@@ -719,7 +728,16 @@ async fn one_slot_new_table_boot_logs_info_and_the_next_boot_loads() {
 async fn one_slot_upgrade_boot(newly_created: bool) {
     use tracing::instrument::WithSubscriber;
     let _counting = crate::log_snapshot::FINGERPRINT_SKIPS.lock().await;
-    let (_scratch, mut server, pool, log) = fixture().await;
+    let (_scratch, mut server, pool, log, applied) = if newly_created {
+        let scratch = Scratch::new("snapshot-migration-account");
+        let (server, applied) = Dolt::ready(&scratch.0, free_port()).await.unwrap();
+        let pool = server.pool().clone();
+        let log = DoltLog::open(pool.clone()).await.unwrap();
+        (scratch, server, pool, log, applied)
+    } else {
+        let (scratch, server, pool, log) = fixture().await;
+        (scratch, server, pool, log, vec![])
+    };
     let event = crate::teaching_log::codec::encode(
         &jojobot_domain::teaching::events::TeachingEvent::Recorded {
             run: jojobot_domain::teaching::events::RunId("homer".into()),
@@ -753,19 +771,20 @@ async fn one_slot_upgrade_boot(newly_created: bool) {
             .with_writer(captured.clone())
             .with_max_level(tracing::Level::INFO)
             .finish();
-        let applied = if newly_created {
-            vec!["0125_log_snapshot".to_string()]
-        } else {
-            vec![]
-        };
-        let restored = crate::log_snapshot::boot_after_migrations(&serving, &applied)
-            .with_subscriber(subscriber)
+        let (restored, _keeper) =
+            crate::teaching_log::serving_kept_after_migrations(&pool, writer.clone(), &applied)
+                .with_subscriber(subscriber)
+                .await
+                .unwrap();
+        assert!(
+            jojobot_domain::teaching::Teachings::has_contact(
+                &restored,
+                &jojobot_domain::session::Sid("homer".into()),
+                "claims",
+            )
             .await
-            .unwrap();
-        assert!(restored.state.teaching.has_contact(
-            &jojobot_domain::teaching::events::RunId("homer".into()),
-            "claims"
-        ));
+            .unwrap()
+        );
         let said = captured.text();
         assert!(
             said.lines()

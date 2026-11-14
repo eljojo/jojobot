@@ -64,6 +64,36 @@ async fn a_boot_logs_the_time_of_every_step_that_touches_the_store() {
     let scratch = Scratch(path.clone());
     let port = free_port();
 
+    // Leave real teaching history with the snapshot-table migration still owed.
+    let (mut prior, _) = jojobot_adapters::dolt::Dolt::ready(&path, free_port())
+        .await
+        .unwrap();
+    let writer = jojobot_adapters::writer::Writer::default();
+    let (teaching, keeper) =
+        jojobot_adapters::teaching_log::serving_kept(prior.pool(), writer.clone())
+            .await
+            .unwrap();
+    jojobot_domain::teaching::Teachings::first_contact(
+        &teaching,
+        &jojobot_domain::session::Sid("homer".into()),
+        "claims",
+        jiff::Timestamp::UNIX_EPOCH,
+    )
+    .await
+    .unwrap();
+    drop((teaching, keeper));
+    writer.drain().await;
+    drop(writer);
+    sqlx::query("DROP TABLE log_snapshot")
+        .execute(prior.pool())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM schema_migration WHERE version = '0125_log_snapshot'")
+        .execute(prior.pool())
+        .await
+        .unwrap();
+    prior.stop().await;
+
     let kept = Kept::default();
     let guard = tracing::subscriber::set_default(jojobot::logging::logging(
         kept.clone(),
@@ -76,6 +106,17 @@ async fn a_boot_logs_the_time_of_every_step_that_touches_the_store() {
     drop(guard);
 
     let text = String::from_utf8(kept.0.lock().expect("log buffer").clone()).expect("utf8");
+    let skips: Vec<_> = text
+        .lines()
+        .filter(|line| line.contains("reason="))
+        .collect();
+    assert!(
+        skips
+            .iter()
+            .any(|line| line.contains("INFO") && line.contains("fingerprint")),
+        "the real migration account reaches the serving boot: {text}"
+    );
+    assert!(!skips.iter().any(|line| line.contains("WARN")), "{text}");
     for step in STEPS {
         let named = format!("step=\"{step}\"");
         let line = text
