@@ -3929,6 +3929,11 @@ async fn a_renewed_role_merged_into_a_thing_is_found_by_its_renewed_lease_moment
     };
     let writes_before = lease_writes().await;
     let t1 = t0 + jiff::SignedDuration::from_mins(6);
+    // The State is built from the log, which holds the moment the role was claimed
+    // at and none after it.
+    let events_before = jojobot_adapters::testing::claims_events(&pool).await;
+    let log_text = format!("{events_before:?}");
+    assert!(log_text.contains(&t0.to_string()), "the log holds t0");
     let renewed = folded
         .update_fact(
             &claim.address(),
@@ -3952,6 +3957,16 @@ async fn a_renewed_role_merged_into_a_thing_is_found_by_its_renewed_lease_moment
         lease_writes().await,
         writes_before,
         "the renewal appended a write"
+    );
+    let events_after = jojobot_adapters::testing::claims_events(&pool).await;
+    assert_eq!(
+        events_after.len(),
+        events_before.len(),
+        "the renewal appended an event"
+    );
+    assert!(
+        !format!("{events_after:?}").contains(&t1.to_string()),
+        "the log holds the renewed moment, which only the store holds"
     );
 
     folded

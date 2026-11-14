@@ -104,25 +104,62 @@ async fn a_scan_listing_no_declined_thing_is_served_from_the_state_while_the_rai
     assert_eq!(counted.calls(), 0, "the scan crossed the rail");
 }
 
-/// **A holder query that must read a role is refused while the rail is uncertain**,
-/// as a scan listing one is: the State does not decide a role's lease moment, and the
-/// store beyond the rail is not read for it. Any other key is the State's, so it is
-/// served.
+/// **A holder query that must read a declined thing is refused while the rail is
+/// uncertain**, as a scan listing one is: the State does not decide a role or a thing a
+/// merge touched, and the store beyond the rail is not read for it.
 #[tokio::test]
-async fn a_holder_query_of_a_lease_moment_is_refused_while_the_rail_is_uncertain() {
+async fn a_holder_query_over_a_declined_thing_is_refused_while_the_rail_is_uncertain() {
     let (folded, counted, _, _role) = uncertain_fold().await;
     let test = jojobot_domain::memory::filter::Test::NotEquals(String::new());
+    for key in ["agent", jojobot_domain::session::ROLE_CLAIMED_AT] {
+        let refused = folded.keys_holding(key, &test, None).await;
+        assert!(
+            matches!(&refused, Err(MemoryError::Store(why)) if why.contains("uncertain")),
+            "a holder query of {key} over a role went on: {refused:?}"
+        );
+        assert_eq!(counted.calls(), 0, "the refused query crossed the rail");
+    }
+}
+
+/// **A holder query that must read a merge-touched survivor is refused while the rail
+/// is uncertain**, as one over a role is: the survivor of a merge is a thing the State
+/// does not decide a read of, and the store beyond the rail is not read for it.
+#[tokio::test]
+async fn a_holder_query_over_a_merge_survivor_is_refused_while_the_rail_is_uncertain() {
+    let counted = Arc::new(Counted::new(Arc::new(InMemoryMemory::booted())));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    let (survivor, gone, caller) = (
+        EntityId::person("person:alpha"),
+        EntityId::person("person:beta"),
+        EntityId("bot:sigma".to_string()),
+    );
+    for (id, name) in [(&survivor, "Alpha"), (&gone, "Beta"), (&caller, "Sigma")] {
+        folded
+            .add_entity(NewEntity::new(id.clone(), name, "user-named"))
+            .await
+            .expect("added")
+            .written()
+            .expect("not blocked");
+    }
     folded
-        .keys_holding("agent", &test, None)
+        .merge(
+            &gone,
+            &survivor,
+            Some("filed twice"),
+            date(2026, 9, 3),
+            &caller,
+            None,
+        )
         .await
-        .expect("another key is the State's");
-    assert_eq!(counted.calls(), 0, "the query crossed the rail");
-    let refused = folded
-        .keys_holding(jojobot_domain::session::ROLE_CLAIMED_AT, &test, None)
-        .await;
+        .expect("the merge lands");
+    folded.writer().mark_uncertain("memory");
+    counted.reset();
+    let test = jojobot_domain::memory::filter::Test::NotEquals(String::new());
+    let refused = folded.keys_holding("agent", &test, None).await;
     assert!(
         matches!(&refused, Err(MemoryError::Store(why)) if why.contains("uncertain")),
-        "a holder query over a role went on: {refused:?}"
+        "a holder query over a merge survivor went on: {refused:?}"
     );
     assert_eq!(counted.calls(), 0, "the refused query crossed the rail");
 }

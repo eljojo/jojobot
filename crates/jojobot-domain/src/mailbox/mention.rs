@@ -63,7 +63,13 @@ impl Mentioning {
 
     async fn render_delivery(&self, delivery: &mut Delivery) -> Result<(), MailboxError> {
         if !delivery.messages.is_empty() {
-            let known = self.known().await?;
+            let delivered: Vec<Message> = delivery
+                .messages
+                .iter()
+                .map(|delivered| delivered.message.clone())
+                .collect();
+            let (texts, senders) = Self::message_words(&delivered);
+            let known = self.known_of(&texts, &senders).await?;
             for delivered in &mut delivery.messages {
                 Self::render(&mut delivered.message, &known);
             }
@@ -71,22 +77,51 @@ impl Mentioning {
         Ok(())
     }
 
-    /// What exists, for a mention to resolve against on the way in and render
-    /// against on the way out — one read of the index answers both.
-    async fn known(&self) -> Result<Vec<Entity>, MailboxError> {
-        mention::render_roster(&*self.memory)
+    /// **What these texts name and who these senders are**, for a mention to render
+    /// against on the way out: see [`mention::known_among_with`]. A message with no
+    /// mention asks the store only for its sender.
+    async fn known_of(
+        &self,
+        texts: &[&str],
+        senders: &[&str],
+    ) -> Result<Vec<Entity>, MailboxError> {
+        mention::known_among_with(&*self.memory, texts, senders)
             .await
             .map_err(|e| MailboxError::Store(e.to_string()))
     }
 
-    /// **The roster a write resolves these texts against**: what exists, and each
-    /// numbered address the texts write answering to its member. One function
-    /// builds it for every text-taking write ([`mention::roster_for`]).
+    /// **The roster a write resolves these texts against**: what they name, and each
+    /// numbered address they write answering to its member. One function builds it
+    /// for every text-taking write ([`mention::roster_for`]).
     async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, MailboxError> {
         mention::roster_for(&*self.memory, texts)
             .await
             .map(|roster| roster.known)
             .map_err(|e| MailboxError::Store(e.to_string()))
+    }
+
+    /// [`known_for`](Self::known_for), and the sender the write resolves to a badge.
+    async fn known_for_sender(
+        &self,
+        texts: &[&str],
+        sender: &str,
+    ) -> Result<Vec<Entity>, MailboxError> {
+        mention::roster_for_with(&*self.memory, texts, &[sender])
+            .await
+            .map(|roster| roster.known)
+            .map_err(|e| MailboxError::Store(e.to_string()))
+    }
+
+    /// **The texts and senders a render of these messages reads.**
+    fn message_words(messages: &[Message]) -> (Vec<&str>, Vec<&str>) {
+        let (mut texts, mut senders) = (Vec::new(), Vec::new());
+        for message in messages {
+            senders.push(message.sender.as_str());
+            texts.push(message.body.as_str());
+            texts.extend(message.subject.as_deref());
+            texts.extend(message.notes.as_deref());
+        }
+        (texts, senders)
     }
 
     /// Every rename this store still remembers — needed only to resolve a
@@ -150,7 +185,7 @@ impl Mentioning {
         else {
             return error;
         };
-        let reason = match self.known().await {
+        let reason = match self.known_of(&[reason.as_str()], &[]).await {
             Ok(known) => mention::rendered(&reason, &known),
             Err(_) => reason,
         };
@@ -165,7 +200,8 @@ impl Mentioning {
         if messages.is_empty() {
             return Ok(());
         }
-        let known = self.known().await?;
+        let (texts, senders) = Self::message_words(messages);
+        let known = self.known_of(&texts, &senders).await?;
         for message in messages {
             Self::render(message, &known);
         }
@@ -229,7 +265,7 @@ impl Mailboxes for Mentioning {
     /// things wear today and kept only when the sender renders as the one
     /// asked about, which is what the whole-board read always meant.
     async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
-        let known = self.known().await?;
+        let known = self.known_of(&[], senders).await?;
         let former = self.former().await?;
         let mut spellings: Vec<String> = Vec::new();
         for sender in senders {
@@ -268,10 +304,13 @@ impl Mailboxes for Mentioning {
             message.subject.as_deref().unwrap_or(""),
         ])?;
         let known = self
-            .known_for(&[
-                message.body.as_str(),
-                message.subject.as_deref().unwrap_or(""),
-            ])
+            .known_for_sender(
+                &[
+                    message.body.as_str(),
+                    message.subject.as_deref().unwrap_or(""),
+                ],
+                &message.sender,
+            )
             .await?;
         let former = self.former().await?;
         let sender = Self::storage_sender_for(&message.sender, &known, &former);
@@ -336,7 +375,8 @@ impl Mailboxes for Mentioning {
             Ok(delivered) => delivered,
             Err(e) => return Err(self.rendered_error(e).await),
         };
-        let known = self.known().await?;
+        let (texts, senders) = Self::message_words(std::slice::from_ref(&delivered.message));
+        let known = self.known_of(&texts, &senders).await?;
         Self::render(&mut delivered.message, &known);
         Ok(delivered)
     }
@@ -363,6 +403,8 @@ impl Mailboxes for Mentioning {
             Ok(message) => message,
             Err(e) => return Err(self.rendered_error(e).await),
         };
+        let (texts, senders) = Self::message_words(std::slice::from_ref(&message));
+        let known = self.known_of(&texts, &senders).await?;
         Self::render(&mut message, &known);
         Ok(message)
     }
@@ -401,7 +443,11 @@ impl Mailboxes for Mentioning {
         {
             return Ok(events);
         }
-        let known = self.known().await?;
+        let texts: Vec<&str> = events
+            .iter()
+            .flat_map(|e| e.notes.as_deref().into_iter().chain(e.reason.as_deref()))
+            .collect();
+        let known = self.known_of(&texts, &[]).await?;
         for event in &mut events {
             event.notes = event.notes.as_deref().map(|n| mention::rendered(n, &known));
             event.reason = event

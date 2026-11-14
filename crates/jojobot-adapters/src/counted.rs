@@ -601,6 +601,13 @@ impl Memory for Counted {
         self.hit("write_summary");
         self.inner.write_summary().await
     }
+    async fn names(
+        &self,
+        wanted: &jojobot_domain::memory::Wanted,
+    ) -> Result<Option<jojobot_domain::memory::Names>, MemoryError> {
+        self.hit("names");
+        self.inner.names(wanted).await
+    }
     async fn declare_type(
         &self,
         declared: DeclaredType,

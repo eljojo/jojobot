@@ -764,15 +764,14 @@ async fn the_history_of_a_claim_with_no_mention_reads_no_roster() {
     }
 }
 
-/// **A holder query of a role's lease moment reads the role from the store.** A plain
-/// renewal overwrites the `claimed_at` write and keeps the moment in the heartbeat
-/// home, with no event, so the State's held value can be the one before. Every other
-/// key a role holds is an event's, and so is every key of a thing a merge touched, so
-/// the State answers for those: the roster that every write and every mention-bearing
-/// read builds asks who holds a key, and a store read for each declined thing made
-/// each of them cost seconds.
+/// **A holder query reads the things the State declines from the store.** A role's
+/// plain renewal overwrites its lease moment without a log event, and a thing a merge
+/// touched may carry a role's value onto the survivor, so the State's held fields for
+/// either can be a value the store has moved past. Each is read through the fields the
+/// fold serves for it, which come from the store; the State answers for every other
+/// thing. Only filtered reads ask a holder query once no roster does.
 #[tokio::test]
-async fn a_holder_query_reads_the_declined_things_from_the_store_for_the_lease_moment_alone() {
+async fn a_holder_query_reads_the_declined_things_from_the_store() {
     use jojobot_domain::memory::filter::Test;
     use jojobot_domain::memory::testing::contract::state;
     use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
@@ -832,32 +831,24 @@ async fn a_holder_query_reads_the_declined_things_from_the_store_for_the_lease_m
         assert!(held.contains(id), "{id:?} holds: {held:?}");
     }
 
-    // The lease moment of a role, and of a thing a merge touched (a role may have been
-    // folded into it), is the store's.
+    // A role and a thing a merge touched are the store's, for every key.
     for declined in [&role, &survivor] {
         counted.fail_fields_of(Some(declined.as_str()));
-        let refused = folded
-            .keys_holding(jojobot_domain::session::ROLE_CLAIMED_AT, &test, None)
-            .await;
-        assert!(
-            refused.is_err(),
-            "{declined:?} lease moment was answered from the State: {refused:?}"
-        );
-    }
-    // Every other key, of the role and of a thing a merge touched, is the State's.
-    for fault in [&role, &survivor, &plain] {
-        counted.fail_fields_of(Some(fault.as_str()));
-        let held = folded
-            .keys_holding("agent", &test, None)
-            .await
-            .expect("an event's key is not read from the store");
-        for id in [&role, &survivor, &plain] {
-            assert!(held.contains(id), "{id:?} holds: {held:?}");
+        for key in ["agent", jojobot_domain::session::ROLE_CLAIMED_AT] {
+            let refused = folded.keys_holding(key, &test, None).await;
+            assert!(
+                refused.is_err(),
+                "{declined:?} {key} was answered from the State: {refused:?}"
+            );
         }
     }
+    // A thing the State serves is not read from the store.
     counted.fail_fields_of(Some(plain.as_str()));
-    folded
-        .keys_holding(jojobot_domain::session::ROLE_CLAIMED_AT, &test, None)
+    let held = folded
+        .keys_holding("agent", &test, None)
         .await
         .expect("a thing the State serves is not read from the store");
+    for id in [&role, &survivor, &plain] {
+        assert!(held.contains(id), "{id:?} holds: {held:?}");
+    }
 }

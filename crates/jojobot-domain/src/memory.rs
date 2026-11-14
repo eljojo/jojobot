@@ -6922,6 +6922,44 @@ pub struct WriteSummary {
     pub fact_hash: Option<String>,
 }
 
+/// **What a set of texts asks to know about**: the badges of the stored marks they hold
+/// and the handles they name, typed or bare. The one question a mention layer puts to the
+/// store before it renders or resolves, in place of the whole roster.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Wanted {
+    /// The badge of each stored mark.
+    pub badges: std::collections::BTreeSet<String>,
+    /// Each handle a text names, a numbered address included.
+    pub handles: std::collections::BTreeSet<EntityId>,
+}
+
+impl Wanted {
+    /// Whether the texts hold nothing a store could answer.
+    pub fn is_empty(&self) -> bool {
+        self.badges.is_empty() && self.handles.is_empty()
+    }
+
+    /// Ask for what another set of texts holds too.
+    pub fn extend(&mut self, other: Wanted) {
+        self.badges.extend(other.badges);
+        self.handles.extend(other.handles);
+    }
+}
+
+/// **What [`Memory::names`] answers**, in the shape the pure renderers take.
+#[derive(Debug, Clone, Default)]
+pub struct Names {
+    /// The entity each wanted badge reads as, with every entity its forwarding chain
+    /// reaches; the entity each wanted handle wears now; and the numbering marker of
+    /// each numbered collection a wanted address names.
+    pub known: Vec<Entity>,
+    /// Each wanted numbered address that names a member, as that member: what a write
+    /// resolves an address to. A read leaves them out.
+    pub members: Vec<Entity>,
+    /// The wanted handles and numbered addresses that name nothing.
+    pub missed: Vec<EntityId>,
+}
+
 /// The Memory port — six verbs over entities and the facts about them. One real
 /// adapter stands behind it in production; a fake stands behind it in
 /// tests. Three invariants bind every adapter:
@@ -7991,6 +8029,18 @@ pub trait Memory: Send + Sync {
     /// today's behaviour. Only a store that can answer the question cheaply,
     /// and completely, should return `Some`.
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
+        Ok(None)
+    }
+
+    /// **The entities a set of texts names, and nothing else**: what a mention layer needs
+    /// to render the stored marks the texts hold and to resolve the handles they write.
+    /// Answered by key, without listing the store.
+    ///
+    /// **`None` means this store answers no scoped read.** That is the default, and the
+    /// caller then reads the listing as it always did. A decorator over another store
+    /// forwards this, or the store beneath cannot answer it from what it keeps.
+    async fn names(&self, wanted: &Wanted) -> Result<Option<Names>, MemoryError> {
+        let _ = wanted;
         Ok(None)
     }
 

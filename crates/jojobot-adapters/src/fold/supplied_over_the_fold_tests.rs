@@ -469,22 +469,39 @@ async fn who_holds_a_key_through_the_supply_layer_is_who_the_full_read_finds() {
     );
 }
 
-/// **The roster a mention renders over is read once until something is written.** It
-/// lists every thing the store holds, and one answer renders the history of each thing
-/// a session holds, so a roster read for each made an answer cost a read of the whole
-/// instance for every held thing. The store's own change signal says nothing was
-/// written, and the roster of that moment is the roster of the next call.
+/// **The production stack of the mention layer, with the layer beneath it counted**:
+/// the fake, the fold, the supply layer, a counter, then the mention layer.
+async fn the_mention_stack() -> (
+    jojobot_domain::memory::mention::Mentioning,
+    Arc<Counted>,
+    Arc<dyn jojobot_domain::memory::Memory>,
+) {
+    let provisions = shipped();
+    let store = Arc::new(InMemoryMemory::booted().knowing(provisions.clone()));
+    let folded = Folded::new(store);
+    folded.rebuild().await.expect("the fold fills");
+    let provisioned: Arc<dyn jojobot_domain::memory::Memory> =
+        Arc::new(Provisioned::new(SharedFold(Arc::new(folded)), provisions));
+    let counted = Arc::new(Counted::new(provisioned.clone()));
+    (
+        jojobot_domain::memory::mention::Mentioning::new(Arc::new(SharedCounted(counted.clone()))),
+        counted,
+        provisioned,
+    )
+}
+
+/// **An answer whose texts hold no mention asks no store a thing about names.** The
+/// roster lists every thing the store holds and asks which collections number; a
+/// mention layer that builds one for each answer pays the whole instance for each. A
+/// text with no stored mark and no handle makes no names read, no listing and no
+/// holder query, on the write path and on every read path. The pair names one thing and
+/// reads exactly one names read, and still no listing.
 #[tokio::test]
-async fn a_roster_is_read_once_until_something_is_written() {
-    use jojobot_domain::memory::mention::Mentioning;
+async fn a_text_that_names_nothing_asks_the_store_nothing_about_names() {
     use jojobot_domain::memory::testing::contract::state;
     use jojobot_domain::memory::{NewEntity, NewFact};
 
-    let store = Arc::new(InMemoryMemory::booted());
-    let folded = Folded::new(store);
-    folded.rebuild().await.expect("the fold fills");
-    let counted = Arc::new(Counted::new(Arc::new(SharedFold(Arc::new(folded)))));
-    let layer = Mentioning::new(Arc::new(SharedCounted(counted.clone())));
+    let (layer, counted, _) = the_mention_stack().await;
     let (about, named) = (spelled_thing(1), spelled_thing(2));
     for id in [&about, &named] {
         layer
@@ -494,43 +511,229 @@ async fn a_roster_is_read_once_until_something_is_written() {
             .written()
             .expect("not blocked");
     }
-    let mut fact = state(NewFact::about(
-        about.clone(),
-        format!("saw @{}", named.0),
-        jiff::civil::date(2026, 9, 2),
-    ));
-    fact.session = Some("fold-image".into());
-    layer
-        .capture(fact)
+    let claim = |words: String| {
+        let mut fact = state(NewFact::about(
+            about.clone(),
+            words,
+            jiff::civil::date(2026, 9, 2),
+        ));
+        fact.session = Some("fold-image".into());
+        fact
+    };
+
+    counted.reset();
+    let written = layer
+        .capture(claim("plays the saxophone".into()))
         .await
         .expect("captured")
         .written()
         .expect("not blocked");
+    let facts = layer.recall(&about).await.expect("recalled");
+    let chain = layer
+        .claim_history(&written.address())
+        .await
+        .expect("history");
+    let chains = layer.claim_histories(&about).await.expect("histories");
+    layer.scan_entity(&about).await.expect("scanned");
+    assert_eq!(facts.len(), 1);
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chains.len(), 1);
+    let seen = counted.seen();
+    for read in ["names", "list_entities", "keys_holding"] {
+        assert_eq!(seen.get(read), None, "{read}: {seen:?}");
+    }
 
     counted.reset();
-    for _ in 0..3 {
-        layer.claim_histories(&about).await.expect("histories");
-    }
-    let seen = counted.seen();
-    assert_eq!(
-        seen.get("list_entities"),
-        Some(&1),
-        "the roster was read again with nothing written: {seen:?}"
-    );
-
-    let later = spelled_thing(3);
     layer
-        .add_entity(NewEntity::new(later.clone(), &later.0, "fold-image"))
+        .capture(claim(format!("saw @{}", named.0)))
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    let seen = counted.seen();
+    assert_eq!(seen.get("names"), Some(&1), "{seen:?}");
+    assert_eq!(seen.get("list_entities"), None, "{seen:?}");
+    assert_eq!(seen.get("keys_holding"), None, "{seen:?}");
+}
+
+/// **Every render and every write resolution over the names read equals the same over
+/// the whole roster**, over one corpus: a rename, a merge chain, a numbered collection
+/// and a number nobody holds, a supplied record, a handle a thing gave up, an archived
+/// thing, a badge nothing wears and a handle that was never made a link. The roster
+/// built here lists every thing the store holds, and is the answer the scoped read is
+/// held to; dropping survivor-following from the read turns it red.
+#[tokio::test]
+async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
+    use jojobot_domain::memory::mention::{
+        known_among, render_roster, rendered, resolved, roster_for, roster_for_whole,
+    };
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{EntityPatch, NewEntity, NewFact};
+
+    let (layer, _, provisioned) = the_mention_stack().await;
+    let make = |n: usize| EntityId(format!("{}:{}", "person", spelled_slug(n)));
+    let (renamed, merged_a, merged_b, merged_c, archived, plain) =
+        (make(1), make(2), make(3), make(4), make(5), make(6));
+    for id in [&renamed, &merged_a, &merged_b, &merged_c, &archived, &plain] {
+        layer
+            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let new_name = EntityId(format!("{}:{}", "person", spelled_slug(7)));
+    layer
+        .rename_entity(
+            &renamed,
+            &new_name,
+            None,
+            jiff::civil::date(2026, 9, 3),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("renamed");
+    for (gone, kept) in [(&merged_a, &merged_b), (&merged_b, &merged_c)] {
+        layer
+            .merge(
+                gone,
+                kept,
+                Some("filed twice"),
+                jiff::civil::date(2026, 9, 3),
+                &EntityId("bot:sigma".into()),
+                None,
+            )
+            .await
+            .expect("merged");
+    }
+    layer
+        .archive_entity(&archived, "done", None)
+        .await
+        .expect("archived");
+    let _ = EntityPatch::default();
+    // A numbered collection and its members.
+    let collection = EntityId(format!("{}:{}", "topic", spelled_slug(8)));
+    layer
+        .add_entity(NewEntity::new(
+            collection.clone(),
+            &collection.0,
+            "fold-image",
+        ))
         .await
         .expect("add")
         .written()
         .expect("not blocked");
-    counted.reset();
-    layer.claim_histories(&about).await.expect("histories");
-    let seen = counted.seen();
-    assert_eq!(
-        seen.get("list_entities"),
-        Some(&1),
-        "a write left the cached roster in use: {seen:?}"
+    let mut numbering = state(NewFact::about(
+        collection.clone(),
+        "numbers its members",
+        jiff::civil::date(2026, 9, 2),
+    ));
+    numbering.session = Some("fold-image".into());
+    numbering.fields.insert(
+        jojobot_domain::memory::numbered::NUMBERS_BY.into(),
+        "number".into(),
     );
+    numbering
+        .sets
+        .insert(jojobot_domain::memory::numbered::NUMBERS_BY.into());
+    layer
+        .capture(numbering)
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    for (n, number) in [(9, "1"), (10, "2")] {
+        let member = EntityId(format!("{}:{}", "topic", spelled_slug(n)));
+        layer
+            .add_entity(NewEntity {
+                parent: Some(collection.clone()),
+                ..NewEntity::new(member.clone(), &member.0, "fold-image")
+            })
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+        let mut fact = state(NewFact::about(
+            member.clone(),
+            "is a member",
+            jiff::civil::date(2026, 9, 2),
+        ));
+        fact.session = Some("fold-image".into());
+        fact.fields.insert("number".into(), number.into());
+        fact.sets.insert("number".into());
+        layer
+            .capture(fact)
+            .await
+            .expect("captured")
+            .written()
+            .expect("not blocked");
+    }
+
+    // The texts: every kind of name, typed and as a stored mark.
+    let whole = render_roster(&*provisioned).await.expect("the roster");
+    let badge_of = |id: &EntityId| {
+        whole
+            .iter()
+            .find(|entity| entity.id == *id)
+            .and_then(|entity| entity.badge.clone())
+            .unwrap_or_else(|| panic!("{id:?} wears a badge"))
+    };
+    let mut texts: Vec<String> = Vec::new();
+    for handle in [
+        new_name.0.clone(),
+        renamed.0.clone(),
+        merged_a.0.clone(),
+        merged_b.0.clone(),
+        merged_c.0.clone(),
+        archived.0.clone(),
+        plain.0.clone(),
+        format!("{}/2", collection.0),
+        format!("{}/9", collection.0),
+        "view:loops".to_string(),
+        format!("{}:{}", "person", spelled_slug(99)),
+    ] {
+        texts.push(format!("saw @{handle} again"));
+    }
+    for id in [
+        &new_name, &merged_a, &merged_b, &merged_c, &archived, &plain,
+    ] {
+        texts.push(format!("kept @#{} here", badge_of(id)));
+    }
+    texts.push("a mark nothing wears @#zzzzzz here".to_string());
+    texts.push(format!("both @{} and @#{}", plain.0, badge_of(&merged_a)));
+
+    for text in &texts {
+        let scoped = known_among(&*provisioned, &[text.as_str()])
+            .await
+            .expect("names");
+        let reference = roster_for_whole(&*provisioned, &[text.as_str()])
+            .await
+            .expect("the whole roster");
+        assert_eq!(
+            rendered(text, &scoped),
+            rendered(text, &reference.known),
+            "a render of {text:?}"
+        );
+        let scoped = roster_for(&*provisioned, &[text.as_str()])
+            .await
+            .expect("a scoped roster");
+        let reference = roster_for_whole(&*provisioned, &[text.as_str()])
+            .await
+            .expect("the whole roster");
+        assert_eq!(
+            resolved(text, &scoped.known),
+            resolved(text, &reference.known),
+            "a write of {text:?}"
+        );
+    }
+}
+
+fn spelled_slug(n: usize) -> String {
+    spelled_thing(n)
+        .0
+        .split_once(':')
+        .expect("a handle")
+        .1
+        .to_string()
 }

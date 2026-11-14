@@ -806,6 +806,8 @@ impl State {
 mod built_on_tests;
 #[cfg(test)]
 mod cost_tests;
+#[cfg(test)]
+mod declined_tests;
 mod document;
 #[cfg(test)]
 mod fact_tests;
@@ -824,6 +826,7 @@ mod history_cost_tests;
 mod marker_tests;
 #[cfg(test)]
 mod merge_events_tests;
+mod names;
 #[cfg(test)]
 mod own_handle_tests;
 #[cfg(test)]

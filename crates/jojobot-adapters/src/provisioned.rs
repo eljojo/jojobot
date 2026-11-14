@@ -376,6 +376,30 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         self.inner.write_summary().await
     }
 
+    /// **What the layer beneath names, with the records the build supplies that the
+    /// texts name by handle.** A supplied record wears no badge and the layer beneath
+    /// does not know it ships, so the texts reach it only by its handle; it enters as
+    /// this layer's listing serves it, the operator's name over the shipped one.
+    async fn names(
+        &self,
+        wanted: &jojobot_domain::memory::Wanted,
+    ) -> Result<Option<jojobot_domain::memory::Names>, MemoryError> {
+        let Some(mut names) = self.inner.names(wanted).await? else {
+            return Ok(None);
+        };
+        for (entity, _) in self.provisions.records() {
+            if !wanted.handles.contains(&entity.id)
+                || names.known.iter().any(|held| held.id == entity.id)
+                || self.supplied_only(&entity.id).await?.is_none()
+            {
+                continue;
+            }
+            names.missed.retain(|miss| *miss != entity.id);
+            names.known.push(self.with_overlay(entity).await?);
+        }
+        Ok(Some(names))
+    }
+
     // ── and the one write that reaches it ───────────────────────────────────
 
     /// **The read-modify-write trap, closed underneath.**

@@ -72,6 +72,22 @@ impl super::Mentioning {
             known: known.to_vec(),
             offers: Offers::new(),
         };
+        // **The handles a saved expression writes bare**, which no text names: the roster
+        // a write started from holds what its words name, so the expressions' own are
+        // asked for here.
+        let mut wanted = crate::memory::Wanted::default();
+        for (key, value) in fields.iter() {
+            if super::holds_an_expression(key, &declared) {
+                wanted.extend(wanted_in_expression(value));
+            }
+        }
+        if !wanted.is_empty() {
+            for entity in known_wanted(&*self.beneath, wanted).await? {
+                if !roster.known.iter().any(|held| held.id == entity.id) {
+                    roster.known.push(entity);
+                }
+            }
+        }
         if !mentions.is_empty() {
             let texts: Vec<&str> = mentions.iter().map(String::as_str).collect();
             let named = roster_for(&*self.beneath, &texts).await?;
@@ -127,6 +143,144 @@ pub fn members_named(text: &str, known: &[Entity]) -> String {
 /// screens text over a plain list of entities finds no member for a numbered
 /// address, so none builds its own.
 pub async fn roster_for(
+    memory: &dyn crate::memory::Memory,
+    texts: &[&str],
+) -> Result<Roster, crate::memory::MemoryError> {
+    roster_for_wanted(memory, texts, crate::memory::Wanted::default()).await
+}
+
+/// **[`roster_for`], also asking for what `extra` names**, which is what a saved
+/// expression's field values hold beyond the texts: bare handles and marks.
+///
+/// **One read of names, keyed by what the texts hold.** A text with nothing a store could
+/// answer asks it nothing. The store answers by key, and a miss (a handle or a numbered
+/// address that names nothing) is the one case that reads the listing, because the
+/// near-miss candidates a refusal offers come from it.
+pub async fn roster_for_wanted(
+    memory: &dyn crate::memory::Memory,
+    texts: &[&str],
+    extra: crate::memory::Wanted,
+) -> Result<Roster, crate::memory::MemoryError> {
+    let mut wanted = wanted_by(texts);
+    wanted.extend(extra);
+    if wanted.is_empty() {
+        return Ok(Roster::default());
+    }
+    if let Some(names) = memory.names(&wanted).await?
+        && names.missed.is_empty()
+    {
+        let mut known = names.known;
+        known.extend(names.members);
+        return Ok(Roster {
+            known,
+            offers: Offers::new(),
+        });
+    }
+    roster_for_whole(memory, texts).await
+}
+
+/// **What these texts name, for a read**: the entities the stored marks they hold read
+/// as, and the entities their handles wear, nothing else. A text with no mention asks
+/// the store nothing; a store that answers no scoped read is asked for its listing.
+pub async fn known_among(
+    memory: &dyn crate::memory::Memory,
+    texts: &[&str],
+) -> Result<Vec<Entity>, crate::memory::MemoryError> {
+    known_wanted(memory, wanted_by(texts)).await
+}
+
+/// [`known_among`] for what is already gathered.
+pub async fn known_wanted(
+    memory: &dyn crate::memory::Memory,
+    wanted: crate::memory::Wanted,
+) -> Result<Vec<Entity>, crate::memory::MemoryError> {
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    match memory.names(&wanted).await? {
+        Some(names) => {
+            // The numbered members ride along: a renderer reads a collection's
+            // numbering from them.
+            let mut known = names.known;
+            known.extend(names.members);
+            Ok(known)
+        }
+        None => render_roster(memory).await,
+    }
+}
+
+/// **Names a layer carries beside its texts** (a message's sender, a run's bot): each is
+/// a stored badge or a plain handle, so each is asked for as both.
+pub fn wanted_names(names: &[&str]) -> crate::memory::Wanted {
+    let mut wanted = crate::memory::Wanted::default();
+    for name in names {
+        wanted.badges.insert((*name).to_string());
+        let id = EntityId((*name).to_string());
+        if id.kind().is_some() {
+            wanted.handles.insert(id);
+        }
+    }
+    wanted
+}
+
+/// [`known_among`], and the entities these names read as.
+pub async fn known_among_with(
+    memory: &dyn crate::memory::Memory,
+    texts: &[&str],
+    names: &[&str],
+) -> Result<Vec<Entity>, crate::memory::MemoryError> {
+    let mut wanted = wanted_by(texts);
+    wanted.extend(wanted_names(names));
+    known_wanted(memory, wanted).await
+}
+
+/// [`roster_for`], and the entities these names resolve to.
+pub async fn roster_for_with(
+    memory: &dyn crate::memory::Memory,
+    texts: &[&str],
+    names: &[&str],
+) -> Result<Roster, crate::memory::MemoryError> {
+    roster_for_wanted(memory, texts, wanted_names(names)).await
+}
+
+/// **What a set of texts holds**: the badge of every stored mark, read wherever it sits
+/// (the mark is jojobot's own), and every handle written outside code, typed after an
+/// at sign, a numbered address included.
+pub fn wanted_by(texts: &[&str]) -> crate::memory::Wanted {
+    let mut wanted = crate::memory::Wanted::default();
+    for text in texts {
+        for (at, _) in text.match_indices('@') {
+            if text[at..].starts_with(super::MARK) {
+                let badge = super::run_of(text, at + super::MARK.len(), super::is_badge_byte);
+                if !badge.is_empty() {
+                    wanted.badges.insert(badge.to_string());
+                }
+            }
+        }
+        wanted.handles.extend(named(text));
+    }
+    wanted
+}
+
+/// **What a saved expression's value holds**: its stored marks, and each value word a
+/// handle shape, written bare. A write binds the second, and a read unbinds the first.
+pub fn wanted_in_expression(text: &str) -> crate::memory::Wanted {
+    let mut wanted = wanted_by(&[text]);
+    if let Ok(values) = crate::memory::filter::expression::saved_value_words(text) {
+        for value in values {
+            let word = EntityId(value.text.trim().to_string());
+            if word.kind().is_some() {
+                wanted.handles.insert(word);
+            }
+        }
+    }
+    wanted
+}
+
+/// The roster of every thing the store holds, and what a miss offers. The path of a
+/// store that answers no scoped read and of a text that names something missing, and
+/// the answer the scoped read is held to.
+pub async fn roster_for_whole(
     memory: &dyn crate::memory::Memory,
     texts: &[&str],
 ) -> Result<Roster, crate::memory::MemoryError> {
@@ -406,7 +560,11 @@ impl super::Mentioning {
                 .is_some_and(|a| a.reason.contains(super::MARK))
         };
         if entities.iter().any(marked) {
-            let known = self.known().await?;
+            let reasons: Vec<&str> = entities
+                .iter()
+                .filter_map(|e| e.archived.as_ref().map(|a| a.reason.as_str()))
+                .collect();
+            let known = self.known_among(&reasons).await?;
             for archived in entities.iter_mut().filter_map(|e| e.archived.as_mut()) {
                 archived.reason = super::rendered(&archived.reason, &known);
             }

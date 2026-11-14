@@ -521,7 +521,11 @@ fn handle_at(text: &str, at: usize) -> Attempt {
 
 pub mod roster;
 use roster::mention_at;
-pub use roster::{Offers, Roster, render_roster, roster_for, served_names};
+pub use roster::{
+    Offers, Roster, known_among, known_among_with, known_wanted, render_roster, roster_for,
+    roster_for_wanted, roster_for_whole, roster_for_with, served_names, wanted_by,
+    wanted_in_expression, wanted_names,
+};
 
 /// **Whether a caller's text carries the stored mark.** [`rendered`] reads an
 /// `@` and `#` followed by a badge as a link to whatever wears that badge, so
@@ -801,6 +805,40 @@ fn holds_an_expression(key: &str, declared: &[super::types::DeclaredType]) -> bo
         .any(|f| f.holds == super::types::ValueType::Expression)
 }
 
+/// **The strings of a fact a reader is served rendered**: its words, the reason an
+/// archive records, and the value of each key declared to hold an expression.
+fn fact_texts<'a>(fact: &'a super::Fact, declared: &[super::types::DeclaredType]) -> Vec<&'a str> {
+    let mut texts = vec![fact.content.as_str()];
+    texts.extend(fact.details.as_deref());
+    texts.extend(field_texts(&fact.fields, declared));
+    texts
+}
+
+/// The values of the fields a render reads: the archive reason, and each expression.
+fn field_texts<'a>(
+    fields: &'a std::collections::BTreeMap<String, String>,
+    declared: &[super::types::DeclaredType],
+) -> Vec<&'a str> {
+    fields
+        .iter()
+        .filter(|(key, _)| *key == super::ARCHIVE_REASON || holds_an_expression(key, declared))
+        .map(|(_, value)| value.as_str())
+        .collect()
+}
+
+/// The strings of a scanned document a reader is served rendered.
+fn doc_texts<'a>(
+    doc: &'a super::search::DocScan,
+    declared: &[super::types::DeclaredType],
+) -> Vec<&'a str> {
+    let mut texts = vec![doc.prose.as_str()];
+    texts.extend(field_texts(&doc.fields, declared));
+    for fact in &doc.facts {
+        texts.extend(fact_texts(fact, declared));
+    }
+    texts
+}
+
 // --- the decorator ---------------------------------------------------------
 
 /// **A store whose text carries mentions.**
@@ -823,10 +861,6 @@ pub struct Mentioning {
     /// The same store, for the roster only: entities and field values carry no
     /// text a mention rewrites.
     beneath: std::sync::Arc<dyn super::Memory>,
-    /// **The roster as of a change signal of the store beneath**, kept while the
-    /// signal stands. The roster lists every thing the store holds, and an answer
-    /// that renders the history of each thing a session holds asked for one each.
-    roster: std::sync::Mutex<Option<(super::WriteSummary, std::sync::Arc<Vec<Entity>>)>>,
 }
 
 impl Mentioning {
@@ -834,36 +868,15 @@ impl Mentioning {
         Mentioning {
             beneath: inner.clone(),
             inner: std::sync::Arc::new(Unrendered(inner)),
-            roster: std::sync::Mutex::new(None),
         }
     }
 
-    /// **What exists, as both directions of a mention need to see it.**
+    /// **What these texts name, as both directions of a mention need to see it.**
     ///
-    /// One read of the index answers handle-to-badge on the way in and
-    /// badge-to-handle on the way out, so neither direction holds an inventory
-    /// of its own.
-    ///
-    /// **Read once while the store's change signal stands.** The signal is the one
-    /// a refresh of the search index skips its read on: it moves with every write
-    /// the store keeps, so the roster of one signal is the roster of the next call
-    /// under it. It is read BEFORE the roster, so a write in between leaves the
-    /// roster labelled with the older signal and the next call reads it again. A
-    /// store that offers no signal is read every time.
-    async fn known(&self) -> Result<Vec<Entity>, super::MemoryError> {
-        let signal = self.beneath.write_summary().await?;
-        if let Some(signal) = &signal
-            && let Some((held, roster)) = self.roster.lock().expect("roster lock").as_ref()
-            && held == signal
-        {
-            return Ok(roster.as_ref().clone());
-        }
-        let roster = render_roster(&*self.beneath).await?;
-        if let Some(signal) = signal {
-            *self.roster.lock().expect("roster lock") =
-                Some((signal, std::sync::Arc::new(roster.clone())));
-        }
-        Ok(roster)
+    /// The stored marks they hold and the handles they write, and nothing else: see
+    /// [`known_among`]. A text with no mention asks the store nothing.
+    async fn known_among(&self, texts: &[&str]) -> Result<Vec<Entity>, super::MemoryError> {
+        known_among(&*self.beneath, texts).await
     }
 
     /// **The roster for these texts** — [`roster_for`] over the store beneath.
@@ -907,7 +920,7 @@ impl Mentioning {
                 .filter(|_| editing != Some(TextField::Details))
                 .unwrap_or(""),
         ];
-        let known = self
+        let mut known = self
             .known_for(&[
                 screened[0],
                 screened[1],
@@ -986,6 +999,17 @@ impl Mentioning {
                     attempted: address.to_string(),
                     nearest: Vec::new(),
                 })?;
+            // **The text under the edit is matched as a reader is served it**, so the
+            // marks it holds are named too.
+            let stored_words = [
+                newest.content.as_str(),
+                newest.details.as_deref().unwrap_or(""),
+            ];
+            for entity in known_among(&*self.beneath, &stored_words).await? {
+                if !known.iter().any(|held| held.id == entity.id) {
+                    known.push(entity);
+                }
+            }
             let (current, beside) = match edit.field {
                 TextField::Content => (
                     newest.content.as_str(),
@@ -1148,8 +1172,12 @@ impl Mentioning {
         if facts.is_empty() {
             return Ok(());
         }
-        let known = self.known().await?;
         let declared = self.declared().await?;
+        let texts: Vec<&str> = facts
+            .iter()
+            .flat_map(|fact| fact_texts(fact, &declared))
+            .collect();
+        let known = self.known_among(&texts).await?;
         for fact in facts {
             self.render_fact(fact, &known, &declared);
         }
@@ -1274,8 +1302,8 @@ impl super::Memory for Mentioning {
         Ok(match self.inner.record_app_event(event).await?.open() {
             AppOutcome::Landed(landed) => match *landed {
                 super::Guarded::Written((entity, mut stored)) => {
-                    let known = self.known().await?;
                     let declared = self.declared().await?;
+                    let known = self.known_among(&fact_texts(&stored, &declared)).await?;
                     self.render_fact(&mut stored, &known, &declared);
                     AppOutcome::Landed(Box::new(super::Guarded::Written((entity, stored))))
                 }
@@ -1329,8 +1357,8 @@ impl super::Memory for Mentioning {
             .open();
         Ok(match written {
             super::Guarded::Written((entity, mut stored)) => {
-                let known = self.known().await?;
                 let declared = self.declared().await?;
+                let known = self.known_among(&fact_texts(&stored, &declared)).await?;
                 self.render_fact(&mut stored, &known, &declared);
                 super::Guarded::Written((entity, stored))
             }
@@ -1385,8 +1413,8 @@ impl super::Memory for Mentioning {
             .open();
         Ok(match written {
             super::Guarded::Written((entity, mut stored)) => {
-                let known = self.known().await?;
                 let declared = self.declared().await?;
+                let known = self.known_among(&fact_texts(&stored, &declared)).await?;
                 self.render_fact(&mut stored, &known, &declared);
                 super::Guarded::Written((entity, stored))
             }
@@ -1445,7 +1473,8 @@ impl super::Memory for Mentioning {
     ) -> Result<(Entity, super::Archived), super::MemoryError> {
         let (entity, mut was) = self.inner.restore_entity(id, session).await?;
         if was.reason.contains(MARK) {
-            was.reason = rendered(&was.reason, &self.known().await?);
+            let known = self.known_among(&[was.reason.as_str()]).await?;
+            was.reason = rendered(&was.reason, &known);
         }
         Ok((entity, was))
     }
@@ -1574,7 +1603,8 @@ impl super::Memory for Mentioning {
         if writes.iter().all(|w| w.note.is_none()) {
             return Ok(writes);
         }
-        let known = self.known().await?;
+        let notes: Vec<&str> = writes.iter().filter_map(|w| w.note.as_deref()).collect();
+        let known = self.known_among(&notes).await?;
         for write in &mut writes {
             if let Some(note) = &write.note {
                 write.note = Some(rendered(note, &known));
@@ -1595,7 +1625,13 @@ impl super::Memory for Mentioning {
         {
             return Ok(trails);
         }
-        let known = self.known().await?;
+        let notes: Vec<&str> = trails
+            .history
+            .values()
+            .flatten()
+            .filter_map(|w| w.note.as_deref())
+            .collect();
+        let known = self.known_among(&notes).await?;
         for write in trails.history.values_mut().flatten() {
             if let Some(note) = &write.note {
                 write.note = Some(rendered(note, &known));
@@ -1614,7 +1650,11 @@ impl super::Memory for Mentioning {
         if chain.is_empty() {
             return Ok(chain);
         }
-        let known = self.known().await?;
+        let texts: Vec<&str> = chain
+            .iter()
+            .flat_map(|w| std::iter::once(w.content.as_str()).chain(w.details.as_deref()))
+            .collect();
+        let known = self.known_among(&texts).await?;
         for write in &mut chain {
             (write.content, write.details) =
                 rendered_words(&write.content, write.details.as_deref(), &known);
@@ -1632,7 +1672,11 @@ impl super::Memory for Mentioning {
         if versions.is_empty() {
             return Ok(versions);
         }
-        let known = self.known().await?;
+        let prose: Vec<&str> = versions
+            .iter()
+            .filter_map(|v| v.snapshot.as_ref().map(|s| s.prose.as_str()))
+            .collect();
+        let known = self.known_among(&prose).await?;
         for version in &mut versions {
             if let Some(snapshot) = &mut version.snapshot {
                 snapshot.prose = rendered(&snapshot.prose, &known);
@@ -1682,16 +1726,12 @@ impl super::Memory for Mentioning {
     ) -> Result<std::collections::HashMap<super::FactId, Vec<super::ClaimWrite>>, super::MemoryError>
     {
         let mut chains = self.inner.claim_histories(entity).await?.open();
-        // **The roster is read only when some write holds a mention.** It is every
-        // thing the store holds, and the search index asks the history of every thing
-        // it scans: text with no at sign has nothing to render.
-        let holds_a_mention = |text: &str| text.contains('@');
-        if !chains.values().flatten().any(|write| {
-            holds_a_mention(&write.content) || write.details.as_deref().is_some_and(holds_a_mention)
-        }) {
-            return Ok(chains);
-        }
-        let known = self.known().await?;
+        let texts: Vec<&str> = chains
+            .values()
+            .flatten()
+            .flat_map(|w| std::iter::once(w.content.as_str()).chain(w.details.as_deref()))
+            .collect();
+        let known = self.known_among(&texts).await?;
         for write in chains.values_mut().flatten() {
             (write.content, write.details) =
                 rendered_words(&write.content, write.details.as_deref(), &known);
@@ -1724,7 +1764,12 @@ impl super::Memory for Mentioning {
         if !fields.keys().any(|key| holds_an_expression(key, &declared)) {
             return Ok(fields);
         }
-        let known = self.known().await?;
+        let texts = field_texts(&fields, &declared)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let known = self.known_among(&texts).await?;
         for (key, value) in fields.iter_mut() {
             if holds_an_expression(key, &declared) {
                 *value = unbound_expression(value, &known);
@@ -1744,7 +1789,8 @@ impl super::Memory for Mentioning {
         if backing.values().all(|b| b.note.is_none()) {
             return Ok(backing);
         }
-        let known = self.known().await?;
+        let notes: Vec<&str> = backing.values().filter_map(|b| b.note.as_deref()).collect();
+        let known = self.known_among(&notes).await?;
         for held in backing.values_mut() {
             if let Some(note) = &held.note {
                 held.note = Some(rendered(note, &known));
@@ -1951,8 +1997,12 @@ impl super::Memory for Mentioning {
     /// rather than by a badge nobody types.
     async fn scan(&self) -> Result<Vec<super::search::DocScan>, super::MemoryError> {
         let mut scanned = self.inner.scan().await?.open();
-        let known = self.known().await?;
         let declared = self.declared().await?;
+        let texts: Vec<&str> = scanned
+            .iter()
+            .flat_map(|doc| doc_texts(doc, &declared))
+            .collect();
+        let known = self.known_among(&texts).await?;
         for doc in &mut scanned {
             self.render_scan(doc, &known, &declared);
         }
@@ -1991,8 +2041,8 @@ impl super::Memory for Mentioning {
         if doc.prose.is_empty() && doc.facts.is_empty() {
             return Ok(Some(doc));
         }
-        let known = self.known().await?;
         let declared = self.declared().await?;
+        let known = self.known_among(&doc_texts(&doc, &declared)).await?;
         self.render_scan(&mut doc, &known, &declared);
         Ok(Some(doc))
     }

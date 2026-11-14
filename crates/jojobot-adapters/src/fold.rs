@@ -1576,6 +1576,27 @@ impl Memory for Folded {
     /// jojobot is the only writer, so every change to what a read answers goes
     /// through the image. A row changed past this process is seen after a
     /// restart, as the image itself is. With no image held the store answers.
+    /// **The entities a set of texts names, answered from the claims State by key.**
+    /// Names, badges, merges and numbering are logged events, so this read has no decline
+    /// and never reaches the store; with no image held it answers `None` and the caller
+    /// reads the listing, as before.
+    async fn names(
+        &self,
+        wanted: &jojobot_domain::memory::Wanted,
+    ) -> Result<Option<jojobot_domain::memory::Names>, MemoryError> {
+        self.readable()?;
+        if self.held(|_| ()).is_none() {
+            return Ok(None);
+        }
+        match self.claims(|state| state.names_read(wanted)) {
+            Ok(names) => Ok(Some(names)),
+            Err(_) => {
+                self.unheld()?;
+                Ok(None)
+            }
+        }
+    }
+
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
         self.readable()?;
         let held = {
@@ -1704,26 +1725,21 @@ impl Memory for Folded {
         if self.held(|_| ()).is_none() {
             return self.inner.keys_holding(key, test, kind).await;
         }
-        let lease = key.trim() == jojobot_domain::session::ROLE_CLAIMED_AT;
         match self.claims(|state| {
             (
                 state.keys_holding(key, test, kind),
-                if lease {
-                    state.declined_among(kind)
-                } else {
-                    Vec::new()
-                },
+                state.declined_among(kind),
             )
         }) {
             Ok((mut held, declined)) => {
-                // **A role, and a thing a merge touched, is read from the store when the
-                // key is the lease moment**: a plain renewal overwrites that one write
-                // without an event, so the State's held value can be the one before, and
-                // a role merged into a thing carries it onto the survivor. Each is read
+                // **A thing the State declines is read from the store**, by the one
+                // predicate every read of the fold shares: a role, whose plain renewal
+                // overwrites the lease moment without an event, and a thing a merge
+                // touched, which may carry a role's value onto the survivor. Each is read
                 // through the fields the fold serves for it, which come from the store and
-                // refuse while the rail is uncertain. TEMPORARY(9.3.4)
-                // `q-934-role-lease-read-from-heartbeat-home`. Every other key of every
-                // thing is an event's, and the State answers it.
+                // refuse while the rail is uncertain. The State answers for every other
+                // thing. TEMPORARY(9.3.4) `q-934-role-lease-read-from-heartbeat-home` and
+                // `q-934-merge-version-row-in-state`, which end the declines.
                 if !declined.is_empty() {
                     let leaf = jojobot_domain::memory::filter::Filter::leaf(
                         Some(key.trim()),

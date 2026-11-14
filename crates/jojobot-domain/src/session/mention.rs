@@ -52,7 +52,9 @@ pub async fn as_read(memory: &dyn Memory, text: &str) -> Result<String, SessionE
     let for_write = mention::roster_for(memory, &[text]).await.map_err(store)?;
     let stored =
         mention::resolved(text, &for_write.known).map_err(|_| SessionError::KindsNeverLoaded)?;
-    let for_read = mention::render_roster(memory).await.map_err(store)?;
+    let for_read = mention::known_among(memory, &[stored.as_str()])
+        .await
+        .map_err(store)?;
     Ok(mention::rendered(&stored, &for_read))
 }
 
@@ -75,19 +77,30 @@ impl Mentioning {
         Mentioning { inner, memory }
     }
 
-    /// What exists, for a mention to resolve against on the way in and
-    /// render against on the way out — one read of the index answers both.
-    async fn known(&self) -> Result<Vec<Entity>, SessionError> {
-        mention::render_roster(&*self.memory)
+    /// **What these texts name and what these bots are**, for a mention to render against
+    /// on the way out: see [`mention::known_among_with`]. A text with no mention and no
+    /// bot asks the store nothing.
+    async fn known_of(&self, texts: &[&str], bots: &[&str]) -> Result<Vec<Entity>, SessionError> {
+        mention::known_among_with(&*self.memory, texts, bots)
             .await
             .map_err(|e| SessionError::Store(e.to_string()))
     }
 
-    /// **The roster a write resolves these texts against**: what exists, and each
-    /// numbered address the texts write answering to its member. One function
-    /// builds it for every text-taking write ([`mention::roster_for`]).
+    /// **The roster a write resolves these texts against**, and the bots it resolves.
     async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, SessionError> {
         mention::roster_for(&*self.memory, texts)
+            .await
+            .map(|roster| roster.known)
+            .map_err(|e| SessionError::Store(e.to_string()))
+    }
+
+    /// [`known_for`](Self::known_for), with the bot the write resolves to a badge.
+    async fn known_for_bot(
+        &self,
+        texts: &[&str],
+        bot: &EntityId,
+    ) -> Result<Vec<Entity>, SessionError> {
+        mention::roster_for_with(&*self.memory, texts, &[bot.as_str()])
             .await
             .map(|roster| roster.known)
             .map_err(|e| SessionError::Store(e.to_string()))
@@ -131,6 +144,27 @@ impl Mentioning {
             .unwrap_or_else(|| stored.clone())
     }
 
+    /// **The texts and bots a render of these runs reads.**
+    fn run_words<'a>(
+        sessions: impl IntoIterator<Item = &'a Session>,
+    ) -> (Vec<&'a str>, Vec<&'a str>) {
+        let (mut texts, mut bots) = (Vec::new(), Vec::new());
+        for session in sessions {
+            bots.push(session.bot.as_str());
+            texts.push(session.focus.as_str());
+            texts.extend(session.entries.iter().map(|entry| entry.text.as_str()));
+        }
+        (texts, bots)
+    }
+
+    /// The texts and bots a render of these summaries reads.
+    fn summary_words(summaries: &[SessionSummary]) -> (Vec<&str>, Vec<&str>) {
+        (
+            summaries.iter().map(|s| s.focus.as_str()).collect(),
+            summaries.iter().map(|s| s.bot.as_str()).collect(),
+        )
+    }
+
     fn render_entry(entry: &mut JournalEntry, known: &[Entity]) {
         entry.text = mention::rendered(&entry.text, known);
     }
@@ -149,7 +183,8 @@ impl Mentioning {
     }
 
     async fn render(&self, session: &mut Session) -> Result<(), SessionError> {
-        let known = self.known().await?;
+        let (texts, bots) = Self::run_words([&*session]);
+        let known = self.known_of(&texts, &bots).await?;
         Self::render_session(session, &known);
         Ok(())
     }
@@ -158,7 +193,8 @@ impl Mentioning {
         if sessions.is_empty() {
             return Ok(());
         }
-        let known = self.known().await?;
+        let (texts, bots) = Self::run_words(sessions.iter());
+        let known = self.known_of(&texts, &bots).await?;
         for session in sessions {
             Self::render_session(session, &known);
         }
@@ -171,7 +207,9 @@ impl Sessions for Mentioning {
     async fn wrapped_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
         let mut run = self.inner.wrapped_by_agent(agent).await?;
         if let Some(run) = &mut run {
-            Self::render_session(run, &self.known().await?);
+            let (texts, bots) = Self::run_words([&*run]);
+            let known = self.known_of(&texts, &bots).await?;
+            Self::render_session(run, &known);
         }
         Ok(run)
     }
@@ -179,19 +217,17 @@ impl Sessions for Mentioning {
     async fn live_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
         let mut run = self.inner.live_by_agent(agent).await?;
         if let Some(run) = &mut run {
-            Self::render_session(run, &self.known().await?);
+            self.render(run).await?;
         }
         Ok(run)
     }
 
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
-        let known = self.known().await?;
+        let known = self.known_of(&[], &[bot.as_str()]).await?;
         let former = self.former().await?;
         let key = Self::storage_key_for(bot, &known, &former);
         let mut sessions = self.inner.sessions_of(&key).await?;
-        for session in &mut sessions {
-            Self::render_session(session, &known);
-        }
+        self.render_many(&mut sessions).await?;
         Ok(sessions)
     }
 
@@ -201,10 +237,12 @@ impl Sessions for Mentioning {
     /// run in full.** Forwarding the caller's handle unchanged would miss a
     /// renamed bot's runs, which are stored under its badge.
     async fn summaries_of(&self, bot: &EntityId) -> Result<Vec<SessionSummary>, SessionError> {
-        let known = self.known().await?;
+        let known = self.known_of(&[], &[bot.as_str()]).await?;
         let former = self.former().await?;
         let key = Self::storage_key_for(bot, &known, &former);
         let mut summaries = self.inner.summaries_of(&key).await?;
+        let (texts, bots) = Self::summary_words(&summaries);
+        let known = self.known_of(&texts, &bots).await?;
         for summary in &mut summaries {
             Self::render_summary(summary, &known);
         }
@@ -216,7 +254,8 @@ impl Sessions for Mentioning {
         if summaries.is_empty() {
             return Ok(summaries);
         }
-        let known = self.known().await?;
+        let (texts, bots) = Self::summary_words(&summaries);
+        let known = self.known_of(&texts, &bots).await?;
         for summary in &mut summaries {
             Self::render_summary(summary, &known);
         }
@@ -229,7 +268,9 @@ impl Sessions for Mentioning {
         let Some(mut summary) = self.inner.summary_of(id).await? else {
             return Ok(None);
         };
-        let known = self.known().await?;
+        let known = self
+            .known_of(&[summary.focus.as_str()], &[summary.bot.as_str()])
+            .await?;
         Self::render_summary(&mut summary, &known);
         Ok(Some(summary))
     }
@@ -242,7 +283,8 @@ impl Sessions for Mentioning {
         if stored.is_empty() {
             return Ok(stored);
         }
-        let known = self.known().await?;
+        let bots: Vec<&str> = stored.iter().map(|run| run.bot.as_str()).collect();
+        let known = self.known_of(&[], &bots).await?;
         for run in &mut stored {
             run.bot = Self::current_handle_for(&run.bot, &known);
         }
@@ -255,7 +297,8 @@ impl Sessions for Mentioning {
         if stored.is_empty() {
             return Ok(stored);
         }
-        let known = self.known().await?;
+        let bots: Vec<&str> = stored.iter().map(|held| held.bot.as_str()).collect();
+        let known = self.known_of(&[], &bots).await?;
         for held in &mut stored {
             held.bot = Self::current_handle_for(&held.bot, &known);
         }
@@ -269,7 +312,7 @@ impl Sessions for Mentioning {
         let Some(bot) = &key.bot else {
             return self.inner.count_call(key).await;
         };
-        let known = self.known().await?;
+        let known = self.known_of(&[], &[bot.as_str()]).await?;
         let former = self.former().await?;
         let keyed = crate::usage::CallKey {
             bot: Some(Self::storage_key_for(bot, &known, &former)),
@@ -294,7 +337,11 @@ impl Sessions for Mentioning {
         if stored.is_empty() {
             return Ok(stored);
         }
-        let known = self.known().await?;
+        let bots: Vec<&str> = stored
+            .iter()
+            .filter_map(|held| held.key.bot.as_ref().map(EntityId::as_str))
+            .collect();
+        let known = self.known_of(&[], &bots).await?;
         for held in &mut stored {
             if let Some(bot) = &held.key.bot {
                 held.key.bot = Some(Self::current_handle_for(bot, &known));
@@ -313,7 +360,8 @@ impl Sessions for Mentioning {
         if stored.is_empty() {
             return Ok(stored);
         }
-        let known = self.known().await?;
+        let bots: Vec<&str> = stored.keys().map(EntityId::as_str).collect();
+        let known = self.known_of(&[], &bots).await?;
         let mut counts = std::collections::BTreeMap::new();
         for (bot, n) in stored {
             *counts
@@ -348,7 +396,7 @@ impl Sessions for Mentioning {
     /// pointer rather than a spelling.
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
         refuse_forged(&[new.focus.as_str()])?;
-        let known = self.known_for(&[new.focus.as_str()]).await?;
+        let known = self.known_for_bot(&[new.focus.as_str()], &new.bot).await?;
         let former = self.former().await?;
         let bot = Self::storage_key_for(&new.bot, &known, &former);
         let mut session = self
@@ -360,7 +408,7 @@ impl Sessions for Mentioning {
                 ..new
             })
             .await?;
-        Self::render_session(&mut session, &known);
+        self.render(&mut session).await?;
         Ok(session)
     }
 
@@ -429,7 +477,7 @@ impl Sessions for Mentioning {
                 &mention::resolved(focus, &known).map_err(|_| SessionError::KindsNeverLoaded)?,
             )
             .await?;
-        Self::render_session(&mut session, &known);
+        self.render(&mut session).await?;
         Ok(session)
     }
 
@@ -540,7 +588,12 @@ impl Sessions for Mentioning {
         {
             return Ok(changes);
         }
-        let known = self.known().await?;
+        let values: Vec<&str> = changes
+            .iter()
+            .filter(|c| matches!(c.changed, Some(ChangeKind::Begin | ChangeKind::Focus)))
+            .filter_map(|c| c.value.as_deref())
+            .collect();
+        let known = self.known_of(&values, &[]).await?;
         for change in &mut changes {
             if matches!(change.changed, Some(ChangeKind::Begin | ChangeKind::Focus)) {
                 change.value = change
@@ -562,7 +615,8 @@ impl Sessions for Mentioning {
         if wordings.is_empty() {
             return Ok(wordings);
         }
-        let known = self.known().await?;
+        let texts: Vec<&str> = wordings.iter().map(|w| w.text.as_str()).collect();
+        let known = self.known_of(&texts, &[]).await?;
         for wording in &mut wordings {
             wording.text = mention::rendered(&wording.text, &known);
         }
@@ -580,7 +634,7 @@ impl Sessions for Mentioning {
     /// between the boot and a restart does not leave the note naming a handle
     /// that no longer exists.
     async fn note_minted(&self, run: &super::MintedRun) -> Result<(), super::SessionError> {
-        let known = self.known().await?;
+        let known = self.known_of(&[], &[run.bot.as_str()]).await?;
         let former = self.former().await?;
         self.inner
             .note_minted(&super::MintedRun {
@@ -593,7 +647,8 @@ impl Sessions for Mentioning {
     /// **Read back as the handle the badge answers to now**, as a card's bot is.
     async fn minted_without_a_card(&self) -> Result<Vec<super::MintedRun>, super::SessionError> {
         let mut runs = self.inner.minted_without_a_card().await?;
-        let known = self.known().await?;
+        let bots: Vec<&str> = runs.iter().map(|run| run.bot.as_str()).collect();
+        let known = self.known_of(&[], &bots).await?;
         for run in &mut runs {
             run.bot = Self::current_handle_for(&run.bot, &known);
         }
@@ -613,7 +668,9 @@ impl Sessions for Mentioning {
         change: CharterChange,
         by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        let known = self.known().await?;
+        let known = self
+            .known_of(&[], &[bot.as_str(), change.by.as_str()])
+            .await?;
         let former = self.former().await?;
         let key = Self::storage_key_for(bot, &known, &former);
         let by = Self::storage_key_for(&change.by, &known, &former);
@@ -626,11 +683,12 @@ impl Sessions for Mentioning {
         &self,
         bot: &EntityId,
     ) -> Result<Option<CharterChange>, SessionError> {
-        let known = self.known().await?;
+        let known = self.known_of(&[], &[bot.as_str()]).await?;
         let former = self.former().await?;
         let key = Self::storage_key_for(bot, &known, &former);
         let mut found = self.inner.charter_change_of(&key).await?;
         if let Some(change) = &mut found {
+            let known = self.known_of(&[], &[change.by.as_str()]).await?;
             change.by = Self::current_handle_for(&change.by, &known);
         }
         Ok(found)
