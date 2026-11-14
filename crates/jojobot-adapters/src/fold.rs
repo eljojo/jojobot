@@ -1704,8 +1704,33 @@ impl Memory for Folded {
         if self.held(|_| ()).is_none() {
             return self.inner.keys_holding(key, test, kind).await;
         }
-        match self.claims(|state| state.keys_holding(key, test, kind)) {
-            Ok(held) => Ok(held),
+        match self.claims(|state| {
+            (
+                state.keys_holding(key, test, kind),
+                state.declined_among(kind),
+            )
+        }) {
+            Ok((mut held, declined)) => {
+                // **A thing the State declines is read from the store**, as the full read
+                // reads it: through the fields the fold serves for it, which refuse while
+                // the rail is uncertain. The State answers for every other thing.
+                // TEMPORARY(9.3.4) `q-934-role-lease-read-from-heartbeat-home` and
+                // `q-934-merge-version-row-in-state`.
+                if !declined.is_empty() {
+                    let leaf = jojobot_domain::memory::filter::Filter::leaf(
+                        Some(key.trim()),
+                        test.clone(),
+                    );
+                    held.retain(|id| !declined.contains(id));
+                    for id in declined {
+                        if leaf.holds(&self.fields(&id).await?) {
+                            held.push(id);
+                        }
+                    }
+                    held.sort();
+                }
+                Ok(held)
+            }
             Err(_) => {
                 self.unheld()?;
                 self.inner.keys_holding(key, test, kind).await

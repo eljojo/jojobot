@@ -103,3 +103,51 @@ async fn a_scan_listing_no_declined_thing_is_served_from_the_state_while_the_rai
     assert_eq!(served.len(), 1, "the one thing the fold lists");
     assert_eq!(counted.calls(), 0, "the scan crossed the rail");
 }
+
+/// **A holder query that must read a declined thing is refused while the rail is
+/// uncertain**, as a scan listing one is: the State does not decide a role or a
+/// thing a merge touched, and the store beyond the rail is not read for it.
+#[tokio::test]
+async fn a_holder_query_over_a_declined_thing_is_refused_while_the_rail_is_uncertain() {
+    let (folded, counted, _, _role) = uncertain_fold().await;
+    let refused = folded
+        .keys_holding(
+            "agent",
+            &jojobot_domain::memory::filter::Test::NotEquals(String::new()),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(&refused, Err(MemoryError::Store(why)) if why.contains("uncertain")),
+        "a holder query over a role went on: {refused:?}"
+    );
+    assert_eq!(counted.calls(), 0, "the refused query crossed the rail");
+}
+
+/// **Paired: with nothing declined the holder query is served from the State.**
+#[tokio::test]
+async fn a_holder_query_with_nothing_declined_is_served_from_the_state_while_the_rail_is_uncertain()
+{
+    let counted = Arc::new(Counted::new(Arc::new(InMemoryMemory::booted())));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    let thing = EntityId::person("person:alpha");
+    folded
+        .add_entity(NewEntity::new(thing.clone(), "Alpha", "user-named"))
+        .await
+        .expect("added")
+        .written()
+        .expect("not blocked");
+    folded.writer().mark_uncertain("memory");
+    counted.reset();
+    let held = folded
+        .keys_holding(
+            "agent",
+            &jojobot_domain::memory::filter::Test::NotEquals(String::new()),
+            None,
+        )
+        .await
+        .expect("served from the State");
+    assert!(held.is_empty(), "{held:?}");
+    assert_eq!(counted.calls(), 0, "the query crossed the rail");
+}

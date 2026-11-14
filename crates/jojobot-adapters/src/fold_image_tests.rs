@@ -804,3 +804,85 @@ async fn the_history_of_a_claim_with_no_mention_reads_no_roster() {
         );
     }
 }
+
+/// **A holder query reads the things the State declines from the store.** A role's
+/// lease renewals overwrite its `claimed_at` without a log event, and a thing a
+/// merge touched lacks the version row the move appended: the State's held fields
+/// for either can be a value the store has moved past. Each is read as the full
+/// read reads it, through the fields the fold serves for it, which come from the
+/// store; the State answers for every other thing.
+#[tokio::test]
+async fn a_holder_query_reads_a_role_and_a_merged_thing_from_the_store() {
+    use jojobot_domain::memory::filter::Test;
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+
+    let counted = Arc::new(Counted::new(Arc::new(InMemoryMemory::booted())));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    let handle = |kind: &str, n: usize| EntityId(format!("{kind}:{}", spelled(n)));
+    let (role, survivor, folded_away, plain) = (
+        EntityId("role:kappa".into()),
+        handle("person", 1),
+        handle("person", 2),
+        handle("person", 3),
+    );
+    for id in [&role, &survivor, &folded_away, &plain] {
+        folded
+            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    for id in [&role, &survivor, &plain] {
+        let mut fact = state(NewFact::about(
+            id.clone(),
+            "holds an agent",
+            jiff::civil::date(2026, 9, 2),
+        ));
+        fact.session = Some("fold-image".into());
+        fact.fields.insert("agent".into(), "a1".into());
+        fact.sets.insert("agent".into());
+        folded
+            .capture(fact)
+            .await
+            .expect("captured")
+            .written()
+            .expect("not blocked");
+    }
+    folded
+        .merge(
+            &folded_away,
+            &survivor,
+            Some("filed twice"),
+            jiff::civil::date(2026, 9, 3),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("merged");
+    let test = Test::NotEquals(String::new());
+
+    let held = folded
+        .keys_holding("agent", &test, None)
+        .await
+        .expect("who holds");
+    for id in [&role, &survivor, &plain] {
+        assert!(held.contains(id), "{id:?} holds: {held:?}");
+    }
+
+    for declined in [&role, &survivor] {
+        counted.fail_fields_of(Some(declined.as_str()));
+        let refused = folded.keys_holding("agent", &test, None).await;
+        assert!(
+            refused.is_err(),
+            "{declined:?} was answered from the State, not read from the store: {refused:?}"
+        );
+    }
+    counted.fail_fields_of(Some(plain.as_str()));
+    folded
+        .keys_holding("agent", &test, None)
+        .await
+        .expect("a thing the State serves is not read from the store");
+}

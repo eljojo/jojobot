@@ -47,6 +47,18 @@ impl State {
         })
     }
 
+    /// **The things a browse offers that this State does not decide a read of**: a
+    /// role, whose lease renewals overwrite its fields without an event, and a thing
+    /// a merge touched, which lacks the version row the move appended. TEMPORARY(9.3.4)
+    /// `q-934-role-lease-read-from-heartbeat-home` and `q-934-merge-version-row-in-state`.
+    /// A holder query leaves them to the store.
+    pub fn declined_among(&self, kind: Option<EntityKind>) -> Vec<EntityId> {
+        self.browse(kind)
+            .filter(|(object, _)| self.was_merged(object) || self.holds_a_lease(object))
+            .map(|(_, handle)| EntityId(handle.to_string()))
+            .collect()
+    }
+
     /// **The things whose fields hold a leaf**, in handle order: a thing a browse
     /// offers, of `kind` when one is named, whose `key` meets `test`.
     pub fn keys_holding(&self, key: &str, test: &Test, kind: Option<EntityKind>) -> Vec<EntityId> {
