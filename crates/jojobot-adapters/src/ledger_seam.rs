@@ -121,6 +121,60 @@ impl Held {
 pub(crate) struct Seam {
     log: DoltLog,
     held: Mutex<Held>,
+    /// **The teaching half of the State the boot restored**, held for the teaching ledger to
+    /// take once. One boot serves every family, so the teaching ledger does not boot again.
+    teaching: Mutex<Option<jojobot_domain::teaching::events::State>>,
+    /// What the boot that opened the seam did. Read by the cases that hold a boot to what it
+    /// must not replay.
+    #[cfg_attr(not(test), allow(dead_code))]
+    boot: crate::log_snapshot::BootReport,
+}
+
+/// **The log as the boot reads it from inside the seam's own open.** The open already runs as a
+/// job of the writer, so it reads through the log handle and not through the writer's queue,
+/// which it would wait on for ever. It only reads: the boot never writes the log.
+struct BootLog<'a>(&'a DoltLog);
+
+#[async_trait::async_trait]
+impl jojobot_domain::log::LogStore for BootLog<'_> {
+    async fn validity(
+        &self,
+    ) -> Result<jojobot_domain::log::Validity, jojobot_domain::log::LogError> {
+        self.0.validity().await
+    }
+
+    async fn append(
+        &self,
+        _expected_head: Position,
+        _batch: &SealedBatch,
+    ) -> Result<jojobot_domain::log::Append, jojobot_domain::log::LogError> {
+        Err(jojobot_domain::log::LogError::Store(
+            "the boot reads the log and never appends to it".into(),
+        ))
+    }
+
+    async fn read_from(
+        &self,
+        position: Position,
+        bound: usize,
+    ) -> Result<Vec<SealedBatch>, jojobot_domain::log::LogError> {
+        self.0.read_from(position, bound).await
+    }
+
+    async fn load_snapshot(
+        &self,
+    ) -> Result<Option<jojobot_domain::log::ValidatedSnapshot>, jojobot_domain::log::LogError> {
+        self.0.load_snapshot().await
+    }
+
+    async fn store_snapshot(
+        &self,
+        _snapshot: &jojobot_domain::log::ValidatedSnapshot,
+    ) -> Result<(), jojobot_domain::log::LogError> {
+        Err(jojobot_domain::log::LogError::Store(
+            "the boot reads the log and never stores a snapshot".into(),
+        ))
+    }
 }
 
 /// **Events staged in the caller's transaction.** Call [`Pending::committed`]
@@ -181,9 +235,11 @@ impl Seam {
         self.held.lock().expect("the ledger state is not poisoned")
     }
 
-    /// **Replay the log, and fill an empty ledger once from the old tables.** The
-    /// head is read on the writer's connection, which takes the one-writer lock
-    /// first.
+    /// **Boot from the snapshot and the tail of the log, and fill an empty ledger once from the
+    /// old tables.** The head is read on the writer's connection, which takes the one-writer
+    /// lock first. The boot restores the whole State, teaching, ledgers and claims, from the
+    /// snapshot the log holds and replays only the batches after it; with no snapshot it
+    /// replays from zero. This is the one boot of the process.
     pub(crate) async fn open(writer: &Writer, pool: &sql::Pool) -> Result<Arc<Self>, LedgerError> {
         let log = writer.shared_log(pool);
         let mut tx = pool
@@ -194,25 +250,77 @@ impl Seam {
         let settled = log.settle_on(&mut tx).await;
         let _ = tx.rollback().await;
         settled.map_err(refused)?;
-        let seam = Arc::new(Self {
-            log,
-            held: Mutex::new(Held {
-                state: State::default(),
-                claims: jojobot_domain::log::claims::State::default(),
-                applied: Position::default(),
-                claims_applied: Position::default(),
-                claims_unreadable: None,
-                behind: false,
-                seen: false,
-                claims_import: false,
-            }),
-        });
+        let seam = Box::pin(Self::booted(log)).await?;
         seam.catch_up().await?;
         if !seam.lock().seen {
             seam.import(pool).await?;
         }
         crate::claims_log::report_replay(&seam.lock().claims);
         Ok(seam)
+    }
+
+    /// **The seam over the State the boot restored.** The booted State is held by value only in
+    /// this function, so a caller that awaits it boxed does not carry the State in its own
+    /// future.
+    async fn booted(log: DoltLog) -> Result<Arc<Self>, LedgerError> {
+        // **The boot reads the log's identity**, which a log being opened for the first time
+        // does not hold yet: this makes it, as it is made when the log opens, and it is idempotent.
+        log.create_validity().await.map_err(refused)?;
+        let crate::log_snapshot::Boot {
+            state: booted,
+            position,
+            claims_applied,
+            claims_unreadable,
+            claims_import_batch,
+            report,
+            ..
+        } = Box::pin(crate::log_snapshot::boot(&BootLog(&log)))
+            .await
+            .map_err(refused)?;
+        let jojobot_domain::log::projection::State {
+            teaching,
+            ledger,
+            claims,
+            ledger_seen,
+        } = booted;
+        // **The import is known from its event**: a State restored from a snapshot that covers
+        // it holds the completed import, and a replay reads the event.
+        let claims_import = claims_import_batch || claims.import_completed();
+        Ok(Arc::new(Self {
+            log,
+            held: Mutex::new(Held {
+                state: ledger,
+                claims,
+                applied: position,
+                claims_applied,
+                claims_unreadable,
+                behind: false,
+                seen: ledger_seen,
+                claims_import,
+            }),
+            teaching: Mutex::new(Some(teaching)),
+            boot: report,
+        }))
+    }
+
+    /// **The teaching State the boot restored, once.** The teaching ledger takes it and goes on
+    /// from the position the seam has applied through; a second call finds none and the ledger
+    /// boots on its own.
+    pub(crate) fn take_teaching(
+        &self,
+    ) -> Option<(jojobot_domain::teaching::events::State, Position)> {
+        let state = self
+            .teaching
+            .lock()
+            .expect("the teaching half is not poisoned")
+            .take()?;
+        Some((state, self.lock().applied))
+    }
+
+    /// What the boot that opened the seam did.
+    #[cfg(test)]
+    pub(crate) fn boot_report(&self) -> &crate::log_snapshot::BootReport {
+        &self.boot
     }
 
     /// Apply every committed batch after the position applied through.

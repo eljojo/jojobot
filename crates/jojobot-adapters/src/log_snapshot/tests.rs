@@ -350,11 +350,11 @@ async fn snapshot_boot_restores_both_families_from_the_real_store() {
     tail(&log).await;
     let reopened = WriterLog::open(pool, writer.clone()).await.unwrap();
     let restored = boot(&reopened).await.unwrap();
-    let mut full = State::default();
+    let mut full = Boot::empty();
     for batch in reopened.read_from(Position(0), 256).await.unwrap() {
         apply(&mut full, &batch).unwrap();
     }
-    assert_eq!(projection(&restored.state), projection(&full));
+    assert_eq!(projection(&restored.state), projection(&full.state));
     assert!(
         restored
             .state

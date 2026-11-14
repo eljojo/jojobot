@@ -16,6 +16,47 @@ pub struct Boot {
     pub state: State,
     pub position: Position,
     batch_checksum: [u8; 32],
+    /// **The position of the last batch whose claims members `state.claims` applied.** It
+    /// follows `position` while every claims member reads. A claims member this build cannot
+    /// read (a declaration naming a kind the set does not hold yet) stops it, and
+    /// `claims_unreadable` says why: the ledgers and the teaching go on, the claims State
+    /// stays at the last batch it could read whole.
+    pub claims_applied: Position,
+    /// Why the claims State stopped behind the log, while it is behind.
+    pub claims_unreadable: Option<String>,
+    /// **The replay met the batch of the claims import**, by the id its batch carries. A State
+    /// restored from a snapshot says the same through its `ImportCompleted` event, so the seam
+    /// reads both.
+    pub claims_import_batch: bool,
+    /// What the boot did, for its line and for a case that reads it.
+    pub report: BootReport,
+}
+
+impl Boot {
+    /// The boot of a log with no history: an empty State at position zero.
+    fn empty() -> Self {
+        Boot {
+            state: State::default(),
+            position: Position(0),
+            batch_checksum: [0; 32],
+            claims_applied: Position(0),
+            claims_unreadable: None,
+            claims_import_batch: false,
+            report: BootReport::default(),
+        }
+    }
+}
+
+/// **What one boot did**: whether it started from a snapshot and how far the snapshot
+/// reached, what loading it cost, and the batches replayed after it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BootReport {
+    pub from_snapshot: bool,
+    pub restored_at: u64,
+    /// The bytes of the snapshot the boot read, and the time its State took to decode.
+    pub snapshot_bytes: u64,
+    pub decode_ms: u64,
+    pub tail_batches: u64,
 }
 
 fn unreadable(error: impl std::fmt::Display) -> LogError {
@@ -195,27 +236,77 @@ async fn restored(log: &dyn LogStore, validity: &Validity) -> Result<Result<Boot
             return Ok(Err(Skip::Boundary));
         }
     }
-    let Ok(state) = serde_json::from_slice(&snapshot.blob) else {
+    let decoding = std::time::Instant::now();
+    let Ok(state) = serde_json::from_slice::<State>(&snapshot.blob) else {
         return Ok(Err(Skip::Unreadable));
     };
+    // **The one door a loaded State comes through**: what a family leaves out of its
+    // serialized form is made again here.
+    let state = state.restored();
     Ok(Ok(Boot {
         state,
         position: snapshot.covered_position,
         batch_checksum: snapshot.batch_checksum,
+        claims_applied: snapshot.covered_position,
+        claims_unreadable: None,
+        claims_import_batch: false,
+        report: BootReport {
+            from_snapshot: true,
+            restored_at: snapshot.covered_position.0,
+            snapshot_bytes: snapshot.blob.len() as u64,
+            decode_ms: decoding.elapsed().as_millis() as u64,
+            tail_batches: 0,
+        },
     }))
 }
 
-fn apply(state: &mut State, batch: &SealedBatch) -> Result<(), LogError> {
+/// **Apply one batch to the boot's State.** A teaching or ledger member that cannot be read
+/// fails the boot. A claims member that cannot be read does not: the claims are applied from
+/// the batch whole or not at all, and the first batch with one the build cannot read stops them
+/// there and says why, as the ledger seam always has, so the ledgers and the teaching go on.
+fn apply(boot: &mut Boot, batch: &SealedBatch) -> Result<(), LogError> {
+    if batch
+        .header()
+        .batch_id
+        .0
+        .starts_with(crate::ledger_seam::CLAIMS_IMPORT_PREFIX)
+    {
+        boot.claims_import_batch = true;
+    }
+    let mut claims = Vec::new();
+    let mut unreadable_claim = None;
     for bytes in batch.members() {
         let member = if let Some(event) = teaching::decode_own(bytes).map_err(unreadable)? {
             Member::Teaching(event)
         } else if let Some(event) = ledger::decode_own(bytes).map_err(unreadable)? {
             Member::Ledger(event)
         } else {
-            // A family not activated in this build has no snapshot member.
+            match crate::claims_log::codec::decode_own(bytes) {
+                Ok(Some(claim)) => claims.push(claim),
+                Ok(None) => {}
+                Err(error) => {
+                    unreadable_claim.get_or_insert_with(|| error.to_string());
+                }
+            }
             continue;
         };
-        state.apply(&member).map_err(unreadable)?;
+        boot.state.apply(&member).map_err(unreadable)?;
+    }
+    if boot.claims_unreadable.is_none() {
+        match unreadable_claim {
+            None => {
+                for claim in &claims {
+                    crate::claims_log::apply(&mut boot.state.claims, claim);
+                }
+                boot.claims_applied = batch.range().last;
+            }
+            Some(why) => {
+                boot.claims_unreadable = Some(format!(
+                    "the batch ending at {}: {why}",
+                    batch.range().last.0
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -240,14 +331,7 @@ async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError>
         Ok(boot) => (boot, true),
         Err(skip) => {
             skip_to_report = report_skip.then_some(skip);
-            (
-                Boot {
-                    state: State::default(),
-                    position: Position(0),
-                    batch_checksum: [0; 32],
-                },
-                false,
-            )
+            (Boot::empty(), false)
         }
     };
     let (restored_at, loaded_ms) = (boot.position, began.elapsed().as_millis() as u64);
@@ -258,10 +342,13 @@ async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError>
             if let Some(skip) = skip_to_report {
                 skipped(skip, boot.position == Position(0));
             }
+            boot.report.tail_batches = tail_batches;
             tracing::info!(
                 from_snapshot,
                 restored_at = restored_at.0,
                 snapshot_load_ms = loaded_ms,
+                snapshot_bytes = boot.report.snapshot_bytes,
+                snapshot_decode_ms = boot.report.decode_ms,
                 tail_batches,
                 head = boot.position.0,
                 total_ms = began.elapsed().as_millis() as u64,
@@ -270,7 +357,7 @@ async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError>
             return Ok(boot);
         }
         for batch in batches {
-            apply(&mut boot.state, &batch)?;
+            apply(&mut boot, &batch)?;
             boot.position = batch.range().last;
             boot.batch_checksum = batch.header().checksum;
             tail_batches += 1;
@@ -284,6 +371,19 @@ async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError>
 pub async fn take_snapshot(log: &dyn LogStore, at: jiff::Timestamp) -> Result<Position, LogError> {
     let validity = log.validity().await?;
     let boot = replay(log, false).await?;
+    // **A snapshot never leaves a claims member out.** A State whose claims stopped at a member
+    // this build cannot read would be published as the State of the whole log, and a boot that
+    // restored it would serve claims the log has moved past. Nothing is published; the boot of
+    // such a log replays from the last snapshot it can use, as it does without this change.
+    if let Some(why) = &boot.claims_unreadable {
+        tracing::warn!(
+            reason = %why,
+            "NO SNAPSHOT TAKEN — a claims member of the log cannot be read by this build"
+        );
+        return Err(LogError::Store(format!(
+            "no snapshot is taken while a claims member is unreadable: {why}"
+        )));
+    }
     let blob = serde_json::to_vec(&boot.state).map_err(unreadable)?;
     let snapshot = ValidatedSnapshot {
         snapshot_format_version: FORMAT,

@@ -220,6 +220,117 @@ fn encoded(events: &[Event<ClaimEvent>]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+fn marge_events() -> Vec<Event<ClaimEvent>> {
+    let marge = ObjectId("k2".into());
+    vec![
+        event(ClaimEvent::ObjectCreated {
+            object: marge.clone(),
+            body: ObjectBody {
+                kind: KindId("person".into()),
+                parent: None,
+                name: "person:marge".into(),
+                source: "operator".into(),
+                aliases: Vec::new(),
+                boot: None,
+                metadata: Default::default(),
+                archived: false,
+                bound_to: None,
+            },
+        }),
+        event(ClaimEvent::AddressBound {
+            object: marge,
+            address: "person:marge".into(),
+        }),
+    ]
+}
+
+/// **A warm boot loads the claims from the snapshot and replays only the batches after it.**
+/// The log holds a batch of claims events, a snapshot that covers it, and one batch after the
+/// snapshot. A second writer's seam, as a restarted process opens it, restores the claims from
+/// the snapshot and reads the one batch after it: both things resolve, the boot started from the
+/// snapshot, and the batches it replayed are the tail alone. Before the claims joined the
+/// snapshot every boot replayed the whole log.
+#[tokio::test]
+async fn a_warm_boot_loads_the_claims_from_the_snapshot_and_replays_only_the_tail() {
+    let scratch = Scratch::new("seam-warm-boot");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
+
+    let seeding = Writer::default();
+    let covered = {
+        let log = WriterLog::open(store.clone(), seeding.clone())
+            .await
+            .unwrap();
+        let seal = |id: &str, head: Position, events: &[Event<ClaimEvent>]| {
+            SealedBatch::seal(
+                BatchId(id.into()),
+                head,
+                jiff::Timestamp::now(),
+                1,
+                events
+                    .iter()
+                    .map(crate::claims_log::codec::encode)
+                    .collect(),
+            )
+            .unwrap()
+        };
+        let head_of = |batches: Vec<SealedBatch>| {
+            batches
+                .last()
+                .map_or(Position(0), |batch| batch.range().last)
+        };
+        let head = head_of(log.read_from(Position(0), 256).await.unwrap());
+        let first = seal("claims:first", head, &claims_events());
+        log.append(head, &first).await.unwrap();
+        // The snapshot covers the first batch, the claims it holds included.
+        let covered = crate::log_snapshot::take_snapshot(&log, jiff::Timestamp::now())
+            .await
+            .unwrap();
+        assert_eq!(covered, first.range().last, "the snapshot covers the batch");
+        let second = seal("claims:second", covered, &marge_events());
+        log.append(covered, &second).await.unwrap();
+        covered
+    };
+    seeding.drain().await;
+    drop(seeding);
+
+    let writer = Writer::default();
+    let pool = crate::writer::sql::Pool::from(store.clone());
+    let seam = {
+        let (opener, pool) = (writer.clone(), pool);
+        writer
+            .run(async move { opener.ensure_seam(&pool).await })
+            .await
+            .expect("the seam opens over the snapshot and its tail")
+    };
+    let report = seam.boot_report().clone();
+    assert!(
+        report.from_snapshot,
+        "the boot did not start from the snapshot"
+    );
+    assert_eq!(
+        report.restored_at, covered.0,
+        "the snapshot reached the first batch"
+    );
+    assert_eq!(
+        report.tail_batches, 1,
+        "the boot replayed more than the tail"
+    );
+    assert!(report.snapshot_bytes > 0);
+    assert_eq!(
+        seam.read_claims(|state| {
+            (
+                state.resolve("person:homer").cloned(),
+                state.resolve("person:marge").cloned(),
+            )
+        }),
+        (Some(homer()), Some(ObjectId("k2".into()))),
+        "the claim the snapshot held and the claim the tail added both resolve"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A member of another family leaves the replay equal**, whichever side of the claims
 /// members the foreign one sits: the log holds every family's members, and the claims family
 /// applies its own and skips the rest.
@@ -262,6 +373,50 @@ async fn an_unknown_own_kind_makes_the_seam_refuse_to_lend_its_claims() {
         !lent && !ran,
         "a seam that could not read an own member lent its claims anyway"
     );
+    writer.drain().await;
+    server.stop().await;
+}
+
+/// **No snapshot is taken while a claims member of the log cannot be read.** A State whose claims
+/// stopped at that member would be published as the State of the whole log, and a boot that
+/// restored it would serve claims the log has moved past. The take is refused and nothing is
+/// stored.
+#[tokio::test]
+async fn no_snapshot_is_taken_while_a_claims_member_is_unreadable() {
+    let scratch = Scratch::new("seam-claims-no-snapshot");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
+    let future = br#"{"event_kind":"ClaimsSomethingNew","meaning_version":1,"actor":null,"run":null,"session_card":null,"request":null,"part":null,"occurred_at":null,"written_at":null,"imported_source_time":null,"payload":{"shape":"SomethingNew"}}"#;
+    let writer = Writer::default();
+    let log = WriterLog::open(store.clone(), writer.clone())
+        .await
+        .unwrap();
+    let head = log
+        .read_from(Position(0), 256)
+        .await
+        .unwrap()
+        .last()
+        .map_or(Position(0), |batch| batch.range().last);
+    let batch = SealedBatch::seal(
+        BatchId("future".into()),
+        head,
+        jiff::Timestamp::now(),
+        1,
+        vec![future.to_vec()],
+    )
+    .unwrap();
+    log.append(head, &batch).await.unwrap();
+
+    let taken = crate::log_snapshot::take_snapshot(&log, jiff::Timestamp::now()).await;
+    assert!(
+        taken.is_err(),
+        "a snapshot was taken over a claims member this build cannot read: {taken:?}"
+    );
+    assert!(
+        log.load_snapshot().await.unwrap().is_none(),
+        "the refused take left a snapshot behind"
+    );
+    drop(log);
     writer.drain().await;
     server.stop().await;
 }

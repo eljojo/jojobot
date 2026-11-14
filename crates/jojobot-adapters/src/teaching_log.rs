@@ -65,7 +65,10 @@ pub async fn serving_kept(
     );
     let was_empty = log.head() == Some(Position::default());
     let marks = import_marks(pool).await?;
-    let ledger = LoggedTeachings::open(log, &marks).await?;
+    // **One boot serves every family**: the writer's seam restored the whole State when the
+    // log opened, and the teaching ledger takes its half instead of booting again.
+    let restored = writer.seam().and_then(|seam| seam.take_teaching());
+    let ledger = LoggedTeachings::open_from(log, &marks, restored).await?;
     if was_empty {
         snapshots.after_import().await;
     }
@@ -162,6 +165,16 @@ impl LoggedTeachings {
     /// Replay the log. When it holds no batch, append `marks` as the first
     /// batch, in `(sid, domain)` order, each with its own `taught_at`.
     pub async fn open(log: Arc<dyn LogStore>, marks: &[Mark]) -> Result<Self, TeachingError> {
+        Self::open_from(log, marks, None).await
+    }
+
+    /// **Open from the teaching State a boot already restored**, and the position it is
+    /// current through, or boot on its own when none is handed over.
+    pub async fn open_from(
+        log: Arc<dyn LogStore>,
+        marks: &[Mark],
+        restored: Option<(State, Position)>,
+    ) -> Result<Self, TeachingError> {
         let this = Self {
             writer: Writer::default(),
             log,
@@ -172,7 +185,7 @@ impl LoggedTeachings {
             })),
             known: Arc::default(),
         };
-        this.fill(marks).await?;
+        this.fill(marks, restored).await?;
         Ok(this)
     }
 
@@ -183,15 +196,25 @@ impl LoggedTeachings {
         self
     }
 
-    async fn fill(&self, marks: &[Mark]) -> Result<(), TeachingError> {
+    async fn fill(
+        &self,
+        marks: &[Mark],
+        restored: Option<(State, Position)>,
+    ) -> Result<(), TeachingError> {
         let this = self;
         {
             let mut held = this.held.lock().await;
-            let restored = crate::log_snapshot::boot(this.log.as_ref())
-                .await
-                .map_err(refused)?;
-            held.state = restored.state.teaching;
-            held.head = restored.position;
+            let (state, head) = match restored {
+                Some(handed) => handed,
+                None => {
+                    let booted = crate::log_snapshot::boot(this.log.as_ref())
+                        .await
+                        .map_err(refused)?;
+                    (booted.state.teaching, booted.position)
+                }
+            };
+            held.state = state;
+            held.head = head;
             this.publish(&held);
             if held.head == Position::default() && !marks.is_empty() {
                 let mut ordered = marks.to_vec();

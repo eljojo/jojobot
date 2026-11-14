@@ -337,7 +337,8 @@ async fn two_appends_at_one_head_land_once_and_the_other_conflicts() {
 
 /// **A proxy that holds the first append statement it sees at the store's door**
 /// until the test lets it through, and says when it holds it. The statement is
-/// the one every append sends first, so the append is inside the store, past the
+/// the one every append sends first (its slot is a placeholder: the boot's read of the log's
+/// identity names its slot and is not held), so the append is inside the store, past the
 /// writer's queue and its one connection, and not yet committed.
 async fn append_gate_proxy(
     upstream: u16,
@@ -361,7 +362,7 @@ async fn append_gate_proxy(
                         let bytes = crate::dolt_log::tests::packet(&mut from_client).await?;
                         if bytes[4] == 0x16
                             && String::from_utf8_lossy(&bytes[5..])
-                                .contains("SELECT payload FROM event_log WHERE slot")
+                                .contains("SELECT payload FROM event_log WHERE slot = ?")
                             && once.swap(false, Ordering::SeqCst)
                         {
                             held.notify_one();
