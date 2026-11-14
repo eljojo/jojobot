@@ -690,6 +690,12 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
         plain.0.clone(),
         format!("{}/2", collection.0),
         format!("{}/9", collection.0),
+        // A slash and digits that are no number: the mention ends at the slash, and
+        // the collection it ends at is what the text names.
+        format!("{}/01", collection.0),
+        format!("{}/0", collection.0),
+        format!("{}/99999999999999999999999", collection.0),
+        format!("{}/01", plain.0),
         "view:loops".to_string(),
         format!("{}:{}", "person", spelled_slug(99)),
     ] {

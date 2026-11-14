@@ -257,7 +257,17 @@ pub fn wanted_by(texts: &[&str]) -> crate::memory::Wanted {
                 }
             }
         }
-        wanted.handles.extend(named(text));
+        for handle in named(text) {
+            // A slash and digits that are no whole number (a leading zero, a number too
+            // long to count) end the mention at the slash, so the render reads the
+            // collection before it: that is asked for too.
+            if crate::memory::numbered::numbered_handle(&handle).is_none()
+                && let Some((collection, _)) = handle.as_str().rsplit_once('/')
+            {
+                wanted.handles.insert(EntityId(collection.to_string()));
+            }
+            wanted.handles.insert(handle);
+        }
     }
     wanted
 }
