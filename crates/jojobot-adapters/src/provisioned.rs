@@ -37,6 +37,8 @@ use async_trait::async_trait;
 use jiff::civil::Date;
 
 use jojobot_domain::clock::Clock;
+use jojobot_domain::memory::filter::{Filter, Test};
+use jojobot_domain::memory::holders;
 use jojobot_domain::memory::owned::{
     Provisions, extended, guard_extension, is_overlay_key, overlaid, overlay_fields,
     without_overlay,
@@ -857,6 +859,52 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         entity: &EntityId,
     ) -> Result<Vec<jojobot_domain::memory::unmapped::UnmappedClaim>, MemoryError> {
         self.inner.unmapped_claims(entity).await
+    }
+    /// **Who holds a key, asked of the layer beneath and corrected where the build
+    /// supplies.** The default lists every thing and reads the fields of each, and the
+    /// roster every write and every mention-bearing read builds asks it, so over
+    /// thousands of things each such call cost a read of the whole instance.
+    ///
+    /// **What this layer changes is only the handles it supplies at**: a record the
+    /// build ships whole holds its shipped keys, and a stored thing holds a shipped
+    /// default for a key it wrote nothing under, its own value winning. Every other
+    /// thing reads as the layer beneath holds it, so the answer of the layer
+    /// beneath stands for it. Each handle the build supplies at is read as this
+    /// layer reads it and judged by the same leaf, so the answer is the one reading
+    /// every thing through this layer gives (a case pins that).
+    ///
+    /// **An overlay key is not one the layer serves**, so it is asked by the full
+    /// read, as the default asks it.
+    async fn keys_holding(
+        &self,
+        key: &str,
+        test: &Test,
+        kind: Option<EntityKind>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        if self.provisions.is_empty() {
+            return self.inner.keys_holding(key, test, kind).await;
+        }
+        if is_overlay_key(key) {
+            return holders::holding_by_reading(self, key, test, kind).await;
+        }
+        let supplied: std::collections::HashSet<&EntityId> = self.provisions.addresses().collect();
+        let mut held: std::collections::BTreeSet<EntityId> = self
+            .inner
+            .keys_holding(key, test, kind)
+            .await?
+            .into_iter()
+            .filter(|id| !supplied.contains(id))
+            .collect();
+        let leaf = Filter::leaf(Some(key), test.clone());
+        for entity in self.list_entities(kind).await? {
+            if supplied.contains(&entity.id)
+                && entity.browsable()
+                && leaf.holds(&self.fields(&entity.id).await?)
+            {
+                held.insert(entity.id);
+            }
+        }
+        Ok(held.into_iter().collect())
     }
     /// **Straight through**: a left-over default here would answer from this
     /// layer's own `history` and walk the store one key at a time.

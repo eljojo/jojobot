@@ -289,3 +289,153 @@ async fn a_search_by_the_operators_alias_finds_a_supplied_record_through_the_sta
         );
     }
 }
+
+/// A counter the supply layer can own while the case keeps a handle on its counts.
+struct SharedCounted(Arc<Counted>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl jojobot_domain::memory::Memory for SharedCounted {}
+
+/// **A stack over the fold with the supply layer's reads counted**: the fake, the
+/// fold, a counter, then the supply layer. The counter sees what the supply layer
+/// asks the fold.
+async fn the_stack_counted_above_the_fold(
+    provisions: Provisions,
+) -> (Provisioned<SharedCounted>, Arc<Counted>) {
+    let store = Arc::new(InMemoryMemory::booted().knowing(provisions.clone()));
+    let folded = Folded::new(store);
+    folded.rebuild().await.expect("the fold fills");
+    let counted = Arc::new(Counted::new(Arc::new(SharedFold(Arc::new(folded)))));
+    (
+        Provisioned::new(SharedCounted(counted.clone()), provisions),
+        counted,
+    )
+}
+
+fn spelled_thing(n: usize) -> EntityId {
+    let mut state = (n as u64 + 1).wrapping_mul(6364136223846793005);
+    let slug: String = (0..12)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (b'a' + ((state >> 33) % 26) as u8) as char
+        })
+        .collect();
+    EntityId(format!("{}:{}", "thing", slug))
+}
+
+/// **Who holds a key is asked of the fold and not read thing by thing.** The default
+/// answer lists every thing and reads the fields of each, and the roster every
+/// write and every mention-bearing read builds asks it: over thousands of things
+/// that is the cost of each such call. The supply layer forwards the question to the
+/// fold and corrects only the handles the build supplies at.
+#[tokio::test]
+async fn who_holds_a_key_is_asked_of_the_fold_and_not_read_thing_by_thing() {
+    let (stack, counted) = the_stack_counted_above_the_fold(shipped()).await;
+    for n in 0..40 {
+        let id = spelled_thing(n);
+        stack
+            .add_entity(jojobot_domain::memory::NewEntity::new(
+                id.clone(),
+                &id.0,
+                "fold-image",
+            ))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    counted.reset();
+    stack
+        .keys_holding(
+            "selects",
+            &jojobot_domain::memory::filter::Test::NotEquals(String::new()),
+            None,
+        )
+        .await
+        .expect("who holds");
+    let seen = counted.seen();
+    assert_eq!(seen.get("keys_holding"), Some(&1), "{seen:?}");
+    assert!(
+        seen.get("fields").copied().unwrap_or(0) <= 2,
+        "the fields of the things were read one by one: {seen:?}"
+    );
+}
+
+/// **The answer is the one the full read gives, supplied handles included.** A
+/// record the build ships whole holds its shipped keys; a stored thing holds the
+/// build's default for a key it wrote nothing under, and its own value where it
+/// wrote one. The forward must say the same as reading every thing through the
+/// layer, case by case.
+#[tokio::test]
+async fn who_holds_a_key_through_the_supply_layer_is_who_the_full_read_finds() {
+    use jojobot_domain::memory::filter::Test;
+    use jojobot_domain::memory::holders::holding_by_reading;
+    use jojobot_domain::memory::{NewEntity, NewFact};
+
+    let (without_default, with_own, with_default, bare) = (
+        spelled_thing(1),
+        spelled_thing(2),
+        spelled_thing(3),
+        spelled_thing(4),
+    );
+    let mut supplied = shipped();
+    supplied.extend(vec![
+        Provision::field(with_default.clone(), "rank", "5"),
+        Provision::field(with_own.clone(), "rank", "5"),
+    ]);
+    let (stack, _) = the_stack_counted_above_the_fold(supplied).await;
+    for id in [&without_default, &with_own, &with_default, &bare] {
+        stack
+            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    for (id, value) in [(&without_default, "5"), (&with_own, "9")] {
+        let mut fact = jojobot_domain::memory::testing::contract::state(NewFact::about(
+            id.clone(),
+            "holds a rank",
+            jiff::civil::date(2026, 9, 2),
+        ));
+        fact.session = Some("fold-image".into());
+        fact.fields.insert("rank".into(), value.into());
+        fact.sets.insert("rank".into());
+        stack
+            .capture(fact)
+            .await
+            .expect("captured")
+            .written()
+            .expect("not blocked");
+    }
+    for (key, test) in [
+        ("rank", Test::NotEquals(String::new())),
+        ("rank", Test::Equals("5".into())),
+        ("rank", Test::Equals("9".into())),
+        ("rank", Test::Exists),
+        ("selects", Test::NotEquals(String::new())),
+        ("selects", Test::Equals("work".into())),
+        ("name", Test::Exists),
+    ] {
+        let forwarded = stack
+            .keys_holding(key, &test, None)
+            .await
+            .expect("who holds");
+        let read = holding_by_reading(&stack, key, &test, None)
+            .await
+            .expect("the full read");
+        assert_eq!(forwarded, read, "{key} {test:?}");
+    }
+    let rank = stack
+        .keys_holding("rank", &Test::Exists, None)
+        .await
+        .expect("who holds");
+    assert!(rank.contains(&with_default), "the default holds: {rank:?}");
+    assert!(rank.contains(&with_own), "its own value holds: {rank:?}");
+    assert!(
+        !rank.contains(&bare),
+        "nothing holds for a bare thing: {rank:?}"
+    );
+}
