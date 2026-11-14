@@ -1066,24 +1066,35 @@ pub async fn migrate_permanent_ids(
 ///
 /// **Nothing to mark is the ordinary case**, not an error: a boot that changed
 /// no schema and a run that only read leave no difference behind. The store
-/// refuses an empty mark, so the difference is checked first and the quiet case
-/// stays quiet.
+/// refuses an empty mark, so what staging staged is counted first and the quiet
+/// case stays quiet.
+///
+/// **The mark stages with `DOLT_ADD('-A')` and commits without `-A`.** Staging skips a
+/// table that `dolt_ignore` names, which the store's documentation promises and
+/// `DOLT_COMMIT('-A')` does not. A table derived from the log, such as the
+/// snapshot's, is named there, so no mark ever holds a copy of it in history. A change to
+/// such a table alone stages nothing, so it asks for no commit and logs no warning.
 pub(crate) async fn snapshot(pool: &MySqlPool, boundary: &str) {
-    let changed: Result<i64, _> = sqlx::query_scalar("SELECT COUNT(*) FROM dolt_status")
-        .fetch_one(pool)
-        .await;
-    match changed {
+    if let Err(e) = sqlx::query("CALL DOLT_ADD('-A')").execute(pool).await {
+        tracing::warn!(boundary, error = %e, "store: could not stage what has changed");
+        return;
+    }
+    let staged: Result<i64, _> =
+        sqlx::query_scalar("SELECT COUNT(*) FROM dolt_status WHERE staged")
+            .fetch_one(pool)
+            .await;
+    match staged {
         Ok(0) => {
-            tracing::debug!(boundary, "store: nothing changed since the last mark");
+            tracing::debug!(boundary, "store: nothing staged since the last mark");
             return;
         }
         Ok(_) => {}
         Err(e) => {
-            tracing::warn!(boundary, error = %e, "store: could not read what has changed");
+            tracing::warn!(boundary, error = %e, "store: could not read what is staged");
             return;
         }
     }
-    if let Err(e) = sqlx::query("CALL DOLT_COMMIT('-A', '-m', ?)")
+    if let Err(e) = sqlx::query("CALL DOLT_COMMIT('-m', ?)")
         .bind(boundary)
         .execute(pool)
         .await
@@ -1823,6 +1834,76 @@ pub(crate) mod tests {
             "a boundary with nothing behind it leaves no mark: {after_second:?}"
         );
         again.stop().await;
+    }
+
+    /// **A mark stages what the commits hold and commits only what it staged**, so a table that
+    /// `dolt_ignore` names is in no commit, and a change to it alone makes no mark and no warning.
+    ///
+    /// The mark stages with `DOLT_ADD('-A')`, which skips an ignored table by its documentation,
+    /// counts the staged rows and commits without `-A`. `DOLT_COMMIT('-A')` makes no such promise
+    /// about an ignored table. Three boundaries: the setup, a change to the ignored table alone,
+    /// and a change to it beside a change to a table the commits hold.
+    #[tokio::test]
+    async fn a_mark_keeps_an_ignored_table_out_of_every_commit_and_makes_none_for_it_alone() {
+        let scratch = Scratch::new("mark-ignored");
+        let (mut store, _) = Dolt::ready(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store.pool().clone();
+        for statement in [
+            "INSERT INTO dolt_ignore VALUES ('derived_copy', true)",
+            "CREATE TABLE derived_copy (slot VARCHAR(16) PRIMARY KEY, body LONGBLOB NOT NULL)",
+            "CREATE TABLE kept_beside (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.expect("setup");
+        }
+        snapshot(&pool, "setup-1f7a").await;
+        let after_setup = marks(&pool).await.len();
+
+        sqlx::query("REPLACE INTO derived_copy VALUES ('s', x'01')")
+            .execute(&pool)
+            .await
+            .expect("the ignored table changes");
+        snapshot(&pool, "alone-1f7a").await;
+        assert_eq!(
+            marks(&pool).await.len(),
+            after_setup,
+            "a change to the ignored table alone made a mark"
+        );
+
+        sqlx::query("REPLACE INTO derived_copy VALUES ('s', x'02')")
+            .execute(&pool)
+            .await
+            .expect("the ignored table changes");
+        sqlx::query("REPLACE INTO kept_beside VALUES (1, 1)")
+            .execute(&pool)
+            .await
+            .expect("the kept table changes");
+        snapshot(&pool, "beside-1f7a").await;
+        let after_beside = marks(&pool).await;
+        assert_eq!(after_beside.len(), after_setup + 1, "{after_beside:?}");
+        assert_eq!(after_beside[0], "beside-1f7a");
+
+        let commits: Vec<String> = sqlx::query_scalar("SELECT commit_hash FROM dolt_log")
+            .fetch_all(&pool)
+            .await
+            .expect("the log reads");
+        for commit in &commits {
+            let read = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM derived_copy AS OF '{commit}'"
+            )))
+            .fetch_one(&pool)
+            .await;
+            assert!(read.is_err(), "the commit {commit} holds the ignored table");
+        }
+        let said = crate::log_capture::log_sink().text();
+        assert!(
+            !said
+                .lines()
+                .any(|line| line.contains("WARN") && line.contains("1f7a")),
+            "a boundary of this case was warned about"
+        );
+        store.stop().await;
     }
 
     /// A `Memory` that answers `list_entities` and `former_handles` on
