@@ -325,8 +325,8 @@ async fn a_durable_duplicate_handle_replays_safely_as_a_former_handle_and_warns_
 
 /// **A seam opened before the import knows what the import appended.** The mail
 /// rail opens the seam in the startup passes, and the claims import runs after them.
-/// The import appends through the shared log and not through the seam, so the seam
-/// has to be told to read what the import wrote.
+/// The import stages its batches through the seam and tells it they committed, so the
+/// seam holds what the import wrote.
 #[tokio::test]
 async fn a_seam_opened_before_the_import_knows_the_things_the_import_appended() {
     use jojobot_domain::memory::{EntityId, Memory, NewEntity};
@@ -375,9 +375,9 @@ async fn a_seam_opened_before_the_import_knows_the_things_the_import_appended() 
 }
 
 /// **A seam opened before the supply reconcile knows what the reconcile appended.**
-/// The reconcile appends through the shared log like the import, so the seam has to
-/// be told to read its batch. The build ships a type the log does not hold yet, and
-/// the reconcile declares it.
+/// The reconcile appends through the shared log and not through the seam, so the seam
+/// has to be told to read its batch (`seam_follows`, then `catch_up`). The build ships
+/// a type the log does not hold yet, and the reconcile declares it.
 #[tokio::test]
 async fn a_seam_opened_before_the_reconcile_knows_the_declaration_it_appended() {
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
