@@ -248,7 +248,19 @@ pub async fn roster_for_with(
 /// at sign, a numbered address included.
 pub fn wanted_by(texts: &[&str]) -> crate::memory::Wanted {
     let mut wanted = crate::memory::Wanted::default();
-    for text in texts {
+    // **A claim's content and details are read as one text**, so what is code, and a
+    // handle outside it, can differ from either read alone. Each adjacent pair is
+    // gathered joined as well; a name only one reading finds is asked for and harms
+    // none.
+    let joined: Vec<String> = texts
+        .windows(2)
+        .filter_map(|pair| super::words_joined(pair[0], Some(pair[1])))
+        .collect();
+    for text in texts
+        .iter()
+        .copied()
+        .chain(joined.iter().map(String::as_str))
+    {
         for (at, _) in text.match_indices('@') {
             if text[at..].starts_with(super::MARK) {
                 let badge = super::run_of(text, at + super::MARK.len(), super::is_badge_byte);

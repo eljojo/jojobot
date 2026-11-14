@@ -827,3 +827,80 @@ async fn a_claim_a_write_returns_renders_the_marks_it_was_stored_with() {
         "a retraction with a claim"
     );
 }
+
+/// **A handle is gathered where the claim's words put it outside code**, and the words
+/// are read as content and details together. A fence that opens on the content closes in
+/// the details, so a handle after it is outside code in the pair and inside code in the
+/// details read alone. A gather over each text alone finds no name, and a write of a
+/// handle that exists is refused as one that names nothing.
+#[tokio::test]
+async fn a_handle_outside_code_only_when_content_and_details_are_read_together_is_named() {
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{NewEntity, NewFact};
+
+    let (layer, _, _) = the_mention_stack().await;
+    let (about, named) = (spelled_thing(1), spelled_thing(2));
+    for id in [&about, &named] {
+        layer
+            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let fence = "`".repeat(3);
+    let mut fact = state(NewFact::about(
+        about.clone(),
+        format!("{fence}text"),
+        jiff::civil::date(2026, 9, 2),
+    ));
+    fact.session = Some("fold-image".into());
+    fact.details = Some(format!("{fence}\n@{}\n{fence}\n{fence}\n{fence}", named.0));
+    let written = layer
+        .capture(fact)
+        .await
+        .expect("captured")
+        .written()
+        .expect("the handle is outside code in the pair, and it exists");
+    let served = layer.recall(&about).await.expect("recalled");
+    assert_eq!(served.len(), 1);
+    assert_eq!(served[0].content, format!("{fence}text"));
+    assert_eq!(
+        served[0].details.as_deref(),
+        written.details.as_deref(),
+        "a recall serves what the write handed back"
+    );
+    assert!(
+        served[0]
+            .details
+            .as_deref()
+            .is_some_and(|details| details.contains(&format!("@{}", named.0))),
+        "{:?}",
+        served[0].details
+    );
+
+    // An edit that sends the details alone reads them beside the content as stored.
+    let mut plain = state(NewFact::about(
+        about.clone(),
+        format!("{fence}text"),
+        jiff::civil::date(2026, 9, 2),
+    ));
+    plain.session = Some("fold-image".into());
+    plain.details = Some("nothing here".into());
+    let stored = layer
+        .capture(plain)
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    let patch = jojobot_domain::memory::FactPatch {
+        details: Some(format!("{fence}\n@{}\n{fence}\n{fence}\n{fence}", named.0)),
+        ..Default::default()
+    };
+    layer
+        .update_fact(&stored.address(), patch, &EntityId("bot:sigma".into()))
+        .await
+        .expect("edited")
+        .written()
+        .expect("the details alone are read beside the stored content");
+}

@@ -942,17 +942,6 @@ impl Mentioning {
                 .filter(|_| editing != Some(TextField::Details))
                 .unwrap_or(""),
         ];
-        let mut known = self
-            .known_for(&[
-                screened[0],
-                screened[1],
-                patch
-                    .text_edit
-                    .as_ref()
-                    .map_or("", |edit| edit.replace.as_str()),
-            ])
-            .await?;
-        refuse_forged(&screened, &known)?;
         // **What is code is decided over the claim's content and details as one
         // text**, so an edit to one of them is read beside the other as stored:
         // a details written under a content line that opens a fence is code.
@@ -986,6 +975,27 @@ impl Mentioning {
             )),
             (None, None) => None,
         };
+        // **Names are gathered over the words as they are read**: the sent text beside
+        // the stored one it pairs with.
+        let paired = words.as_ref().map(|(c, d)| words_text(c, d.as_deref()));
+        let paired: Vec<&str> = paired.iter().flatten().map(String::as_str).collect();
+        let mut known = self
+            .known_for(
+                &[
+                    &[
+                        screened[0],
+                        screened[1],
+                        patch
+                            .text_edit
+                            .as_ref()
+                            .map_or("", |edit| edit.replace.as_str()),
+                    ][..],
+                    &paired[..],
+                ]
+                .concat(),
+            )
+            .await?;
+        refuse_forged(&screened, &known)?;
         if let Some((c, d)) = &words
             && let Some(blocked) = Self::screen_words(c, d.as_deref(), &known)
         {
