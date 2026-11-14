@@ -678,8 +678,19 @@ async fn replay_day(pid: u32, port: u16, first_call: usize, budget: Duration) ->
     let made = Arc::new(AtomicUsize::new(0));
     let finished = Arc::new(AtomicBool::new(false));
     let samples = Arc::new(std::sync::Mutex::new(Vec::new()));
+    // **How long each kind of call took, since the last progress line**: a replay that
+    // is slow says which calls are, and whether they slow as the day goes on.
+    let latency = Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::<
+        String,
+        (usize, u128),
+    >::new()));
     let sampler = {
-        let (made, finished, samples) = (made.clone(), finished.clone(), samples.clone());
+        let (made, finished, samples, latency) = (
+            made.clone(),
+            finished.clone(),
+            samples.clone(),
+            latency.clone(),
+        );
         tokio::spawn(async move {
             let started = Instant::now();
             let mut taken = 0_usize;
@@ -698,6 +709,21 @@ async fn replay_day(pid: u32, port: u16, first_call: usize, budget: Duration) ->
                             started.elapsed().as_secs(),
                             mib(memory.resident),
                         ));
+                        let mut window = latency.lock().expect("the latencies");
+                        let kinds: Vec<String> = window
+                            .iter()
+                            .map(|(kind, (count, total))| {
+                                format!("{kind} {count} at {} ms", total / (*count).max(1) as u128)
+                            })
+                            .collect();
+                        if !kinds.is_empty() {
+                            record(&format!(
+                                "memory-report day-latency: {} s into the replay: {}",
+                                started.elapsed().as_secs(),
+                                kinds.join(", ")
+                            ));
+                        }
+                        window.clear();
                     }
                     taken += 1;
                 }
@@ -708,14 +734,27 @@ async fn replay_day(pid: u32, port: u16, first_call: usize, budget: Duration) ->
     let started = Instant::now();
     let mut shards = tokio::task::JoinSet::new();
     for shard in 0..CLIENTS {
-        let (peer, sid, calls, made) = (peer.clone(), sid.clone(), calls.clone(), made.clone());
+        let (peer, sid, calls, made, latency) = (
+            peer.clone(),
+            sid.clone(),
+            calls.clone(),
+            made.clone(),
+            latency.clone(),
+        );
         shards.spawn(async move {
             let mut mine = Vec::new();
             for at in (shard..calls.len()).step_by(CLIENTS) {
                 if started.elapsed() >= budget {
                     break;
                 }
+                let asked = Instant::now();
                 make(&peer, &sid, calls[at], first_call + at, &mut mine).await;
+                {
+                    let mut window = latency.lock().expect("the latencies");
+                    let kind = window.entry(format!("{:?}", calls[at])).or_default();
+                    kind.0 += 1;
+                    kind.1 += asked.elapsed().as_millis();
+                }
                 made.fetch_add(1, Ordering::SeqCst);
             }
         });
