@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::{Timestamp, civil::Date};
 
-use super::{Event, ObjectId, RecordId, RunId};
+use super::{Event, ObjectId, Position, RecordId, RunId};
 use crate::actor::Actor;
 use crate::app::{AppId, AppStamp};
 use crate::memory::{
@@ -100,6 +100,8 @@ pub struct ObservedWrite {
     pub snapshot: Option<ObjectSnapshot>,
     pub run: Option<RunId>,
     pub source_time: Option<Timestamp>,
+    /// Where in the log the event that made this observation sits.
+    pub position: Position,
 }
 
 /// **Everything a claim says, complete when written.** `label` is the address
@@ -296,6 +298,8 @@ pub struct Revision {
     pub run: Option<RunId>,
     /// When the store took the write in, by the rule of [`Record::written_at`].
     pub written_at: Option<Timestamp>,
+    /// Where in the log the event that made this write sits.
+    pub position: Position,
 }
 
 /// **One write of an object's own row**: the object complete as that write left
@@ -312,6 +316,8 @@ pub struct ObjectVersion {
     pub actor: Option<Actor>,
     pub run: Option<RunId>,
     pub written_at: Option<Timestamp>,
+    /// Where in the log the event that made this version sits.
+    pub position: Position,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -328,6 +334,8 @@ struct Write {
     /// else the envelope's own. `None` stays `None`; the claim's moment is
     /// never put in its place.
     written_at: Option<Timestamp>,
+    /// Where in the log the event that made this write sits.
+    position: Position,
 }
 
 /// **One spelling retired from an object**, and the day it stopped being current.
@@ -542,9 +550,17 @@ fn serialize_entries<K: serde::Serialize, V: serde::Serialize, S: serde::Seriali
 }
 
 impl State {
-    /// **The interpreter.** Structural only. It reads the actor and the run of a
-    /// write from the envelope.
+    /// **The interpreter**, for an event whose position in the log is not known: it
+    /// is applied as the first position, which no log batch holds. Only a State
+    /// built from events that were never in a log is built this way.
     pub fn apply(&mut self, event: &Event<ClaimEvent>) -> Applied {
+        self.apply_at(event, Position::default())
+    }
+
+    /// **The interpreter.** Structural only. It reads the actor and the run of a
+    /// write from the envelope, and the position of every write it keeps from the
+    /// event's own place in the log.
+    pub fn apply_at(&mut self, event: &Event<ClaimEvent>, position: Position) -> Applied {
         let mut applied = Applied::default();
         match &event.payload {
             // **The current state at the cut serves the object and is never a
@@ -568,6 +584,7 @@ impl State {
                         actor: event.actor.clone(),
                         run: event.run.clone(),
                         written_at: event.imported_source_time.or(event.written_at),
+                        position,
                     });
                 let held = self.objects.insert(object.clone(), body.clone());
                 self.keep_object(held.as_ref(), body);
@@ -592,6 +609,7 @@ impl State {
                         snapshot: snapshot.clone(),
                         run: event.run.clone(),
                         source_time: event.imported_source_time,
+                        position,
                     });
                 if let Some(at) = event.imported_source_time {
                     self.note_moment(object, at);
@@ -654,6 +672,7 @@ impl State {
                             actor: event.actor.clone(),
                             run: event.run.clone(),
                             written_at: event.imported_source_time.or(event.written_at),
+                            position,
                         }],
                         written_at: event.imported_source_time.or(event.written_at),
                     },
@@ -682,6 +701,7 @@ impl State {
                         actor: event.actor.clone(),
                         run: event.run.clone(),
                         written_at: held.written_at,
+                        position,
                     });
                     self.index_record(record, Some(&before), claim);
                     self.note_change(
@@ -713,6 +733,7 @@ impl State {
                         writer: event.actor.clone(),
                         run: event.run.clone(),
                         written_at: event.imported_source_time.or(event.written_at),
+                        position,
                     },
                 );
                 self.index_write(record, subject, key, *ordinal);
@@ -744,6 +765,7 @@ impl State {
                         writer: event.actor.clone(),
                         run: event.run.clone(),
                         written_at: event.imported_source_time.or(event.written_at),
+                        position,
                     },
                 );
                 self.index_write(record, subject, key, *ordinal);
@@ -1124,6 +1146,15 @@ impl State {
 
     pub fn object(&self, object: &ObjectId) -> Option<&ObjectBody> {
         self.objects.get(self.survivor(object))
+    }
+
+    /// **Where in the log each write of one key of a thing sits**, oldest first.
+    pub fn write_positions(&self, subject: &ObjectId, key: &KeyId) -> Vec<Position> {
+        self.streams
+            .get(&(self.survivor(subject).clone(), key.clone()))
+            .map_or_else(Vec::new, |stream| {
+                stream.iter().map(|write| write.position).collect()
+            })
     }
 
     /// **The writes of an object's own row that an import observed**, under that
@@ -1589,3 +1620,6 @@ mod tests;
 
 #[cfg(test)]
 mod generation_tests;
+
+#[cfg(test)]
+mod positions_tests;

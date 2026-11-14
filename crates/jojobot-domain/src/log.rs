@@ -47,7 +47,19 @@ pub struct Event<P> {
 }
 
 /// Zero is the empty prefix. An event occupies one position; a cursor is exclusive.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct Position(pub u64);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
