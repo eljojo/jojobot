@@ -848,6 +848,7 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
     assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
+    assert_the_legacy_snapshots_are_gone(&state_dir, &git_ref).await;
     assert_the_teaching_marks_cover_the_rows(&state_dir, store_port, &git_ref).await;
     assert_the_import_answers_what_the_old_tables_answered(
         &state_dir,
@@ -1615,6 +1616,45 @@ fn without_the_log(dump: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// **After a boot the event log holds no snapshot row of the old format, and still holds its
+/// identity row.** Migration 0126 is what removes them, and its recovery check reads a
+/// predicate, so a store with no such row at the start cannot tell a migration that removed
+/// them from one that did nothing. The identity row is the control: the removal takes the
+/// snapshot rows and nothing else. Read with the store's own tool, no server over it.
+async fn assert_the_legacy_snapshots_are_gone(state_dir: &std::path::Path, git_ref: &str) {
+    let read = |query: &'static str| async move {
+        let out = tokio::process::Command::new("dolt")
+            .env("DOLT_ROOT_PATH", dolt_home_in(state_dir))
+            .args(["sql", "-r", "csv", "-q", query])
+            .current_dir(state_dir.join("db").join("jojobot"))
+            .output()
+            .await
+            .expect("dolt sql runs");
+        assert!(
+            out.status.success(),
+            "dolt sql failed on {query}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .skip(1)
+            .map(str::to_string)
+            .collect::<Vec<String>>()
+    };
+    let left = read("SELECT slot FROM event_log WHERE slot LIKE 'snapshot:%'").await;
+    assert!(
+        left.is_empty(),
+        "the first boot over the store recorded at {git_ref} left snapshot rows of the old \
+         format in the event log: {left:?}"
+    );
+    let identity = read("SELECT COUNT(*) FROM event_log WHERE slot = 'validity'").await;
+    assert_eq!(
+        identity,
+        ["1"],
+        "the first boot over the store recorded at {git_ref} lost the log's identity row"
+    );
 }
 
 /// **After a boot the ledger holds every version the build ships and no migration

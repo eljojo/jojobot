@@ -37,6 +37,26 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     let label = format!("interrupted-{version}-{how:?}");
     let restored = restore_a_fixture(&fixture, &label).await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    if version == "0126_event_log_snapshots_leave" {
+        // **The migration's own target, in the shape the build before wrote it**: the restore
+        // removes every log row but the identity, so without this the migration has nothing
+        // to remove in either state and a no-op or a wrong predicate would pass. The boot
+        // that follows must remove it; `boots_on_a_restored_store` reads that it did.
+        sqlx::query(
+            "INSERT INTO event_log (slot, first_position, last_position, payload)
+             VALUES ('snapshot:0123456789abcdef', NULL, 0, ?)",
+        )
+        .bind(b"[1,2,3]".as_slice())
+        .execute(store.pool())
+        .await
+        .expect("a snapshot row of the old format lands");
+        let held: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM event_log WHERE slot LIKE 'snapshot:%'")
+                .fetch_one(store.pool())
+                .await
+                .expect("the planted row counts");
+        assert_eq!(held, 1, "the migration's target is planted");
+    }
     leave_interrupted(store.pool(), version, how)
         .await
         .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
