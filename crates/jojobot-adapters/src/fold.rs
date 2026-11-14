@@ -1709,26 +1709,28 @@ impl Memory for Folded {
             (
                 state.keys_holding(key, test, kind),
                 if lease {
-                    state.roles_among(kind)
+                    state.declined_among(kind)
                 } else {
                     Vec::new()
                 },
             )
         }) {
-            Ok((mut held, roles)) => {
-                // **A role is read from the store when the key is its lease moment**: a
-                // plain renewal overwrites that one write without an event, so the State's
-                // held value can be the one before. The role is read through the fields the
-                // fold serves for it, which come from the store and refuse while the rail is
-                // uncertain. TEMPORARY(9.3.4) `q-934-role-lease-read-from-heartbeat-home`.
-                // Every other key of every thing is an event's, and the State answers it.
-                if !roles.is_empty() {
+            Ok((mut held, declined)) => {
+                // **A role, and a thing a merge touched, is read from the store when the
+                // key is the lease moment**: a plain renewal overwrites that one write
+                // without an event, so the State's held value can be the one before, and
+                // a role merged into a thing carries it onto the survivor. Each is read
+                // through the fields the fold serves for it, which come from the store and
+                // refuse while the rail is uncertain. TEMPORARY(9.3.4)
+                // `q-934-role-lease-read-from-heartbeat-home`. Every other key of every
+                // thing is an event's, and the State answers it.
+                if !declined.is_empty() {
                     let leaf = jojobot_domain::memory::filter::Filter::leaf(
                         Some(key.trim()),
                         test.clone(),
                     );
-                    held.retain(|id| !roles.contains(id));
-                    for id in roles {
+                    held.retain(|id| !declined.contains(id));
+                    for id in declined {
                         if leaf.holds(&self.fields(&id).await?) {
                             held.push(id);
                         }

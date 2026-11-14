@@ -4143,6 +4143,161 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
     store.stop().await;
 }
 
+/// **A role renewed off the log and then merged into an ordinary thing is still
+/// found by its lease moment.** The renewal overwrites the `claimed_at` write and
+/// appends no event, so the State holds the moment before it; the merge carries the
+/// State's old stream onto the survivor, and the store folds the renewed moment under
+/// it. The survivor is no role any more, so a read of roles alone would miss it. A
+/// holder query of the lease moment answers as the full read does: the survivor holds
+/// the renewed moment and not the one before.
+#[tokio::test]
+async fn a_renewed_role_merged_into_a_thing_is_found_by_its_renewed_lease_moment() {
+    use jojobot_domain::memory::filter::Test;
+    use jojobot_domain::memory::holders::holding_by_reading;
+    use jojobot_domain::memory::{FactPatch, Guarded, NewEntity, NewFact};
+    use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
+
+    let scratch = Scratch::new("lease_renewal_merged");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = Arc::new(DoltMemory::open(pool.clone()));
+
+    let bot = EntityId("bot:contract-lease-holder".into());
+    memory
+        .add_entity(NewEntity::new(
+            bot.clone(),
+            "Contract Lease Merged",
+            "user-named",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let role = EntityId("role:gamma".into());
+    memory
+        .add_entity(NewEntity {
+            parent: Some(bot.clone()),
+            ..NewEntity::new(role.clone(), "lease-merged", "contract-fixture")
+        })
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let survivor = EntityId("person:homer".into());
+    memory
+        .add_entity(NewEntity::new(
+            survivor.clone(),
+            "Contract Lease Survivor",
+            "user-named",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let t0 = jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10);
+    let fields_at = |at: jiff::Timestamp| {
+        std::collections::BTreeMap::from([
+            (ROLE_HOLDER.to_string(), "delta".to_string()),
+            (ROLE_CLAIMED_AT.to_string(), at.to_string()),
+        ])
+    };
+    let claim = memory
+        .capture(memory::state(NewFact {
+            fields: fields_at(t0),
+            ..NewFact::about(role.clone(), "delta claims the role", date(2026, 9, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
+    folded.rebuild().await.expect("the fold fills");
+    jojobot_adapters::testing::open_seam(&folded.writer(), &pool).await;
+
+    let lease_writes = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM field_write WHERE entity = (SELECT badge FROM entity WHERE id = ?) AND `key` = ?",
+        )
+        .bind(role.as_str())
+        .bind(ROLE_CLAIMED_AT)
+        .fetch_one(&pool)
+        .await
+        .expect("the writes of the lease moment count")
+    };
+    let writes_before = lease_writes().await;
+    let t1 = t0 + jiff::SignedDuration::from_mins(6);
+    let renewed = folded
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                fields: fields_at(t1),
+                role_move: Some(RoleMove {
+                    kind: RoleMoveKind::Renew,
+                    role: "lease-merged".into(),
+                    claimant: "delta".into(),
+                }),
+                ..FactPatch::default()
+            },
+            &bot,
+        )
+        .await
+        .expect("update ok");
+    assert!(matches!(renewed, Guarded::Written(_)), "{renewed:?}");
+    // The renewal overwrote the moment and appended no write: the plain renewal the
+    // case is about, which the log never sees.
+    assert_eq!(
+        lease_writes().await,
+        writes_before,
+        "the renewal appended a write"
+    );
+
+    folded
+        .merge(
+            &role,
+            &survivor,
+            Some("a role filed as a person"),
+            date(2026, 9, 3),
+            &bot,
+            None,
+        )
+        .await
+        .expect("the merge lands");
+
+    for test in [
+        Test::Equals(t1.to_string()),
+        Test::Equals(t0.to_string()),
+        Test::NotEquals(t0.to_string()),
+    ] {
+        let asked = folded
+            .keys_holding(ROLE_CLAIMED_AT, &test, None)
+            .await
+            .expect("who holds");
+        let read = holding_by_reading(&folded, ROLE_CLAIMED_AT, &test, None)
+            .await
+            .expect("the full read");
+        assert_eq!(asked, read, "{test:?}");
+    }
+    let renewed_holders = folded
+        .keys_holding(ROLE_CLAIMED_AT, &Test::Equals(t1.to_string()), None)
+        .await
+        .expect("who holds");
+    assert!(
+        renewed_holders.contains(&survivor),
+        "the survivor holds the renewed moment: {renewed_holders:?}"
+    );
+
+    store.stop().await;
+}
+
 /// **A rename after lease renewals does not lower the version.** The signals a
 /// renewal leaves stay filed under the handle the role wore when it was renewed,
 /// and the fold refuses a read whose version is lower than the one it holds, so

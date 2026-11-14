@@ -816,7 +816,7 @@ async fn the_history_of_a_claim_with_no_mention_reads_no_roster() {
 /// read builds asks who holds a key, and a store read for each declined thing made
 /// each of them cost seconds.
 #[tokio::test]
-async fn a_holder_query_reads_a_role_from_the_store_for_its_lease_moment_alone() {
+async fn a_holder_query_reads_the_declined_things_from_the_store_for_the_lease_moment_alone() {
     use jojobot_domain::memory::filter::Test;
     use jojobot_domain::memory::testing::contract::state;
     use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
@@ -876,15 +876,18 @@ async fn a_holder_query_reads_a_role_from_the_store_for_its_lease_moment_alone()
         assert!(held.contains(id), "{id:?} holds: {held:?}");
     }
 
-    // The lease moment of a role is the store's.
-    counted.fail_fields_of(Some(role.as_str()));
-    let refused = folded
-        .keys_holding(jojobot_domain::session::ROLE_CLAIMED_AT, &test, None)
-        .await;
-    assert!(
-        refused.is_err(),
-        "a role's lease moment was answered from the State: {refused:?}"
-    );
+    // The lease moment of a role, and of a thing a merge touched (a role may have been
+    // folded into it), is the store's.
+    for declined in [&role, &survivor] {
+        counted.fail_fields_of(Some(declined.as_str()));
+        let refused = folded
+            .keys_holding(jojobot_domain::session::ROLE_CLAIMED_AT, &test, None)
+            .await;
+        assert!(
+            refused.is_err(),
+            "{declined:?} lease moment was answered from the State: {refused:?}"
+        );
+    }
     // Every other key, of the role and of a thing a merge touched, is the State's.
     for fault in [&role, &survivor, &plain] {
         counted.fail_fields_of(Some(fault.as_str()));
@@ -896,9 +899,9 @@ async fn a_holder_query_reads_a_role_from_the_store_for_its_lease_moment_alone()
             assert!(held.contains(id), "{id:?} holds: {held:?}");
         }
     }
-    counted.fail_fields_of(Some(survivor.as_str()));
+    counted.fail_fields_of(Some(plain.as_str()));
     folded
         .keys_holding(jojobot_domain::session::ROLE_CLAIMED_AT, &test, None)
         .await
-        .expect("a merged thing is not read from the store");
+        .expect("a thing the State serves is not read from the store");
 }

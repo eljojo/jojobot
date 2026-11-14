@@ -47,16 +47,17 @@ impl State {
         })
     }
 
-    /// **The roles a browse offers**, whose lease moment this State may hold a value
-    /// the store has moved past: a plain renewal overwrites the `claimed_at` write
-    /// and keeps the moment in the heartbeat home, and appends no event.
-    /// TEMPORARY(9.3.4) `q-934-role-lease-read-from-heartbeat-home`. A holder query
-    /// of that one key leaves them to the store; every other key a role holds is
-    /// written by an event, and so is every key of a thing a merge touched, so the
-    /// State answers for them.
-    pub fn roles_among(&self, kind: Option<EntityKind>) -> Vec<EntityId> {
+    /// **The things a browse offers that may carry a role's off-log lease moment**: a
+    /// role, whose plain renewal overwrites the `claimed_at` write and keeps the moment
+    /// in the heartbeat home with no event, and a thing a merge touched, which may have
+    /// had a role folded into it: the merge moves the State's older stream, and the
+    /// store folds the renewed moment under the survivor. TEMPORARY(9.3.4)
+    /// `q-934-role-lease-read-from-heartbeat-home`. A holder query of that one key
+    /// leaves them to the store; every other key is written by an event, so the State
+    /// answers it for every thing.
+    pub fn declined_among(&self, kind: Option<EntityKind>) -> Vec<EntityId> {
         self.browse(kind)
-            .filter(|(object, _)| self.holds_a_lease(object))
+            .filter(|(object, _)| self.was_merged(object) || self.holds_a_lease(object))
             .map(|(_, handle)| EntityId(handle.to_string()))
             .collect()
     }
