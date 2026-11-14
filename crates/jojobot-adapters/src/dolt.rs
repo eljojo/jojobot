@@ -711,6 +711,10 @@ impl Dolt {
     async fn collect_garbage(database: &Path, home: &Path) -> bool {
         /// A collection that takes longer than this is killed and the start goes on.
         const COLLECTION_DEADLINE: Duration = Duration::from_secs(120);
+        Self::collect_garbage_within(database, home, COLLECTION_DEADLINE).await
+    }
+
+    async fn collect_garbage_within(database: &Path, home: &Path, deadline: Duration) -> bool {
         /// How long a server that is going away is waited for before the collection is skipped.
         const SERVER_GRACE: Duration = Duration::from_secs(10);
         /// The bytes under `root`, and the entries that could not be read.
@@ -745,6 +749,7 @@ impl Dolt {
         let walking = std::time::Instant::now();
         let (before, _) = tree_bytes(database);
         let first_walk_ms = walking.elapsed().as_millis() as u64;
+        let began = std::time::Instant::now();
         let mut collecting = tokio::process::Command::new("dolt");
         collecting
             .env("DOLT_ROOT_PATH", home)
@@ -760,7 +765,7 @@ impl Dolt {
         }
         die_with_this_process(&mut collecting);
         let collecting_since = std::time::Instant::now();
-        let done = Self::run_within(COLLECTION_DEADLINE, &mut collecting).await;
+        let done = Self::run_within(deadline, &mut collecting).await;
         let gc_ms = collecting_since.elapsed().as_millis() as u64;
         let elapsed_ms = began.elapsed().as_millis() as u64;
         match done {
@@ -802,7 +807,7 @@ impl Dolt {
             None => {
                 tracing::warn!(
                     database = %database.display(),
-                    deadline_s = COLLECTION_DEADLINE.as_secs(),
+                    deadline_s = deadline.as_secs(),
                     "store: the collection passed its deadline and was stopped; the store starts as it is"
                 );
                 false
@@ -2266,8 +2271,17 @@ pub(crate) mod tests {
             .unwrap()
             .parse()
             .expect("elapsed milliseconds");
+        let gc: u64 = line
+            .split("gc_ms=")
+            .nth(1)
+            .expect("the GC duration field")
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
         assert!(
-            elapsed >= 300,
+            elapsed >= gc + 300,
             "collection elapsed excludes the 350 ms grace: {line}"
         );
     }
@@ -2281,6 +2295,14 @@ pub(crate) mod tests {
             .next()
             .is_some_and(|arg| Path::new(&arg).ends_with("dolt"))
         {
+            match std::env::var("COLLECTION_EXIT").as_deref() {
+                Ok("failed") => std::process::exit(7),
+                Ok("deadline") => {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    return;
+                }
+                _ => {}
+            }
             std::fs::write(
                 std::env::var_os("COLLECTION_PWD_OUTPUT").unwrap(),
                 std::env::var("PWD").expect("the child PWD"),
@@ -2340,6 +2362,127 @@ pub(crate) mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+    }
+
+    mod collection_exits {
+        use super::*;
+        use tracing::instrument::WithSubscriber;
+
+        async fn check(case: &str) {
+            if std::env::var("COLLECTION_EXIT").as_deref() == Ok(case) {
+                let database = std::env::current_dir().unwrap();
+                let info = database.join(".dolt/sql-server.info");
+                std::fs::create_dir_all(info.parent().unwrap()).unwrap();
+                std::fs::write(
+                    &info,
+                    format!("{}:{}:secret", std::process::id(), free_port()),
+                )
+                .unwrap();
+                assert!(Dolt::a_server_serves_over(&database));
+                let captured = crate::log_capture::Captured::default();
+                let subscriber = tracing_subscriber::fmt()
+                    .with_writer(captured.clone())
+                    .with_ansi(false)
+                    .finish();
+                let home = database.join("home");
+                let (ran, ()) = async {
+                    tokio::join!(
+                        Dolt::collect_garbage_within(&database, &home, Duration::from_secs(3)),
+                        async {
+                            if case != "skipped" {
+                                tokio::time::sleep(Duration::from_millis(350)).await;
+                                std::fs::remove_file(&info).unwrap();
+                            }
+                        }
+                    )
+                }
+                .with_subscriber(subscriber)
+                .await;
+                assert!(
+                    !ran,
+                    "the selected exit must not report successful collection"
+                );
+                let said = captured.text();
+                let line = said
+                    .lines()
+                    .find(|line| line.contains("step=\"store-collection\""))
+                    .unwrap_or_else(|| panic!("no collection step for {case}: {said}"));
+                let field = |key: &str| -> u64 {
+                    let prefix = format!("{key}=");
+                    line.split_whitespace()
+                        .find_map(|part| part.strip_prefix(&prefix))
+                        .unwrap_or_else(|| panic!("missing {key} on {case}: {line}"))
+                        .parse()
+                        .unwrap()
+                };
+                let elapsed = field("elapsed_ms");
+                let grace = field("grace_ms");
+                let walk = field("walk_ms");
+                let gc = field("gc_ms");
+                assert!(
+                    grace >= if case == "skipped" { 9_000 } else { 300 },
+                    "{line}"
+                );
+                assert!(
+                    elapsed >= grace + walk + gc,
+                    "the whole step must cover its phases: {line}"
+                );
+                match case {
+                    "skipped" => {
+                        assert!(line.contains("grace_s="));
+                        assert_eq!((walk, gc), (0, 0));
+                    }
+                    "deadline" => {
+                        assert!(line.contains("deadline_s="));
+                        assert!(gc >= 2_500, "{line}");
+                    }
+                    _ => assert!(line.contains("error="), "{line}"),
+                }
+                return;
+            }
+            let scratch = Scratch::new(&format!("collection-exit-{case}"));
+            let database = scratch.0.join(DATABASE);
+            let bin = scratch.0.join("bin");
+            std::fs::create_dir_all(&database).unwrap();
+            std::fs::create_dir(&bin).unwrap();
+            if case != "spawn_failed" {
+                std::os::unix::fs::symlink(std::env::current_exe().unwrap(), bin.join("dolt"))
+                    .unwrap();
+            }
+            let name = format!("dolt::tests::collection_exits::{case}");
+            let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", &name, "--nocapture"])
+                .env("COLLECTION_EXIT", case)
+                .env("PATH", &bin)
+                .current_dir(&database)
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        }
+
+        #[tokio::test]
+        async fn skipped() {
+            check("skipped").await;
+        }
+        #[tokio::test]
+        async fn spawn_failed() {
+            check("spawn_failed").await;
+        }
+        #[tokio::test]
+        async fn failed() {
+            check("failed").await;
+        }
+        #[tokio::test]
+        async fn deadline() {
+            check("deadline").await;
+        }
     }
 
     /// **The collection never runs against a store a server is serving.** The command line's
