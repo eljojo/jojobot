@@ -748,3 +748,35 @@ fn a_server_that_closes_its_log_and_stays_alive_is_reported_as_running() {
         started.elapsed()
     );
 }
+
+/// **A start after an orderly stop loads the snapshot the stop published, from the table the
+/// snapshots are kept in, and says nothing against it.** The stop on SIGTERM publishes a snapshot
+/// of the log; the table is one no commit holds, so only a start that reads it can show that the
+/// publication and the load meet. A start that did not load it replays the whole log and warns that
+/// the snapshot was not used, which the upgrade gate's boots cannot show because it ends each boot
+/// with a kill.
+#[test]
+fn a_start_after_an_orderly_stop_loads_the_snapshot_the_stop_published() {
+    let mut first = start("jojobot-snapshot-round-trip");
+    first.stopped();
+    let state = first.take_state();
+
+    let second = start_over(state);
+    let boot = second
+        .seen
+        .iter()
+        .find(|line| line.contains("event log boot"))
+        .unwrap_or_else(|| panic!("no event log boot line:\n{}", second.seen.join("\n")));
+    assert!(
+        boot.contains("from_snapshot=true"),
+        "the start replayed the log instead of loading the snapshot: {boot}"
+    );
+    assert!(
+        !second
+            .seen
+            .iter()
+            .any(|line| line.contains("SNAPSHOT NOT USED")),
+        "the start warned that the snapshot was not used:\n{}",
+        second.seen.join("\n")
+    );
+}
