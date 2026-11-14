@@ -141,6 +141,34 @@ async fn opening_the_seam_replays_the_claims_members_of_the_log() {
         expected,
         "the seam reads the log to the state an independent replay of it builds"
     );
+    // **The seam's replay hands each event its own place in the log**: the entry the State
+    // keeps of a write names the position of the member that made it.
+    let versions = seam.read_claims(|state| {
+        state
+            .entity_versions(&homer())
+            .iter()
+            .map(|version| version.position)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(versions.len(), 1, "one write of the row: {versions:?}");
+    let position = versions[0];
+    let batches = seam
+        .log
+        .read_from(jojobot_domain::log::Position(position.0 - 1), 1)
+        .await
+        .unwrap();
+    let batch = &batches[0];
+    let member = &batch.members()[(position.0 - batch.range().first.0) as usize];
+    let event = crate::claims_log::codec::decode_own(member)
+        .unwrap()
+        .expect("a claims member sits at the position");
+    assert!(
+        matches!(
+            &event.payload,
+            ClaimEvent::ObjectCreated { object, .. } if *object == homer()
+        ),
+        "{position:?} holds {event:?}"
+    );
     writer.drain().await;
     server.stop().await;
 }

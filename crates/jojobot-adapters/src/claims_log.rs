@@ -5,8 +5,8 @@
 //! and [`report_replay`]. A read is answered from the seam's State and touches no store
 //! (decision log 292).
 
-use jojobot_domain::log::Event;
 use jojobot_domain::log::claims::{ClaimEvent, State};
+use jojobot_domain::log::{Event, Position};
 
 pub mod codec;
 
@@ -17,8 +17,9 @@ mod codec_tests;
 #[cfg(test)]
 const READ_BOUND: usize = 256;
 
-pub(crate) fn apply(state: &mut State, event: &Event<ClaimEvent>) {
-    let applied = state.apply(event);
+/// **Apply an event that sits at `position` in the log.**
+pub(crate) fn apply(state: &mut State, event: &Event<ClaimEvent>, position: Position) {
+    let applied = state.apply_at(event, position);
     if let Some(former) = applied.replaced_handle
         && let ClaimEvent::AddressBound { object, address } = &event.payload
     {
@@ -40,7 +41,6 @@ pub(crate) fn apply(state: &mut State, event: &Event<ClaimEvent>) {
 /// cannot also be what a test compares it with.
 #[cfg(test)]
 pub(crate) async fn replayed_from(log: &dyn jojobot_domain::log::LogStore) -> State {
-    use jojobot_domain::log::Position;
     let mut state = State::default();
     let mut head = Position(0);
     loop {
@@ -52,11 +52,12 @@ pub(crate) async fn replayed_from(log: &dyn jojobot_domain::log::LogStore) -> St
             return state;
         }
         for batch in batches {
-            for member in batch.members() {
+            for (index, member) in batch.members().iter().enumerate() {
                 if let Some(event) =
                     codec::decode_own(member).expect("a stored claims member reads")
                 {
-                    let _ = state.apply(&event);
+                    let position = Position(batch.range().first.0 + index as u64);
+                    let _ = state.apply_at(&event, position);
                 }
             }
             head = batch.range().last;

@@ -98,14 +98,18 @@ impl Held {
     /// state may have read ahead of the ledgers' cursor). While the claims state is
     /// behind the log nothing more is applied, so it never skips a batch it could
     /// not read; a batch that cannot be read stops it there and says why.
-    fn take_claims(&mut self, last: Position, claims: Result<Vec<Event<ClaimEvent>>, String>) {
+    fn take_claims(
+        &mut self,
+        last: Position,
+        claims: Result<Vec<(Position, Event<ClaimEvent>)>, String>,
+    ) {
         if last <= self.claims_applied || self.claims_unreadable.is_some() {
             return;
         }
         match claims {
             Ok(events) => {
-                for event in &events {
-                    crate::claims_log::apply(&mut self.claims, event);
+                for (position, event) in &events {
+                    crate::claims_log::apply(&mut self.claims, event, *position);
                 }
                 self.claims_applied = last;
             }
@@ -129,6 +133,8 @@ pub(crate) struct Pending {
     events: Vec<LedgerEvent>,
     /// The claims events of the transaction, as the log stores them.
     claims: Vec<Event<ClaimEvent>>,
+    /// The log position of the first claims event: the others follow it in order.
+    claims_from: u64,
     /// The transaction is the claims import: its commit sets `claims_import`.
     imported: bool,
     last: Position,
@@ -153,8 +159,9 @@ impl Pending {
             held.claims_import = true;
         }
         if held.claims_unreadable.is_none() {
-            for claim in &self.claims {
-                crate::claims_log::apply(&mut held.claims, claim);
+            for (index, claim) in self.claims.iter().enumerate() {
+                let position = Position(self.claims_from + index as u64);
+                crate::claims_log::apply(&mut held.claims, claim, position);
             }
             held.claims_applied = self.last;
         }
@@ -233,10 +240,12 @@ impl Seam {
                 // request id needs the ledgers, and the claims can catch up later.
                 let mut claims = Vec::new();
                 let mut unreadable_claim = None;
-                for member in batch.members() {
+                for (index, member) in batch.members().iter().enumerate() {
                     let Some(event) = codec::decode_own(member).map_err(unreadable)? else {
                         match crate::claims_log::codec::decode_own(member) {
-                            Ok(Some(claim)) => claims.push(claim),
+                            Ok(Some(claim)) => {
+                                claims.push((Position(batch.range().first.0 + index as u64), claim))
+                            }
                             Ok(None) => {}
                             Err(error) => {
                                 unreadable_claim.get_or_insert_with(|| error.to_string());
@@ -362,6 +371,7 @@ impl Seam {
         // The import carries the numbers its rows held, and none is made for it.
         let claims = self.checked_claims(claims)?;
         let mut head = Position(self.log.head_in(tx).await.map_err(refused)?);
+        let claims_from = head.0 + 1;
         let mut staged = None;
         for (index, chunk) in claims.chunks(CLAIMS_IMPORT_BATCH_SIZE).enumerate() {
             let batch = Self::seal(head.0, &[], chunk, at, Some(index))?;
@@ -379,6 +389,7 @@ impl Seam {
             staged: staged.ok_or_else(|| refused(jojobot_domain::log::LogError::InvalidBatch))?,
             events: Vec::new(),
             claims,
+            claims_from,
             imported: true,
             last: head,
         })
@@ -429,6 +440,7 @@ impl Seam {
         Ok(Pending {
             seam: Arc::clone(self),
             staged,
+            claims_from: batch.range().first.0 + events.len() as u64,
             events,
             claims,
             imported: false,
@@ -474,6 +486,7 @@ impl Seam {
             staged,
             events,
             claims: Vec::new(),
+            claims_from: 0,
             imported: false,
             last: batch.range().last,
         })
@@ -617,11 +630,13 @@ impl Seam {
                     held.claims_import = true;
                 }
                 let mut claims = Vec::new();
-                for member in batch.members() {
+                for (index, member) in batch.members().iter().enumerate() {
                     // Only the claims family's members: the ledgers have read these
                     // batches already.
                     match crate::claims_log::codec::decode_own(member) {
-                        Ok(Some(claim)) => claims.push(claim),
+                        Ok(Some(claim)) => {
+                            claims.push((Position(batch.range().first.0 + index as u64), claim))
+                        }
                         Ok(None) => {}
                         Err(error) => {
                             let why = format!("the claims state is behind the log: {error}");
@@ -630,8 +645,8 @@ impl Seam {
                         }
                     }
                 }
-                for claim in &claims {
-                    crate::claims_log::apply(&mut held.claims, claim);
+                for (position, claim) in &claims {
+                    crate::claims_log::apply(&mut held.claims, claim, *position);
                 }
                 held.claims_applied = batch.range().last;
             }
