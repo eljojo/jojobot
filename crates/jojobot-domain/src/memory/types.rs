@@ -582,7 +582,18 @@ impl Origin {
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
+#[serde(try_from = "Vec<EntityKind>")]
 pub struct Kinds(Vec<EntityKind>);
+
+/// **A set read back goes through the constructor**, so what is stored cannot be a set that
+/// [`Kinds::any_of`] would refuse: an empty one.
+impl TryFrom<Vec<EntityKind>> for Kinds {
+    type Error = String;
+
+    fn try_from(kinds: Vec<EntityKind>) -> Result<Self, Self::Error> {
+        Kinds::any_of(&kinds).ok_or_else(|| "a reference names no kind".to_string())
+    }
+}
 
 impl Kinds {
     /// What separates the kinds of a set in the declaration's token.
@@ -1612,6 +1623,23 @@ fn label(what: &str, value: &str) -> Result<(), MemoryError> {
 
 #[cfg(test)]
 mod tests {
+    /// **A set of kinds read back is never empty.** `Kinds::first` indexes the first kind, so a
+    /// stored declaration that names none must be refused when it is read, not when it is used.
+    #[test]
+    fn a_set_of_kinds_read_back_is_never_empty() {
+        crate::memory::kinds::load_shipped();
+        let held = super::Kinds::of_token("place").expect("a shipped kind");
+        let json = serde_json::to_string(&held).expect("the set serializes");
+        assert_eq!(
+            serde_json::from_str::<super::Kinds>(&json).expect("the set reads back"),
+            held
+        );
+        assert!(
+            serde_json::from_str::<super::Kinds>("[]").is_err(),
+            "an empty set of kinds was read back"
+        );
+    }
+
     /// **A delta applied to a list keeps the survivors where they stood and
     /// appends the additions.** An item already held is not added twice, an
     /// item not held is not an error to remove, and a list emptied is an empty
