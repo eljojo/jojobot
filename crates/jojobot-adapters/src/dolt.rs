@@ -68,6 +68,10 @@ fn rule_words(kind: sqlx::error::ErrorKind) -> Option<&'static str> {
 /// `/var/lib/jojobot/db` address the same database by the same name.
 pub(crate) const DATABASE: &str = "jojobot";
 
+/// How long a start waits for another start of the same store to finish before it gives up with
+/// an error that names what holds the directory.
+const START_OWNERSHIP_WAIT: Duration = Duration::from_secs(120);
+
 /// **The address of the server on `port` of the loopback address**, as the process
 /// that serves names it, with the `root` account [`Dolt::start`] explains. The one
 /// place it is written: the pre-build connects to a serving process's store by it.
@@ -311,6 +315,9 @@ impl Dolt {
             path: database.clone(),
             why: e.to_string(),
         })?;
+        // **Held until this start returns**, so the check for a server and the collection that
+        // follows cannot interleave with another start of the same store.
+        let _owning = Self::own_the_start(data_dir, START_OWNERSHIP_WAIT).await?;
         let home = Self::server_home(data_dir)?;
         let held_a_store = database.join(".dolt").exists();
         Self::init_if_empty(&database, &home)?;
@@ -610,14 +617,52 @@ impl Dolt {
             .is_ok()
     }
 
+    /// **Whether a server serves the database directory, as the command line would find it.**
+    /// The pinned command walks up from the database directory and reads the first
+    /// `.dolt/sql-server.info` it meets, so every directory from the database to the root is
+    /// read here, the database's own included.
+    fn a_server_serves_over(database: &Path) -> bool {
+        database.ancestors().any(Self::a_server_serves)
+    }
+
+    /// **Own the start of the store in this data directory.** An advisory lock on a file in the
+    /// directory, held until the start returns, so two starts of one store, in this process or
+    /// another, cannot both find no server and then collect while the other spawns. The wait
+    /// for it ends with an error that names what holds the directory.
+    async fn own_the_start(data_dir: &Path, wait: Duration) -> Result<std::fs::File, StartError> {
+        let path = data_dir.join(".jojobot-start.lock");
+        let fail = |why: String| StartError::DataDir {
+            path: path.clone(),
+            why,
+        };
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|error| fail(error.to_string()))?;
+        let until = std::time::Instant::now() + wait;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(file),
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(error)) => return Err(fail(error.to_string())),
+            }
+            if std::time::Instant::now() >= until {
+                return Err(fail("another start holds this directory".to_string()));
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     /// **Wait up to `grace` for a server that is going away**, and say whether nothing serves
     /// the store by then. A server that was killed, or is draining its stop, holds its process
     /// for a moment after it stops answering, and a start that follows at once would otherwise
     /// skip its collection and warn about a server that is about to be gone.
-    async fn nothing_serves_within(data_dir: &Path, grace: Duration) -> bool {
+    async fn nothing_serves_within(database: &Path, grace: Duration) -> bool {
         let until = std::time::Instant::now() + grace;
         loop {
-            if !Self::a_server_serves(data_dir) {
+            if !Self::a_server_serves_over(database) {
                 return true;
             }
             if std::time::Instant::now() >= until {
@@ -672,7 +717,7 @@ impl Dolt {
             }
             (total, unreadable)
         }
-        if !Self::nothing_serves_within(database.parent().unwrap_or(database), SERVER_GRACE).await {
+        if !Self::nothing_serves_within(database, SERVER_GRACE).await {
             tracing::warn!(
                 database = %database.display(),
                 grace_s = SERVER_GRACE.as_secs(),
@@ -2200,6 +2245,71 @@ pub(crate) mod tests {
             Dolt::a_server_serves(&scratch.0),
             "a file that cannot be understood counts as a server"
         );
+    }
+
+    /// **The guard looks where the command line looks.** The pinned command finds a live server by
+    /// walking UP from the database directory and reading the first `.dolt/sql-server.info` it
+    /// meets, so a server started over the database directory itself, or over any directory above
+    /// it, is the one a collection would run on. A guard that read only the data directory would
+    /// pass the first of those. The file names a live process at each level in turn.
+    #[test]
+    fn the_guard_reads_every_directory_the_command_line_reads() {
+        let scratch = Scratch::new("guard-ancestors");
+        let data_dir = scratch.0.join("data");
+        let database = data_dir.join(DATABASE);
+        std::fs::create_dir_all(&database).expect("the database directory");
+        assert!(!Dolt::a_server_serves_over(&database), "no file anywhere");
+        let alive = |dir: &Path| {
+            std::fs::create_dir_all(dir.join(".dolt")).expect("the directory");
+            std::fs::write(
+                dir.join(".dolt").join("sql-server.info"),
+                format!("{}:{}:secret", std::process::id(), free_port()),
+            )
+            .expect("the info file");
+        };
+        // A server over the database directory itself.
+        alive(&database);
+        assert!(
+            Dolt::a_server_serves_over(&database),
+            "a server over the database directory was not seen"
+        );
+        std::fs::remove_dir_all(database.join(".dolt")).expect("the file goes");
+        // A server over the data directory, the layout jojobot's own server uses.
+        alive(&data_dir);
+        assert!(
+            Dolt::a_server_serves_over(&database),
+            "a server over the data directory was not seen"
+        );
+        std::fs::remove_dir_all(data_dir.join(".dolt")).expect("the file goes");
+        // A server over a directory higher up, which the command line also finds.
+        alive(&scratch.0);
+        assert!(
+            Dolt::a_server_serves_over(&database),
+            "a server over a directory above the data directory was not seen"
+        );
+    }
+
+    /// **Two starts of one store do not interleave.** The start owns the directory through an
+    /// advisory lock until it returns, so the check for a server and the collection after it
+    /// cannot run while another start spawns. A second owner waits, and gives up with an error
+    /// that names what holds the directory; it is let in when the first lets go.
+    #[tokio::test]
+    async fn a_second_start_of_a_store_waits_for_the_first_to_let_go() {
+        let scratch = Scratch::new("start-ownership");
+        let first = Dolt::own_the_start(&scratch.0, Duration::from_secs(5))
+            .await
+            .expect("the first start owns the directory");
+
+        let refused = Dolt::own_the_start(&scratch.0, Duration::from_millis(300)).await;
+        assert!(
+            matches!(&refused, Err(StartError::DataDir { why, .. }) if why.contains("another start")),
+            "a second start was let in, or refused without saying why: {refused:?}"
+        );
+
+        drop(first);
+        Dolt::own_the_start(&scratch.0, Duration::from_secs(5))
+            .await
+            .expect("the directory is free once the first start lets go");
     }
 
     /// **A server that is going away is waited for, a short while, before the guard decides.** A
