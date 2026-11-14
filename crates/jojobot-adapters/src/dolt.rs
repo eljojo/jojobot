@@ -622,9 +622,9 @@ impl Dolt {
     /// `.dolt/sql-server.info` it meets, so every directory from the database to the root is
     /// read here, the database's own included.
     ///
-    /// **The walk is over the physical path**: the command runs from its working directory as the
-    /// system resolves it, so a database directory reached through a link is walked from where the
-    /// link leads, not from where it sits.
+    /// **The guard walks the physical path.** Go's Getwd can instead accept a logical absolute
+    /// PWD that names the working directory. The GC spawn pins PWD to this same physical path,
+    /// so a database reached through a link is guarded where the link leads.
     fn a_server_serves_over(database: &Path) -> bool {
         let physical = database
             .canonicalize()
@@ -750,6 +750,11 @@ impl Dolt {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Ok(physical) = database.canonicalize() {
+            collecting.env("PWD", physical);
+        } else {
+            collecting.env_remove("PWD");
+        }
         die_with_this_process(&mut collecting);
         let collecting_since = std::time::Instant::now();
         let done = Self::run_within(COLLECTION_DEADLINE, &mut collecting).await;
