@@ -39,6 +39,21 @@ jobs:
         run: |
           mkdir -p target/bar
           nix develop -c cargo run -q --locked -p jojobot-bar -- plan targeted "$CRATE" "$FILTER" 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
+      # **The deployed-store cases need the fixture, and narrow skips them without it.**
+      # A FILTER that appears in the gate's sources or in narrow's list of fixture
+      # cases (a case name, `deaths::`, `kitchen_sink::`) records the same last
+      # deployed store the check job downloads, with the same cache, and narrow
+      # then runs those cases. Any other FILTER prepares nothing and runs as before.
+      # The cases do not read BOOT_STORE_DIR, so the grown store is not built.
+      - name: Last deployed store
+        run: |
+          if [ "$CRATE" = jojobot ] && grep -rqF -- "$FILTER" \
+              crates/jojobot-bar/src/local_upgrade.rs crates/jojobot/tests/upgrade_gate.rs crates/jojobot/tests/upgrade_gate/; then
+            UPGRADE_FIXTURE_DIR="$PWD/target/upgrade-fixture" nix develop -c python3 scripts/prepare-upgrade-fixture
+            echo "UPGRADE_FIXTURE_DIR=$PWD/target/upgrade-fixture" >> "$GITHUB_ENV"
+          else
+            echo 'FILTER selects no deployed-store case: no fixture prepared'
+          fi
       - run: nix develop -c make narrow CRATE="$CRATE" FILTER="$FILTER"
       - if: ${{ !cancelled() }}
         continue-on-error: true
