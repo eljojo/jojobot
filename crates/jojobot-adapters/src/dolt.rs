@@ -687,6 +687,9 @@ impl Dolt {
     /// **Run a command to its end or to a deadline.** The command is killed when the deadline
     /// passes, because its future is dropped and the command was spawned to die with it. None is
     /// the deadline; Some is how the command ended.
+    /// This kills only the direct child: it neither kills a process group nor waits for reaping
+    /// before returning to the server spawn. Descendants can outlive the deadline.
+    /// Documentation only: there is no new behaviour to redden here.
     async fn run_within(
         deadline: Duration,
         command: &mut tokio::process::Command,
