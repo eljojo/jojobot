@@ -737,3 +737,87 @@ fn spelled_slug(n: usize) -> String {
         .1
         .to_string()
 }
+
+/// **A write hands back the claim as a reader is served it**, and a claim the write did
+/// not re-word still holds the marks it was stored with. An edit of fields alone sends no
+/// text, so no name is asked for by the text sent; the claim it returns, and the claim a
+/// retraction returns, name their own marks and render them as a recall does.
+#[tokio::test]
+async fn a_claim_a_write_returns_renders_the_marks_it_was_stored_with() {
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
+
+    let (layer, _, _) = the_mention_stack().await;
+    let (about, named) = (spelled_thing(1), spelled_thing(2));
+    for id in [&about, &named] {
+        layer
+            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let capture = |words: String| {
+        let mut fact = state(NewFact::about(
+            about.clone(),
+            words,
+            jiff::civil::date(2026, 9, 2),
+        ));
+        fact.session = Some("fold-image".into());
+        fact
+    };
+    let stored = layer
+        .capture(capture(format!("saw @{}", named.0)))
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    let expected = format!("saw @{}", named.0);
+    assert_eq!(stored.content, expected);
+
+    let mut patch = FactPatch::default();
+    patch.fields.insert("note".into(), "kept".into());
+    let edited = layer
+        .update_fact(&stored.address(), patch, &EntityId("bot:sigma".into()))
+        .await
+        .expect("edited")
+        .written()
+        .expect("not blocked");
+    assert_eq!(edited.content, expected, "a fields-only edit");
+
+    let retraction = layer
+        .retract(
+            &stored.address(),
+            None,
+            jiff::civil::date(2026, 9, 3),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("retracted");
+    assert_eq!(retraction.retracted.content, expected, "a retraction");
+
+    let second = layer
+        .capture(capture(format!("saw @{}", named.0)))
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    let (retraction, _) = layer
+        .retract_with_claim(
+            &second.address(),
+            None,
+            jiff::civil::date(2026, 9, 3),
+            &EntityId("bot:sigma".into()),
+            None,
+            capture("a note that names nothing".into()),
+        )
+        .await
+        .expect("retracted")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        retraction.retracted.content, expected,
+        "a retraction with a claim"
+    );
+}

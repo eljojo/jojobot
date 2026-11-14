@@ -884,6 +884,28 @@ impl Mentioning {
         roster_for(&*self.beneath, texts).await
     }
 
+    /// **The roster, and the names the claims a write hands back hold.** A claim the
+    /// write did not re-word keeps the marks it was stored with, which the text the
+    /// caller sent does not name, so a render over that text alone marks them missing.
+    async fn known_beside(
+        &self,
+        known: &Roster,
+        facts: &[&super::Fact],
+        declared: &[super::types::DeclaredType],
+    ) -> Result<Vec<Entity>, super::MemoryError> {
+        let texts: Vec<&str> = facts
+            .iter()
+            .flat_map(|fact| fact_texts(fact, declared))
+            .collect();
+        let mut all = known.known.clone();
+        for entity in self.known_among(&texts).await? {
+            if !all.iter().any(|held| held.id == entity.id) {
+                all.push(entity);
+            }
+        }
+        Ok(all)
+    }
+
     /// **An edit of a claim, with a companion claim written in the same act when
     /// one is sent.** The one preparation of the edit's words for both verbs.
     async fn edit_fact(
@@ -1107,6 +1129,17 @@ impl Mentioning {
         Ok(match written {
             super::Guarded::Written((mut stored, mut beside)) => {
                 let declared = self.declared().await?;
+                let beside_ref = beside.as_ref();
+                let known = self
+                    .known_beside(
+                        &known,
+                        &[Some(&stored), beside_ref]
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>(),
+                        &declared,
+                    )
+                    .await?;
                 self.render_fact(&mut stored, &known, &declared);
                 if let Some(beside) = beside.as_mut() {
                     self.render_fact(beside, &known, &declared);
@@ -1823,6 +1856,9 @@ impl super::Memory for Mentioning {
             .retract(address, reason.as_deref(), date, caller, session)
             .await?
             .open();
+        let known = self
+            .known_beside(&known, &[&done.retracted, &done.record], &declared)
+            .await?;
         self.render_fact(&mut done.retracted, &known, &declared);
         self.render_fact(&mut done.record, &known, &declared);
         Ok(done)
@@ -1879,6 +1915,9 @@ impl super::Memory for Mentioning {
             .open();
         Ok(match written {
             super::Guarded::Written((mut done, mut stored)) => {
+                let known = self
+                    .known_beside(&known, &[&done.retracted, &done.record, &stored], &declared)
+                    .await?;
                 self.render_fact(&mut done.retracted, &known, &declared);
                 self.render_fact(&mut done.record, &known, &declared);
                 self.render_fact(&mut stored, &known, &declared);
