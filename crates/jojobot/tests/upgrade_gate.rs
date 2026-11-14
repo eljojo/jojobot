@@ -507,10 +507,38 @@ async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
         .await
         .expect("the log's head is read again after the batches were taken out");
     for batch in &aged {
-        let landed = log
+        let landed = match log
             .append(batch.header().expected_previous_position, batch)
             .await
-            .expect("an aged batch is appended");
+        {
+            Ok(landed) => landed,
+            Err(error) => {
+                // **A refused append says what the log held at that moment**, so a red of this
+                // helper carries its own data: the append is refused when the head it was
+                // given differs from the owner's, or when a stored batch has this identity
+                // with other bytes, and the rows below tell the two apart.
+                let rows: Vec<(String, Option<u64>, u64, i64)> = sqlx::query_as(
+                    "SELECT slot, first_position, last_position, LENGTH(payload)
+                     FROM event_log ORDER BY last_position, slot",
+                )
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
+                let connection: Option<u64> = sqlx::query_scalar("SELECT CONNECTION_ID()")
+                    .fetch_one(pool)
+                    .await
+                    .ok();
+                panic!(
+                    "an aged batch is appended: {error:?}; batch id {:?}, expected previous \
+                     {:?}, range {:?}, of {} aged batches; the log held {rows:?} as connection \
+                     {connection:?} reads it",
+                    batch.header().batch_id,
+                    batch.header().expected_previous_position,
+                    batch.range(),
+                    aged.len(),
+                );
+            }
+        };
         assert!(
             matches!(landed, Append::Committed(_)),
             "an aged batch did not commit: {landed:?}"
@@ -4297,6 +4325,11 @@ async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_ov
 /// Only the case that restores with the log kept (see
 /// [`restore_a_fixture_keeping_the_log`]) leaves it alone: it measures the upgrade a
 /// deployed 9.3.3 store takes. The same removal is in `boot_measures.rs`.
+///
+/// **It builds a state; it does not prove recovery of a damaged store.** The snapshot is
+/// removed with the batches it summarises, because a snapshot left behind names a batch the
+/// log no longer holds and the boot refuses it with a warning. A store that lost its batches
+/// and kept its snapshot is a different case, and nothing here covers it.
 pub(crate) async fn leave_the_claims_import_to_the_head_boot(pool: &sqlx::MySqlPool) {
     sqlx::query("DELETE FROM event_log WHERE slot <> 'validity'")
         .execute(pool)
