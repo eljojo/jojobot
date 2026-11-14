@@ -524,6 +524,11 @@ pub struct State {
     versions: BTreeMap<ObjectId, Vec<ObjectVersion>>,
     /// Every object folded into each survivor, at any depth.
     folded_under: BTreeMap<ObjectId, BTreeSet<ObjectId>>,
+    /// Where in the log the event that folded each object into another sits. A merge
+    /// renumbers the writes of a key and moves a folded thing's writes under its survivor,
+    /// so the entries of a thing's history cannot be rebuilt from the writes' own events
+    /// without the merges that changed them.
+    merge_positions: BTreeMap<ObjectId, Position>,
     version_seq: u64,
     /// Every numbered merge, in the order they were made.
     merge_log: Vec<MergeEntry>,
@@ -652,9 +657,10 @@ impl State {
                     event.imported_source_time.or(event.written_at),
                     event.run.clone(),
                 )),
+                position,
             ),
             ClaimEvent::ObjectRedirected { folded, survivor } => {
-                self.merge(folded, survivor, &[], &[], None)
+                self.merge(folded, survivor, &[], &[], None, position)
             }
             ClaimEvent::MergeNumbersLeftEmpty { count } => self.leave_merge_numbers_empty(*count),
             ClaimEvent::ImportCompleted { .. } => self.import_completed = true,
@@ -963,6 +969,7 @@ impl State {
         records: &[MovedRecord],
         writes: &[MovedWrite],
         counted: Option<(Option<Timestamp>, Option<RunId>)>,
+        position: Position,
     ) {
         let numbered = counted.is_some();
         // A redirect that closes a loop would make `survivor` spin forever.
@@ -979,6 +986,7 @@ impl State {
         let survivor = &self.survivor(survivor).clone();
         self.index_before_merge(records);
         self.redirects.insert(folded.clone(), survivor.clone());
+        self.merge_positions.insert(folded.clone(), position);
         let mut under = self.folded_under.remove(folded).unwrap_or_default();
         under.insert(folded.clone());
         self.folded_under
@@ -1601,6 +1609,7 @@ impl State {
 pub mod emit;
 pub mod entity_change;
 mod generation;
+mod history_entries;
 pub mod import;
 mod indexes;
 pub mod job;
@@ -1608,6 +1617,7 @@ mod prepare;
 mod reads;
 mod rules;
 pub mod type_change;
+pub use history_entries::{HistoryEntries, KeyWriteEntry};
 pub use indexes::Located;
 pub use prepare::{
     Admitted, BootFloor, CaptureRequest, ClaimSize, Declined, Door, Draft, Measures, Refusal,
@@ -1623,3 +1633,6 @@ mod generation_tests;
 
 #[cfg(test)]
 mod positions_tests;
+
+#[cfg(test)]
+mod history_entries_tests;
