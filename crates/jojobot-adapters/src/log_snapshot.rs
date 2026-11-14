@@ -364,12 +364,6 @@ async fn replay(
     let (mut boot, from_snapshot) = match restored(log, &validity).await? {
         Ok(boot) => (boot, true),
         Err(skip) => {
-            // A table created in this start has no snapshot by construction.
-            let skip = if skip == Skip::NoneHeld && shape_changed {
-                Skip::Fingerprint
-            } else {
-                skip
-            };
             skip_to_report = report_skip.then_some(skip);
             (Boot::empty(), false)
         }
@@ -380,6 +374,13 @@ async fn replay(
         let batches = log.read_from(boot.position, READ_BOUND).await?;
         if batches.is_empty() {
             if let Some(skip) = skip_to_report {
+                // A new table explains a missing snapshot over history. An empty
+                // log has no prior shape to replace, even on its first migration.
+                let skip = if skip == Skip::NoneHeld && shape_changed && tail_batches > 0 {
+                    Skip::Fingerprint
+                } else {
+                    skip
+                };
                 skipped(skip, boot.position == Position(0));
             }
             boot.report.tail_batches = tail_batches;

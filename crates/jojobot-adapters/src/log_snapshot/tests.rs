@@ -598,3 +598,45 @@ fn every_reason_counts_at_its_own_place_in_the_list() {
         assert_eq!(skip.index(), at, "{}", skip.name());
     }
 }
+
+/// A migration explains a missing snapshot only when there is history to replay.
+#[tokio::test]
+async fn snapshot_none_held_levels_follow_history_and_the_migration_account() {
+    use tracing::instrument::WithSubscriber;
+    let _counting = FINGERPRINT_SKIPS.lock().await;
+    for (history, migrated, reason, level) in [
+        (false, true, "none_held", "INFO"),
+        (true, true, "fingerprint", "INFO"),
+        (true, false, "none_held", "WARN"),
+    ] {
+        let log = InMemoryLog::default();
+        if history {
+            prefix(&log, "homer").await;
+        }
+        let captured = crate::log_capture::Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let applied = if migrated {
+            vec!["0125_log_snapshot".to_string()]
+        } else {
+            vec![]
+        };
+        boot_after_migrations(&log, &applied)
+            .with_subscriber(subscriber)
+            .await
+            .unwrap();
+        let said = captured.text();
+        let lines: Vec<_> = said
+            .lines()
+            .filter(|line| line.contains("reason="))
+            .collect();
+        assert_eq!(lines.len(), 1, "{said}");
+        assert!(
+            lines[0].contains(reason) && lines[0].contains(level),
+            "{said}"
+        );
+    }
+}
