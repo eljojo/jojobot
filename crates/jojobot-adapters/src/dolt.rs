@@ -583,63 +583,135 @@ impl Dolt {
         Ok(())
     }
 
+    /// **Whether a server serves the store whose data directory this is.** The server writes
+    /// `pid:port:secret` to `.dolt/sql-server.info` in its data directory, and the command line
+    /// reads that file to find a live server and run its commands ON it. The file outlives a
+    /// server that was killed, so it is not the answer alone: a server serves when its process is
+    /// there or its port answers. **A file that cannot be read or understood counts as serving**,
+    /// because the cost of being wrong the other way is an online collection.
+    fn a_server_serves(data_dir: &Path) -> bool {
+        let text = match std::fs::read_to_string(data_dir.join(".dolt").join("sql-server.info")) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(_) => return true,
+        };
+        let mut parts = text.trim().split(':');
+        let (Some(pid), Some(port)) = (
+            parts.next().and_then(|part| part.parse::<u32>().ok()),
+            parts.next().and_then(|part| part.parse::<u16>().ok()),
+        ) else {
+            return true;
+        };
+        Path::new(&format!("/proc/{pid}")).exists()
+            || std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+                Duration::from_millis(500),
+            )
+            .is_ok()
+    }
+
+    /// **Run a command to its end or to a deadline.** The command is killed when the deadline
+    /// passes, because its future is dropped and the command was spawned to die with it. None is
+    /// the deadline; Some is how the command ended.
+    async fn run_within(
+        deadline: Duration,
+        command: &mut tokio::process::Command,
+    ) -> Option<std::io::Result<std::process::Output>> {
+        tokio::time::timeout(deadline, command.output()).await.ok()
+    }
+
     /// **Collect what no commit or table refers to, over the stopped store**, and say what it
     /// cost on a boot line of its own, in the form every boot step uses. Every write leaves
     /// chunks nothing refers to. The server reports a background collection on and does not run
     /// one, so without this a store's tree grows to several times what it holds. The command
     /// line's collection never blocks a server's writes or breaks its connections, because no
-    /// server is running. **It cannot fail the start**: a store that is not collected still
-    /// serves, so a failure is a warning that names what the command said.
-    async fn collect_garbage(database: &Path, home: &Path) {
-        fn tree_bytes(root: &Path) -> u64 {
-            let mut total = 0;
+    /// server is running. **It runs only when nothing serves the store** ([`Self::a_server_serves`]):
+    /// the command finds a live server by itself and would run the collection on it. **It cannot
+    /// fail the start**: a store that is not collected still serves, so a skip, a failure and a
+    /// pass of its deadline are each a warning that says what happened. The command is killed
+    /// with this process and when the deadline passes, as the server's spawn is. Returns whether
+    /// the collection ran to its end.
+    async fn collect_garbage(database: &Path, home: &Path) -> bool {
+        /// A collection that takes longer than this is killed and the start goes on.
+        const COLLECTION_DEADLINE: Duration = Duration::from_secs(120);
+        /// The bytes under `root`, and the entries that could not be read.
+        fn tree_bytes(root: &Path) -> (u64, u64) {
+            let (mut total, mut unreadable) = (0, 0);
             let mut pending = vec![root.to_path_buf()];
             while let Some(directory) = pending.pop() {
-                for entry in std::fs::read_dir(&directory)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                {
+                let Ok(entries) = std::fs::read_dir(&directory) else {
+                    unreadable += 1;
+                    continue;
+                };
+                for entry in entries.flatten() {
                     match entry.metadata() {
                         Ok(meta) if meta.is_dir() => pending.push(entry.path()),
                         Ok(meta) => total += meta.len(),
-                        Err(_) => {}
+                        Err(_) => unreadable += 1,
                     }
                 }
             }
-            total
+            (total, unreadable)
         }
-        let before = tree_bytes(database);
+        if Self::a_server_serves(database.parent().unwrap_or(database)) {
+            tracing::warn!(
+                database = %database.display(),
+                "store: a server serves this store; the collection is skipped"
+            );
+            return false;
+        }
+        let (before, _) = tree_bytes(database);
         let began = std::time::Instant::now();
-        let done = tokio::process::Command::new("dolt")
+        let mut collecting = tokio::process::Command::new("dolt");
+        collecting
             .env("DOLT_ROOT_PATH", home)
             .arg("gc")
             .current_dir(database)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .output()
-            .await;
+            .kill_on_drop(true);
+        die_with_this_process(&mut collecting);
+        let done = Self::run_within(COLLECTION_DEADLINE, &mut collecting).await;
         let elapsed_ms = began.elapsed().as_millis() as u64;
         match done {
-            Ok(done) if done.status.success() => tracing::info!(
-                step = "store-collection",
-                database = %database.display(),
-                elapsed_ms,
-                bytes_before = before,
-                bytes_after = tree_bytes(database),
-                "boot step finished"
-            ),
-            Ok(done) => tracing::warn!(
-                database = %database.display(),
-                elapsed_ms,
-                error = %String::from_utf8_lossy(&done.stderr).trim(),
-                "store: the collection failed; the store starts as it is"
-            ),
-            Err(error) => tracing::warn!(
-                database = %database.display(),
-                %error,
-                "store: the collection could not run; the store starts as it is"
-            ),
+            Some(Ok(done)) if done.status.success() => {
+                let (after, unreadable) = tree_bytes(database);
+                tracing::info!(
+                    step = "store-collection",
+                    database = %database.display(),
+                    elapsed_ms,
+                    bytes_before = before,
+                    bytes_after = after,
+                    unreadable_entries = unreadable,
+                    "boot step finished"
+                );
+                true
+            }
+            Some(Ok(done)) => {
+                tracing::warn!(
+                    database = %database.display(),
+                    elapsed_ms,
+                    error = %String::from_utf8_lossy(&done.stderr).trim(),
+                    "store: the collection failed; the store starts as it is"
+                );
+                false
+            }
+            Some(Err(error)) => {
+                tracing::warn!(
+                    database = %database.display(),
+                    %error,
+                    "store: the collection could not run; the store starts as it is"
+                );
+                false
+            }
+            None => {
+                tracing::warn!(
+                    database = %database.display(),
+                    deadline_s = COLLECTION_DEADLINE.as_secs(),
+                    "store: the collection passed its deadline and was stopped; the store starts as it is"
+                );
+                false
+            }
         }
     }
 
@@ -2049,6 +2121,102 @@ pub(crate) mod tests {
         assert!(
             collected < piled / 2,
             "the tree was {piled} bytes and is {collected} after the start"
+        );
+    }
+
+    /// **The collection never runs against a store a server is serving.** The command line's
+    /// collection is offline only when nothing holds the store: the pinned command finds a live
+    /// server through the files it leaves beside the database and runs the collection ON it,
+    /// which blocks its writes and breaks its connections. A second start, or a start that races
+    /// the drain of a stopping server, must skip the collection and leave the server as it is.
+    /// The case runs the collection over a served store and reads two things: that it did not
+    /// run, and that the server's own connection still answers.
+    #[tokio::test]
+    async fn the_collection_does_not_run_against_a_store_a_server_is_serving() {
+        let scratch = Scratch::new("collect-served");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        sqlx::query("CREATE TABLE served (id BIGINT PRIMARY KEY)")
+            .execute(store.pool())
+            .await
+            .expect("a table is created");
+        let home = Dolt::server_home(&scratch.0).expect("the server's home");
+
+        let ran = Dolt::collect_garbage(&scratch.0.join(DATABASE), &home).await;
+
+        assert!(!ran, "the collection ran against a store a server serves");
+        sqlx::query("INSERT INTO served VALUES (1)")
+            .execute(store.pool())
+            .await
+            .expect("the server's own connection still answers");
+        store.stop().await;
+    }
+
+    /// **What the guard reads in the file a server leaves.** No file is no server. A file
+    /// whose process is gone and whose port answers nothing is a server that was killed, which
+    /// the collection may pass; a file naming a live process is a server; a file that cannot be
+    /// understood counts as a server, because the wrong guess the other way is an online
+    /// collection.
+    #[test]
+    fn the_guard_reads_the_server_info_file_by_what_it_names() {
+        let scratch = Scratch::new("guard-info");
+        let place = scratch.0.join(".dolt");
+        std::fs::create_dir_all(&place).expect("the directory");
+        let write = |text: &str| std::fs::write(place.join("sql-server.info"), text).unwrap();
+        assert!(!Dolt::a_server_serves(&scratch.0), "no file is no server");
+        write(&format!("4294967290:{}:secret", free_port()));
+        assert!(
+            !Dolt::a_server_serves(&scratch.0),
+            "a dead process on a closed port is a server that was killed"
+        );
+        write(&format!("{}:{}:secret", std::process::id(), free_port()));
+        assert!(
+            Dolt::a_server_serves(&scratch.0),
+            "a live process is a server"
+        );
+        write("not a server file");
+        assert!(
+            Dolt::a_server_serves(&scratch.0),
+            "a file that cannot be understood counts as a server"
+        );
+    }
+
+    /// **A command that passes its deadline is stopped, and one that ends in time is not.** A
+    /// hung collection would hold the start before its own readiness timeout begins, and a
+    /// command left running after the start gave up would keep the store open. The command
+    /// writes its process id and then waits; the deadline passes; the process must be gone.
+    #[tokio::test]
+    async fn a_command_that_passes_its_deadline_is_killed_and_one_that_ends_is_not() {
+        let scratch = Scratch::new("deadline");
+        let pidfile = scratch.0.join("pid");
+        let mut hanging = tokio::process::Command::new("sh");
+        hanging
+            .arg("-c")
+            .arg(format!("echo $$ > {}; sleep 5", pidfile.display()))
+            .kill_on_drop(true);
+        let ended = Dolt::run_within(Duration::from_millis(500), &mut hanging).await;
+        assert!(ended.is_none(), "a command that waits passed its deadline");
+        let pid: u32 = std::fs::read_to_string(&pidfile)
+            .expect("the command wrote its process id")
+            .trim()
+            .parse()
+            .expect("a process id");
+        let mut gone = false;
+        for _ in 0..50 {
+            if !Path::new(&format!("/proc/{pid}")).exists() {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(gone, "the command was left running after its deadline");
+
+        let mut quick = tokio::process::Command::new("true");
+        let ended = Dolt::run_within(Duration::from_secs(30), &mut quick).await;
+        assert!(
+            matches!(&ended, Some(Ok(output)) if output.status.success()),
+            "a command that ends in time ends: {ended:?}"
         );
     }
 
