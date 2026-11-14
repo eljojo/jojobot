@@ -1567,12 +1567,22 @@ async fn dump_store(state_dir: &std::path::Path) -> String {
 /// dumps of a store booted twice before the import differ in those two tables and in
 /// nothing else. The store's tool dumps the snapshot table although no commit holds it.
 /// The tables' definitions stay in, and every other table is compared as it was.
+///
+/// **A statement belongs to the table it writes to**, the first quoted name in it, so a row
+/// of another table whose text names one of these tables is data and stays.
 fn without_the_log(dump: &str) -> String {
+    let target = |statement: &str| -> Option<String> {
+        let from = statement.find('`')? + 1;
+        let len = statement[from..].find('`')?;
+        Some(statement[from..from + len].to_string())
+    };
     split_sql_statements(dump)
         .into_iter()
         .filter(|statement| {
-            let of_the_log =
-                statement.contains("`event_log`") || statement.contains("`log_snapshot`");
+            let of_the_log = matches!(
+                target(statement).as_deref(),
+                Some("event_log" | "log_snapshot")
+            );
             !of_the_log || statement.trim_start().to_uppercase().starts_with("CREATE")
         })
         .collect::<Vec<_>>()
@@ -3499,12 +3509,17 @@ fn a_dump_without_the_log_keeps_every_table_but_the_log_and_its_snapshot() {
     let dump = "CREATE TABLE `log_snapshot` (`slot` varchar(32));\n\
                 INSERT INTO `log_snapshot` (`slot`) VALUES ('alpha');\n\
                 INSERT INTO `event_log` (`slot`) VALUES ('beta');\n\
-                INSERT INTO `fact` (`entity`) VALUES ('gamma');";
+                INSERT INTO `fact` (`entity`) VALUES ('gamma');\n\
+                INSERT INTO `fact` (`entity`) VALUES ('names `event_log` and `log_snapshot`');";
     let kept = without_the_log(dump);
     assert!(kept.contains("CREATE TABLE `log_snapshot`"), "{kept}");
     assert!(!kept.contains("INSERT INTO `log_snapshot`"), "{kept}");
     assert!(!kept.contains("INSERT INTO `event_log`"), "{kept}");
     assert!(kept.contains("INSERT INTO `fact`"), "{kept}");
+    assert!(
+        kept.contains("names `event_log` and `log_snapshot`"),
+        "a row of another table that names the two tables is data and stays: {kept}"
+    );
 }
 
 const THE_NO_SNAPSHOT_LINE: &str = "2026-11-10T12:57:34.178514Z  WARN jojobot_adapters::log_snapshot: SNAPSHOT NOT USED — the boot replays the whole log, not a fast boot reason=\"none_held\"";
