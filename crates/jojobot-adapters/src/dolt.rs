@@ -738,8 +738,14 @@ impl Dolt {
         }
         let began = std::time::Instant::now();
         if !Self::nothing_serves_within(database, SERVER_GRACE).await {
+            let elapsed_ms = began.elapsed().as_millis() as u64;
             tracing::warn!(
+                step = "store-collection",
                 database = %database.display(),
+                elapsed_ms,
+                grace_ms = elapsed_ms,
+                walk_ms = 0_u64,
+                gc_ms = 0_u64,
                 grace_s = SERVER_GRACE.as_secs(),
                 "store: a server still serves this store; the collection is skipped"
             );
@@ -749,7 +755,6 @@ impl Dolt {
         let walking = std::time::Instant::now();
         let (before, _) = tree_bytes(database);
         let first_walk_ms = walking.elapsed().as_millis() as u64;
-        let began = std::time::Instant::now();
         let mut collecting = tokio::process::Command::new("dolt");
         collecting
             .env("DOLT_ROOT_PATH", home)
@@ -789,8 +794,12 @@ impl Dolt {
             }
             Some(Ok(done)) => {
                 tracing::warn!(
+                    step = "store-collection",
                     database = %database.display(),
                     elapsed_ms,
+                    grace_ms,
+                    walk_ms = first_walk_ms,
+                    gc_ms,
                     error = %String::from_utf8_lossy(&done.stderr).trim(),
                     "store: the collection failed; the store starts as it is"
                 );
@@ -798,7 +807,12 @@ impl Dolt {
             }
             Some(Err(error)) => {
                 tracing::warn!(
+                    step = "store-collection",
                     database = %database.display(),
+                    elapsed_ms,
+                    grace_ms,
+                    walk_ms = first_walk_ms,
+                    gc_ms,
                     %error,
                     "store: the collection could not run; the store starts as it is"
                 );
@@ -806,7 +820,12 @@ impl Dolt {
             }
             None => {
                 tracing::warn!(
+                    step = "store-collection",
                     database = %database.display(),
+                    elapsed_ms,
+                    grace_ms,
+                    walk_ms = first_walk_ms,
+                    gc_ms,
                     deadline_s = deadline.as_secs(),
                     "store: the collection passed its deadline and was stopped; the store starts as it is"
                 );
@@ -2364,7 +2383,7 @@ pub(crate) mod tests {
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
     }
 
-    mod collection_exits {
+    mod the_collection_exits {
         use super::*;
         use tracing::instrument::WithSubscriber;
 
@@ -2449,7 +2468,7 @@ pub(crate) mod tests {
                 std::os::unix::fs::symlink(std::env::current_exe().unwrap(), bin.join("dolt"))
                     .unwrap();
             }
-            let name = format!("dolt::tests::collection_exits::{case}");
+            let name = format!("dolt::tests::the_collection_exits::{case}");
             let output = tokio::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", &name, "--nocapture"])
                 .env("COLLECTION_EXIT", case)
