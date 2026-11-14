@@ -181,7 +181,21 @@ impl IndexedMemory {
         let mut history = CorpusHistoryTerms::new();
         for doc in &scan {
             if let Some(entity) = &doc.entity {
+                let asked = std::time::Instant::now();
                 history.insert(entity.id.clone(), self.history_terms(&entity.id).await?);
+                // **A thing whose history is slow to read is named**, and a long pass
+                // says where it is, so a boot that is slow here is told apart from one
+                // that is slow in the ingest.
+                if asked.elapsed() >= SLOW_HISTORY {
+                    tracing::info!(
+                        thing = %entity.id,
+                        elapsed_ms = asked.elapsed().as_millis() as u64,
+                        "search scan: one thing's history was slow to read"
+                    );
+                }
+                if history.len().is_multiple_of(500) {
+                    phase_finished("history progress", history.len(), phase);
+                }
             }
         }
         phase_finished("history", history.len(), phase);
@@ -289,6 +303,9 @@ impl std::ops::Deref for IndexedMemory {
         &*self.inner
     }
 }
+
+/// The time one thing's history may take to read before the scan names it.
+const SLOW_HISTORY: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// **One phase of the index's full scan, with what it handled and how long it took**,
 /// as the fold's fill names its own, so a slow boot says which phase held it.
