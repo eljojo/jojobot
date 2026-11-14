@@ -497,15 +497,26 @@ async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
             .expect("an aged batch seals"),
         );
     }
+    // **The delete and the owner's read of the tail share one connection.** The raw pool
+    // hands each statement to any of its connections, and a connection that did not
+    // make the delete can still read the old batches: the tail read then holds the old
+    // head, and the first aged append is refused because the log it finds is empty.
+    let one = sqlx::mysql::MySqlPoolOptions::new()
+        .max_connections(1)
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .expect("a connection of its own to take the batches out");
     sqlx::query("DELETE FROM event_log WHERE first_position IS NOT NULL")
-        .execute(pool)
+        .execute(&one)
         .await
         .expect("the old batches are taken out of the log");
     // The store changed beneath the log's owner, so the head it holds is the
-    // old one: the owner reads the tail again, as it does after a fence.
-    log.settle(pool)
+    // old one: the owner reads the tail again, as it does after a fence, on the
+    // connection that made the delete.
+    log.settle(&one)
         .await
         .expect("the log's head is read again after the batches were taken out");
+    one.close().await;
     for batch in &aged {
         let landed = match log
             .append(batch.header().expected_previous_position, batch)
