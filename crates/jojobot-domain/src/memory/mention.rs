@@ -823,6 +823,10 @@ pub struct Mentioning {
     /// The same store, for the roster only: entities and field values carry no
     /// text a mention rewrites.
     beneath: std::sync::Arc<dyn super::Memory>,
+    /// **The roster as of a change signal of the store beneath**, kept while the
+    /// signal stands. The roster lists every thing the store holds, and an answer
+    /// that renders the history of each thing a session holds asked for one each.
+    roster: std::sync::Mutex<Option<(super::WriteSummary, std::sync::Arc<Vec<Entity>>)>>,
 }
 
 impl Mentioning {
@@ -830,6 +834,7 @@ impl Mentioning {
         Mentioning {
             beneath: inner.clone(),
             inner: std::sync::Arc::new(Unrendered(inner)),
+            roster: std::sync::Mutex::new(None),
         }
     }
 
@@ -838,8 +843,27 @@ impl Mentioning {
     /// One read of the index answers handle-to-badge on the way in and
     /// badge-to-handle on the way out, so neither direction holds an inventory
     /// of its own.
+    ///
+    /// **Read once while the store's change signal stands.** The signal is the one
+    /// a refresh of the search index skips its read on: it moves with every write
+    /// the store keeps, so the roster of one signal is the roster of the next call
+    /// under it. It is read BEFORE the roster, so a write in between leaves the
+    /// roster labelled with the older signal and the next call reads it again. A
+    /// store that offers no signal is read every time.
     async fn known(&self) -> Result<Vec<Entity>, super::MemoryError> {
-        render_roster(&*self.beneath).await
+        let signal = self.beneath.write_summary().await?;
+        if let Some(signal) = &signal
+            && let Some((held, roster)) = self.roster.lock().expect("roster lock").as_ref()
+            && held == signal
+        {
+            return Ok(roster.as_ref().clone());
+        }
+        let roster = render_roster(&*self.beneath).await?;
+        if let Some(signal) = signal {
+            *self.roster.lock().expect("roster lock") =
+                Some((signal, std::sync::Arc::new(roster.clone())));
+        }
+        Ok(roster)
     }
 
     /// **The roster for these texts** — [`roster_for`] over the store beneath.

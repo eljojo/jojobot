@@ -468,3 +468,69 @@ async fn who_holds_a_key_through_the_supply_layer_is_who_the_full_read_finds() {
         "nothing holds for a bare thing: {rank:?}"
     );
 }
+
+/// **The roster a mention renders over is read once until something is written.** It
+/// lists every thing the store holds, and one answer renders the history of each thing
+/// a session holds, so a roster read for each made an answer cost a read of the whole
+/// instance for every held thing. The store's own change signal says nothing was
+/// written, and the roster of that moment is the roster of the next call.
+#[tokio::test]
+async fn a_roster_is_read_once_until_something_is_written() {
+    use jojobot_domain::memory::mention::Mentioning;
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{NewEntity, NewFact};
+
+    let store = Arc::new(InMemoryMemory::booted());
+    let folded = Folded::new(store);
+    folded.rebuild().await.expect("the fold fills");
+    let counted = Arc::new(Counted::new(Arc::new(SharedFold(Arc::new(folded)))));
+    let layer = Mentioning::new(Arc::new(SharedCounted(counted.clone())));
+    let (about, named) = (spelled_thing(1), spelled_thing(2));
+    for id in [&about, &named] {
+        layer
+            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let mut fact = state(NewFact::about(
+        about.clone(),
+        format!("saw @{}", named.0),
+        jiff::civil::date(2026, 9, 2),
+    ));
+    fact.session = Some("fold-image".into());
+    layer
+        .capture(fact)
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+
+    counted.reset();
+    for _ in 0..3 {
+        layer.claim_histories(&about).await.expect("histories");
+    }
+    let seen = counted.seen();
+    assert_eq!(
+        seen.get("list_entities"),
+        Some(&1),
+        "the roster was read again with nothing written: {seen:?}"
+    );
+
+    let later = spelled_thing(3);
+    layer
+        .add_entity(NewEntity::new(later.clone(), &later.0, "fold-image"))
+        .await
+        .expect("add")
+        .written()
+        .expect("not blocked");
+    counted.reset();
+    layer.claim_histories(&about).await.expect("histories");
+    let seen = counted.seen();
+    assert_eq!(
+        seen.get("list_entities"),
+        Some(&1),
+        "a write left the cached roster in use: {seen:?}"
+    );
+}
