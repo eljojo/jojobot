@@ -158,7 +158,7 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     };
     if version == "0126_event_log_snapshots_leave" {
         // **The migration's own target, in the shape the build before wrote it**: the restore
-        // removes every log row but the identity, so without this the migration has nothing
+        // removes recorded snapshots before seeding real teaching batches, so without this the migration has nothing
         // to remove in either state and a no-op or a wrong predicate would pass. The boot
         // that follows must remove it; `boots_on_a_restored_store` reads that it did.
         let publisher = OldPublisher {
@@ -187,22 +187,6 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
         .await
         .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
     if let Some(retained) = &retained {
-        // Red-first witnesses: each death state damages a different retained row.
-        match how {
-            Interruption::BeforeTheChange => {
-                sqlx::query("DELETE FROM event_log WHERE slot = 'validity'")
-                    .execute(store.pool())
-                    .await
-                    .unwrap();
-            }
-            Interruption::AfterTheChange => {
-                sqlx::query("DELETE FROM event_log WHERE slot = ?")
-                    .bind(&retained.batch.0)
-                    .execute(store.pool())
-                    .await
-                    .unwrap();
-            }
-        }
         retained.assert_retained(store.pool()).await;
     }
     let begun: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration_begun")

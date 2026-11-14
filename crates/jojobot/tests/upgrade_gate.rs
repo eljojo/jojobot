@@ -1635,9 +1635,9 @@ fn without_the_log(dump: &str) -> String {
 /// **After a boot the event log holds no snapshot row of the old format, and still holds its
 /// identity row.** Migration 0126 is what removes them, and its recovery check reads a
 /// predicate, so a store with no such row at the start cannot tell a migration that removed
-/// them from one that did nothing. The identity row is the control: the removal takes the
-/// snapshot rows while one identity row exists after boot; it does not prove that identity was retained.
-/// The death pair compares the original validity and batch bytes separately. Read with the store's own tool, no server over it.
+/// them from one that did nothing. The identity count proves only existence after boot;
+/// the death pair separately compares the original validity identity and batch bytes.
+/// Read with the store's own tool, no server over it.
 async fn assert_the_legacy_snapshots_are_gone(state_dir: &std::path::Path, git_ref: &str) {
     let read = |query: &'static str| async move {
         let out = tokio::process::Command::new("dolt")
