@@ -1599,6 +1599,7 @@ async fn dump_store(state_dir: &std::path::Path) -> String {
 ///
 /// **A statement belongs to the table it writes to**, the first quoted name in it, so a row
 /// of another table whose text names one of these tables is data and stays.
+/// This rule is for the pinned Dolt 2.5.0 data writers, not a SQL parser; this comment has no runtime case to redden.
 fn without_the_log(dump: &str) -> String {
     let target = |statement: &str| -> Option<String> {
         let from = statement.find('`')? + 1;
@@ -1622,7 +1623,8 @@ fn without_the_log(dump: &str) -> String {
 /// identity row.** Migration 0126 is what removes them, and its recovery check reads a
 /// predicate, so a store with no such row at the start cannot tell a migration that removed
 /// them from one that did nothing. The identity row is the control: the removal takes the
-/// snapshot rows and nothing else. Read with the store's own tool, no server over it.
+/// snapshot rows while one identity row exists after boot; it does not prove that identity was retained.
+/// The death pair compares the original validity and batch bytes separately. Read with the store's own tool, no server over it.
 async fn assert_the_legacy_snapshots_are_gone(state_dir: &std::path::Path, git_ref: &str) {
     let read = |query: &'static str| async move {
         let out = tokio::process::Command::new("dolt")
