@@ -312,7 +312,14 @@ impl Dolt {
             why: e.to_string(),
         })?;
         let home = Self::server_home(data_dir)?;
+        let held_a_store = database.join(".dolt").exists();
         Self::init_if_empty(&database, &home)?;
+        // **A store that existed is collected before the server is spawned**, while nothing
+        // holds it: every lifecycle passes a start, and a crash skips a stop. A store this
+        // start just made has nothing to collect.
+        if held_a_store {
+            Self::collect_garbage(&database, &home).await;
+        }
 
         let mut spawning = tokio::process::Command::new("dolt");
         spawning
@@ -574,6 +581,66 @@ impl Dolt {
             });
         }
         Ok(())
+    }
+
+    /// **Collect what no commit or table refers to, over the stopped store**, and say what it
+    /// cost on a boot line of its own, in the form every boot step uses. Every write leaves
+    /// chunks nothing refers to. The server reports a background collection on and does not run
+    /// one, so without this a store's tree grows to several times what it holds. The command
+    /// line's collection never blocks a server's writes or breaks its connections, because no
+    /// server is running. **It cannot fail the start**: a store that is not collected still
+    /// serves, so a failure is a warning that names what the command said.
+    async fn collect_garbage(database: &Path, home: &Path) {
+        fn tree_bytes(root: &Path) -> u64 {
+            let mut total = 0;
+            let mut pending = vec![root.to_path_buf()];
+            while let Some(directory) = pending.pop() {
+                for entry in std::fs::read_dir(&directory)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                {
+                    match entry.metadata() {
+                        Ok(meta) if meta.is_dir() => pending.push(entry.path()),
+                        Ok(meta) => total += meta.len(),
+                        Err(_) => {}
+                    }
+                }
+            }
+            total
+        }
+        let before = tree_bytes(database);
+        let began = std::time::Instant::now();
+        let done = tokio::process::Command::new("dolt")
+            .env("DOLT_ROOT_PATH", home)
+            .arg("gc")
+            .current_dir(database)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await;
+        let elapsed_ms = began.elapsed().as_millis() as u64;
+        match done {
+            Ok(done) if done.status.success() => tracing::info!(
+                step = "store-collection",
+                database = %database.display(),
+                elapsed_ms,
+                bytes_before = before,
+                bytes_after = tree_bytes(database),
+                "boot step finished"
+            ),
+            Ok(done) => tracing::warn!(
+                database = %database.display(),
+                elapsed_ms,
+                error = %String::from_utf8_lossy(&done.stderr).trim(),
+                "store: the collection failed; the store starts as it is"
+            ),
+            Err(error) => tracing::warn!(
+                database = %database.display(),
+                %error,
+                "store: the collection could not run; the store starts as it is"
+            ),
+        }
     }
 
     /// **Bring the store up and its schema to the shape this build expects.**
@@ -1904,6 +1971,83 @@ pub(crate) mod tests {
             "a boundary of this case was warned about"
         );
         store.stop().await;
+    }
+
+    /// **A start collects the garbage a store has piled up, before the server spawns.** Every
+    /// write leaves chunks nothing refers to, and the background collection the server reports
+    /// on does not run, so the store's tree grows far past what it holds. Four changed copies
+    /// of one value are written, the store is stopped and started again: the tree must come out
+    /// about one copy large and the value must read back whole. The boot line the collection
+    /// logs is read through the binary, in `real_binary_collects_a_stored_stores_garbage`.
+    #[tokio::test]
+    async fn a_start_collects_the_garbage_of_the_store_before_it_spawns_the_server() {
+        fn tree_bytes(root: &Path) -> u64 {
+            let mut total = 0;
+            let mut pending = vec![root.to_path_buf()];
+            while let Some(directory) = pending.pop() {
+                for entry in std::fs::read_dir(&directory)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                {
+                    let meta = entry.metadata().expect("metadata reads");
+                    if meta.is_dir() {
+                        pending.push(entry.path());
+                    } else {
+                        total += meta.len();
+                    }
+                }
+            }
+            total
+        }
+        fn unpredictable(seed: u64, len: usize) -> Vec<u8> {
+            let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            (0..len)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    (x >> 24) as u8
+                })
+                .collect()
+        }
+        let scratch = Scratch::new("start-collects");
+        let port = free_port();
+        let mut store = Dolt::start(&scratch.0, port)
+            .await
+            .expect("the store comes up");
+        let pool = store.pool().clone();
+        sqlx::query("CREATE TABLE heap (id BIGINT PRIMARY KEY, body LONGBLOB NOT NULL)")
+            .execute(&pool)
+            .await
+            .expect("the table is created");
+        let mut last = Vec::new();
+        for round in 0..4u64 {
+            last = unpredictable(round + 1, 8 << 20);
+            sqlx::query("REPLACE INTO heap VALUES (1, ?)")
+                .bind(&last)
+                .execute(&pool)
+                .await
+                .expect("a copy is written");
+        }
+        drop(pool);
+        store.stop().await;
+        let piled = tree_bytes(&scratch.0);
+
+        let mut again = Dolt::start(&scratch.0, port)
+            .await
+            .expect("it starts again");
+        let kept: Vec<u8> = sqlx::query_scalar("SELECT body FROM heap WHERE id = 1")
+            .fetch_one(again.pool())
+            .await
+            .expect("the value reads back");
+        assert!(kept == last, "the collection changed the value it kept");
+        again.stop().await;
+        let collected = tree_bytes(&scratch.0);
+        assert!(
+            collected < piled / 2,
+            "the tree was {piled} bytes and is {collected} after the start"
+        );
     }
 
     /// A `Memory` that answers `list_entities` and `former_handles` on

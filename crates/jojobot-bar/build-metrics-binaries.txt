@@ -158,6 +158,7 @@ test-read_dependencies
 test-reads_the_rooms
 test-ready_over_stores
 test-real_binary_answers_stored_merge_damage
+test-real_binary_collects_a_stored_stores_garbage
 test-real_binary_files_a_link_to_a_shipped_view_by_its_handle
 test-real_binary_log_on_a_pipe_has_no_escape_byte
 test-real_binary_logs_a_served_write
