@@ -610,6 +610,23 @@ impl Dolt {
             .is_ok()
     }
 
+    /// **Wait up to `grace` for a server that is going away**, and say whether nothing serves
+    /// the store by then. A server that was killed, or is draining its stop, holds its process
+    /// for a moment after it stops answering, and a start that follows at once would otherwise
+    /// skip its collection and warn about a server that is about to be gone.
+    async fn nothing_serves_within(data_dir: &Path, grace: Duration) -> bool {
+        let until = std::time::Instant::now() + grace;
+        loop {
+            if !Self::a_server_serves(data_dir) {
+                return true;
+            }
+            if std::time::Instant::now() >= until {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// **Run a command to its end or to a deadline.** The command is killed when the deadline
     /// passes, because its future is dropped and the command was spawned to die with it. None is
     /// the deadline; Some is how the command ended.
@@ -634,6 +651,8 @@ impl Dolt {
     async fn collect_garbage(database: &Path, home: &Path) -> bool {
         /// A collection that takes longer than this is killed and the start goes on.
         const COLLECTION_DEADLINE: Duration = Duration::from_secs(120);
+        /// How long a server that is going away is waited for before the collection is skipped.
+        const SERVER_GRACE: Duration = Duration::from_secs(10);
         /// The bytes under `root`, and the entries that could not be read.
         fn tree_bytes(root: &Path) -> (u64, u64) {
             let (mut total, mut unreadable) = (0, 0);
@@ -653,10 +672,11 @@ impl Dolt {
             }
             (total, unreadable)
         }
-        if Self::a_server_serves(database.parent().unwrap_or(database)) {
+        if !Self::nothing_serves_within(database.parent().unwrap_or(database), SERVER_GRACE).await {
             tracing::warn!(
                 database = %database.display(),
-                "store: a server serves this store; the collection is skipped"
+                grace_s = SERVER_GRACE.as_secs(),
+                "store: a server still serves this store; the collection is skipped"
             );
             return false;
         }
@@ -2179,6 +2199,61 @@ pub(crate) mod tests {
         assert!(
             Dolt::a_server_serves(&scratch.0),
             "a file that cannot be understood counts as a server"
+        );
+    }
+
+    /// **A server that is going away is waited for, a short while, before the guard decides.** A
+    /// server that was killed, or is draining its stop, still holds its process for a moment, and
+    /// a start that comes straight after would otherwise skip its collection and warn about a
+    /// server that is about to be gone. The file names a process that exits after a short time;
+    /// the wait must end when it has, and must say a server still serves when one outlasts it.
+    #[tokio::test]
+    async fn a_server_that_is_going_away_is_waited_for_and_one_that_stays_is_not() {
+        let scratch = Scratch::new("guard-grace");
+        let place = scratch.0.join(".dolt");
+        std::fs::create_dir_all(&place).expect("the directory");
+        let mut leaving = tokio::process::Command::new("sleep")
+            .arg("1")
+            .spawn()
+            .expect("a process that exits soon");
+        let pid = leaving.id().expect("its process id");
+        std::fs::write(
+            place.join("sql-server.info"),
+            format!("{pid}:{}:secret", free_port()),
+        )
+        .expect("the info file");
+        let reaping = tokio::spawn(async move { leaving.wait().await });
+
+        let began = std::time::Instant::now();
+        assert!(
+            Dolt::nothing_serves_within(&scratch.0, Duration::from_secs(10)).await,
+            "the wait ended with a server still serving that was about to exit"
+        );
+        assert!(
+            began.elapsed() >= Duration::from_millis(500),
+            "the process was judged gone before it exited: {:?}",
+            began.elapsed()
+        );
+        reaping
+            .await
+            .expect("the process is reaped")
+            .expect("it exited");
+
+        // A process that stays is not waited for beyond the grace.
+        std::fs::write(
+            place.join("sql-server.info"),
+            format!("{}:{}:secret", std::process::id(), free_port()),
+        )
+        .expect("the info file");
+        let began = std::time::Instant::now();
+        assert!(
+            !Dolt::nothing_serves_within(&scratch.0, Duration::from_millis(400)).await,
+            "a server that stays was judged gone"
+        );
+        assert!(
+            began.elapsed() < Duration::from_secs(5),
+            "the wait outlasted its grace: {:?}",
+            began.elapsed()
         );
     }
 
