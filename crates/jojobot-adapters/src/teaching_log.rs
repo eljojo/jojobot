@@ -50,6 +50,21 @@ pub async fn serving_kept(
     ),
     TeachingError,
 > {
+    serving_kept_after_migrations(pool, writer, &[]).await
+}
+
+/// The serving boot with the migration account from this same start.
+pub async fn serving_kept_after_migrations(
+    pool: &sqlx::MySqlPool,
+    writer: Writer,
+    applied: &[String],
+) -> Result<
+    (
+        LoggedTeachings,
+        Arc<crate::snapshot_keeper::ServingSnapshots>,
+    ),
+    TeachingError,
+> {
     let unavailable = |e: jojobot_domain::log::LogError| {
         TeachingError::Store(format!("the event log is unavailable: {e}"))
     };
@@ -73,7 +88,7 @@ pub async fn serving_kept(
     let was_empty = log.head() == Some(Position::default());
     let marks = import_marks(pool).await?;
     let restored = seam.and_then(|seam| seam.take_teaching());
-    let ledger = LoggedTeachings::open_from(log, &marks, restored).await?;
+    let ledger = LoggedTeachings::open_from_after_migrations(log, &marks, restored, applied).await?;
     if was_empty {
         snapshots.after_import().await;
     }
@@ -184,6 +199,15 @@ impl LoggedTeachings {
         marks: &[Mark],
         restored: Option<(State, Position)>,
     ) -> Result<Self, TeachingError> {
+        Self::open_from_after_migrations(log, marks, restored, &[]).await
+    }
+
+    async fn open_from_after_migrations(
+        log: Arc<dyn LogStore>,
+        marks: &[Mark],
+        restored: Option<(State, Position)>,
+        applied: &[String],
+    ) -> Result<Self, TeachingError> {
         let this = Self {
             writer: Writer::default(),
             log,
@@ -196,7 +220,7 @@ impl LoggedTeachings {
             #[cfg(test)]
             boots_made: Arc::default(),
         };
-        this.fill(marks, restored).await?;
+        this.fill(marks, restored, applied).await?;
         Ok(this)
     }
 
@@ -217,6 +241,7 @@ impl LoggedTeachings {
         &self,
         marks: &[Mark],
         restored: Option<(State, Position)>,
+        applied: &[String],
     ) -> Result<(), TeachingError> {
         let this = self;
         {
@@ -228,7 +253,7 @@ impl LoggedTeachings {
                     #[cfg(test)]
                     this.boots_made
                         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let booted = crate::log_snapshot::boot(this.log.as_ref())
+                    let booted = crate::log_snapshot::boot_after_migrations(this.log.as_ref(), applied)
                         .await
                         .map_err(refused)?;
                     (booted.state.teaching, booted.position)

@@ -4,18 +4,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Connection, MySqlConnection, MySqlPool, Row};
 use std::{sync::Arc, time::Duration};
 
-/// **Which snapshot is the newest.** The one order the load that hands a build
-/// another build's snapshot and the publication that keeps one both use; the slot
-/// settles two snapshots at one position, so they never pick different ones.
-/// **The slot only breaks a tie**: at one position the larger slot text wins, and
-/// that says nothing about which build is newer. A macro and not a constant,
-/// because the store takes only SQL that is a literal.
-macro_rules! newest_snapshot_first {
-    () => {
-        "covered_position DESC, slot DESC"
-    };
-}
-
 /// **The columns of a stored snapshot**, in the order [`decode_snapshot`] reads them by name.
 /// A macro, because the store takes only SQL that is a literal.
 macro_rules! snapshot_columns {
@@ -384,35 +372,17 @@ impl DoltLog {
             .collect()
     }
 
-    /// **The snapshot this build can read, else the newest of another build's.**
-    /// A build publishes into the slot of its own fingerprint, so the build that
-    /// is stopping cannot replace the snapshot the next build pre-built. When this
-    /// build has none, the newest other one is returned so the boot names the
-    /// fingerprint as its reason for not using it, and does not report none held.
+    /// Load the single slot, or the newest legacy slot before its replacement.
     pub(crate) async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
         let mut reader = self.reader().await?;
-        let own = sqlx::query(concat!(
+        let row = sqlx::query(concat!(
             "SELECT ",
             snapshot_columns!(),
-            " FROM log_snapshot WHERE slot = ?"
+            " FROM log_snapshot ORDER BY covered_position DESC, slot DESC LIMIT 1"
         ))
-        .bind(snapshot_slot(crate::log_snapshot::PROJECTION_FINGERPRINT))
         .fetch_optional(reader.connection())
         .await
         .map_err(failed)?;
-        let row = match own {
-            Some(row) => Some(row),
-            None => sqlx::query(concat!(
-                "SELECT ",
-                snapshot_columns!(),
-                " FROM log_snapshot ORDER BY ",
-                newest_snapshot_first!(),
-                " LIMIT 1"
-            ))
-            .fetch_optional(reader.connection())
-            .await
-            .map_err(failed)?,
-        };
         // **A stored snapshot this build cannot decode is a snapshot it will not
         // use**, not a log it cannot read: it is handed back as one in no format,
         // the boot names the format as its reason and replays the whole log.
@@ -434,12 +404,17 @@ impl DoltLog {
         {
             return Err(LogError::Conflict);
         }
+        // The caller's transaction replaces every legacy slot atomically.
+        sqlx::query("DELETE FROM log_snapshot")
+            .execute(&mut *connection)
+            .await
+            .map_err(failed)?;
         sqlx::query(concat!(
             "REPLACE INTO log_snapshot (",
             snapshot_columns!(),
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         ))
-        .bind(snapshot_slot(snapshot.projection_version))
+        .bind("snapshot")
         .bind(snapshot.covered_position.0)
         .bind(snapshot.snapshot_format_version)
         .bind(snapshot.projection_version)
@@ -454,33 +429,8 @@ impl DoltLog {
         .execute(&mut *connection)
         .await
         .map_err(failed)?;
-        // **Bounded to the publisher's slot and the newest other**: a release that
-        // changes the shape would otherwise leave one more snapshot of the whole
-        // State in the store for good.
-        sqlx::query(concat!(
-            "DELETE FROM log_snapshot WHERE slot <> ? AND slot NOT IN \
-             (SELECT slot FROM (SELECT slot FROM log_snapshot WHERE slot <> ? \
-              ORDER BY ",
-            newest_snapshot_first!(),
-            " LIMIT 1) AS newest)"
-        ))
-        .bind(snapshot_slot(snapshot.projection_version))
-        .bind(snapshot_slot(snapshot.projection_version))
-        .execute(connection)
-        .await
-        .map_err(failed)?;
         Ok(())
     }
-}
-
-/// **The slots a snapshot is kept in start with this**, one slot for each
-/// fingerprint of the State's shape.
-const SNAPSHOT_SLOT_PREFIX: &str = "snapshot:";
-
-/// **The one place a snapshot's slot is named.** A build's snapshot is kept under
-/// the fingerprint of the shape it was written for.
-fn snapshot_slot(fingerprint: u32) -> String {
-    format!("{SNAPSHOT_SLOT_PREFIX}{fingerprint}")
 }
 
 /// **What a snapshot nobody can decode stands for.** Format 0 is no format any

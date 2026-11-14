@@ -8,11 +8,6 @@ use jojobot_domain::request::events::{
 };
 use jojobot_domain::teaching::events::{RunId, TeachingEvent};
 
-/// **The skip counts are one set for the whole test process**, so a case that reads
-/// one as an exact change holds this while it boots, and so does every case that
-/// boots over a snapshot of another build's shape.
-static FINGERPRINT_SKIPS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 fn request() -> Request {
     Request {
         key: RequestKey {

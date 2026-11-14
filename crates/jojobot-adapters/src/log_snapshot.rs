@@ -12,6 +12,10 @@ include!(concat!(env!("OUT_DIR"), "/snapshot_shape.rs"));
 const FORMAT: u32 = 1;
 const READ_BOUND: usize = 256;
 
+/// The process-wide count tests and foreign-shape boot tests share this lock.
+#[cfg(test)]
+pub(crate) static FINGERPRINT_SKIPS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub struct Boot {
     pub state: State,
     pub position: Position,
@@ -156,16 +160,16 @@ pub fn skip_counts() -> Vec<(&'static str, u64)> {
         .collect()
 }
 
-/// **A boot that did not use a snapshot is counted once, and says so.** Every reason
-/// is a warning, the absence of a snapshot included, with one exception: a log that
-/// holds no history. There the boot had nothing a snapshot could have covered, so no
-/// snapshot is the ordinary state of a first boot and says nothing about a
-/// pre-build that failed. A log with history and no snapshot is the case the
-/// warning is for: a deploy whose pre-build failed lands there, and must not land
-/// quietly.
+/// A shape change is the designed replay path. Other defects warn; an empty
+/// log with no snapshot has nothing to recover and is ordinary too.
 fn skipped(skip: Skip, nothing_to_replay: bool) {
     SKIPS[skip.index()].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if skip == Skip::NoneHeld && nothing_to_replay {
+    if skip == Skip::Fingerprint {
+        tracing::info!(
+            reason = skip.name(),
+            "the State's shape changed: replaying the log"
+        );
+    } else if skip == Skip::NoneHeld && nothing_to_replay {
         tracing::info!(
             reason = skip.name(),
             "no snapshot held and no history to replay; the boot starts from an empty log"
@@ -331,14 +335,27 @@ fn apply(boot: &mut Boot, batch: &SealedBatch) -> Result<(), LogError> {
 /// Restore a compatible whole State, or replay from zero when it is disposable.
 /// **A boot that cannot use the snapshot the log holds says so and is counted.**
 pub async fn boot(log: &dyn LogStore) -> Result<Boot, LogError> {
-    replay(log, true).await
+    boot_after_migrations(log, &[]).await
+}
+
+/// Restore after the migrations applied in this start.
+pub async fn boot_after_migrations(
+    log: &dyn LogStore,
+    applied: &[String],
+) -> Result<Boot, LogError> {
+    let shape_changed = applied.iter().any(|version| version == "0125_log_snapshot");
+    replay(log, true, shape_changed).await
 }
 
 /// The replay a boot makes, and the one a snapshot is taken from. **Only a boot
 /// reports a skipped snapshot**: taking a snapshot reads the State the same way and
 /// is not a boot, so it must not warn that the boot replayed the log, and the boots
 /// the scrape counts are the boots the process made.
-async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError> {
+async fn replay(
+    log: &dyn LogStore,
+    report_skip: bool,
+    shape_changed: bool,
+) -> Result<Boot, LogError> {
     let began = std::time::Instant::now();
     let validity = log.validity().await?;
     // The skip is reported once the replay is done: whether the log held any history
@@ -347,6 +364,12 @@ async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError>
     let (mut boot, from_snapshot) = match restored(log, &validity).await? {
         Ok(boot) => (boot, true),
         Err(skip) => {
+            // A table created in this start has no snapshot by construction.
+            let skip = if skip == Skip::NoneHeld && shape_changed {
+                Skip::Fingerprint
+            } else {
+                skip
+            };
             skip_to_report = report_skip.then_some(skip);
             (Boot::empty(), false)
         }
@@ -387,7 +410,7 @@ async fn replay(log: &dyn LogStore, report_skip: bool) -> Result<Boot, LogError>
 /// position the snapshot covers.
 pub async fn take_snapshot(log: &dyn LogStore, at: jiff::Timestamp) -> Result<Position, LogError> {
     let validity = log.validity().await?;
-    let boot = replay(log, false).await?;
+    let boot = replay(log, false, false).await?;
     // **A snapshot never leaves a claims member out.** A State whose claims stopped at a member
     // this build cannot read would be published as the State of the whole log, and a boot that
     // restored it would serve claims the log has moved past. Nothing is published; the boot of

@@ -538,56 +538,6 @@ fn snapshot_for(
     }
 }
 
-/// **A build's snapshot survives the stop of the build before it.** Snapshots are
-/// kept by the fingerprint of the State's shape, so the old build publishing its
-/// last snapshot at its stop does not replace the one the new build pre-built.
-/// The build loads its own; with none of its own it is handed the newest other, so
-/// the boot can name the fingerprint as its reason.
-#[tokio::test]
-async fn a_snapshot_is_kept_for_each_shape_and_a_build_loads_its_own() {
-    let (_scratch, mut server, pool, log) = fixture().await;
-    let own = crate::log_snapshot::PROJECTION_FINGERPRINT;
-    let old = own.wrapping_add(1);
-    let first = batch("alpha", 0, &[b"a"]);
-    let second = batch("beta", 1, &[b"b"]);
-    appended(&log, &pool, Position(0), &first).await;
-    appended(&log, &pool, first.range().last, &second).await;
-    let validity = log.validity().await.unwrap();
-
-    // Only another build's snapshot is held: it is handed over to be refused.
-    let theirs = snapshot_for(old, &validity, first.range().last, first.header().checksum);
-    put(&pool, &theirs).await;
-    assert_eq!(log.load_snapshot().await.unwrap(), Some(theirs.clone()));
-
-    // This build's pre-built snapshot is held beside it, and is the one loaded.
-    let mine = snapshot_for(own, &validity, first.range().last, first.header().checksum);
-    put(&pool, &mine).await;
-    assert_eq!(log.load_snapshot().await.unwrap(), Some(mine.clone()));
-
-    // The old build's stop publishes a newer snapshot of its shape: it replaces
-    // its own slot and leaves this build's alone.
-    let newer = snapshot_for(
-        old,
-        &validity,
-        second.range().last,
-        second.header().checksum,
-    );
-    put(&pool, &newer).await;
-    assert_eq!(log.load_snapshot().await.unwrap(), Some(mine));
-    let (body, covered): (Vec<u8>, u64) =
-        sqlx::query_as("SELECT body, covered_position FROM log_snapshot WHERE slot = ?")
-            .bind(snapshot_slot(old))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        (body, covered),
-        (newer.blob.clone(), newer.covered_position.0),
-        "the old build's slot holds the snapshot it published last"
-    );
-    server.stop().await;
-}
-
 /// **A snapshot is kept as bytes in a table of its own that no commit holds.** The blob is the
 /// column's bytes, not a JSON array of numbers; the header is columns; no row of the event log
 /// is a snapshot; the table is named in `dolt_ignore`; and after a mark that commits other rows
@@ -606,7 +556,7 @@ async fn a_snapshot_is_kept_as_bytes_in_an_ignored_table_no_commit_holds() {
     let (body, identity, projection): (Vec<u8>, String, u32) = sqlx::query_as(
         "SELECT body, log_identity, projection_version FROM log_snapshot WHERE slot = ?",
     )
-    .bind(snapshot_slot(own))
+    .bind("snapshot")
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -649,104 +599,6 @@ async fn put(pool: &MySqlPool, snapshot: &ValidatedSnapshot) {
     let mut tx = pool.begin().await.unwrap();
     DoltLog::put_snapshot(&mut tx, snapshot).await.unwrap();
     tx.commit().await.unwrap();
-}
-
-/// **The slots are bounded: the publisher's own and the newest other.** Each
-/// release that changes the shape would otherwise leave one more snapshot of the
-/// whole State in the log for good.
-#[tokio::test]
-async fn publishing_keeps_the_publishers_slot_and_the_newest_other_only() {
-    let (_scratch, mut server, pool, log) = fixture().await;
-    let own = crate::log_snapshot::PROJECTION_FINGERPRINT;
-    let first = batch("alpha", 0, &[b"a"]);
-    let second = batch("beta", 1, &[b"b"]);
-    let third = batch("gamma", 2, &[b"c"]);
-    appended(&log, &pool, Position(0), &first).await;
-    appended(&log, &pool, first.range().last, &second).await;
-    appended(&log, &pool, second.range().last, &third).await;
-    let validity = log.validity().await.unwrap();
-
-    // Three older builds' snapshots, at three positions.
-    for (offset, covered, b) in [
-        (1, first.range().last, &first),
-        (2, second.range().last, &second),
-        (3, third.range().last, &third),
-    ] {
-        put(
-            &pool,
-            &snapshot_for(
-                own.wrapping_add(offset),
-                &validity,
-                covered,
-                b.header().checksum,
-            ),
-        )
-        .await;
-    }
-    put(
-        &pool,
-        &snapshot_for(own, &validity, third.range().last, third.header().checksum),
-    )
-    .await;
-
-    let slots: Vec<String> = sqlx::query_scalar("SELECT slot FROM log_snapshot ORDER BY slot")
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-    let mut expected = vec![
-        format!("snapshot:{own}"),
-        format!("snapshot:{}", own.wrapping_add(3)),
-    ];
-    expected.sort();
-    assert_eq!(slots, expected, "the publisher's slot and the newest other");
-    server.stop().await;
-}
-
-/// **The snapshot a build is handed is the one a publication keeps.** With no
-/// snapshot of its own, a build is handed the newest other, to name its
-/// fingerprint as the reason; a publication keeps the newest other and deletes the
-/// rest. Two other builds' snapshots at one position are told apart by the same
-/// order in both, or the boot names a shape the log no longer holds.
-#[tokio::test]
-async fn the_snapshot_a_build_is_handed_is_the_one_a_publication_keeps() {
-    let (_scratch, mut server, pool, log) = fixture().await;
-    let own = crate::log_snapshot::PROJECTION_FINGERPRINT;
-    let first = batch("alpha", 0, &[b"a"]);
-    appended(&log, &pool, Position(0), &first).await;
-    let validity = log.validity().await.unwrap();
-    for offset in [1, 2] {
-        let theirs = snapshot_for(
-            own.wrapping_add(offset),
-            &validity,
-            first.range().last,
-            first.header().checksum,
-        );
-        put(&pool, &theirs).await;
-    }
-    let handed = log
-        .load_snapshot()
-        .await
-        .unwrap()
-        .unwrap()
-        .projection_version;
-
-    put(
-        &pool,
-        &snapshot_for(own, &validity, first.range().last, first.header().checksum),
-    )
-    .await;
-    let kept: Vec<String> =
-        sqlx::query_scalar("SELECT slot FROM log_snapshot WHERE slot <> ? ORDER BY slot")
-            .bind(format!("snapshot:{own}"))
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        kept,
-        vec![format!("snapshot:{handed}")],
-        "the build was handed one snapshot and the publication kept another"
-    );
-    server.stop().await;
 }
 
 /// A log whose store accepts a connection and never answers it, so a connection
@@ -824,4 +676,125 @@ async fn a_connection_that_times_out_answers_a_store_error_to_a_read_and_to_the_
         matches!(creation, Err(LogError::Store(_))),
         "the creation that times out is a store error: {creation:?}"
     );
+}
+
+/// Old fingerprint slots are disposable. A publication leaves one row.
+#[tokio::test]
+async fn one_slot_publication_replaces_old_slots() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let validity = log.validity().await.unwrap();
+    for version in [1, 2, 3] {
+        put(
+            &pool,
+            &snapshot_for(version, &validity, Position(0), [0; 32]),
+        )
+        .await;
+        sqlx::query("UPDATE log_snapshot SET slot = ? WHERE projection_version = ?")
+            .bind(format!("snapshot:{version}"))
+            .bind(version)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    put(&pool, &snapshot_for(4, &validity, Position(0), [0; 32])).await;
+    let slots: Vec<String> = sqlx::query_scalar("SELECT slot FROM log_snapshot")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(slots, ["snapshot"], "only the single snapshot slot remains");
+    server.stop().await;
+}
+
+/// Both upgrade paths re-project quietly, then the next boot reads the published State.
+#[tokio::test]
+async fn one_slot_foreign_boot_logs_info_and_the_next_boot_loads() {
+    one_slot_upgrade_boot(false).await;
+}
+
+#[tokio::test]
+async fn one_slot_new_table_boot_logs_info_and_the_next_boot_loads() {
+    one_slot_upgrade_boot(true).await;
+}
+
+async fn one_slot_upgrade_boot(newly_created: bool) {
+    use tracing::instrument::WithSubscriber;
+    let _counting = crate::log_snapshot::FINGERPRINT_SKIPS.lock().await;
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let event = crate::teaching_log::codec::encode(
+        &jojobot_domain::teaching::events::TeachingEvent::Recorded {
+            run: jojobot_domain::teaching::events::RunId("homer".into()),
+            domain: "claims".into(),
+            taught_at: jiff::Timestamp::UNIX_EPOCH,
+        },
+    );
+    let first = batch("alpha", 0, &[&event]);
+    appended(&log, &pool, Position(0), &first).await;
+    let writer = crate::writer::Writer::default();
+    let serving = crate::writer_log::WriterLog::open(pool.clone(), writer.clone())
+        .await
+        .unwrap();
+    crate::log_snapshot::take_snapshot(&serving, jiff::Timestamp::UNIX_EPOCH)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE log_snapshot SET slot = 'snapshot:1', projection_version = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    {
+        if newly_created {
+            sqlx::query("DELETE FROM log_snapshot")
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let captured = crate::log_capture::Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let applied = if newly_created {
+            vec!["0125_log_snapshot".to_string()]
+        } else {
+            vec![]
+        };
+        let restored = crate::log_snapshot::boot_after_migrations(&serving, &applied)
+            .with_subscriber(subscriber)
+            .await
+            .unwrap();
+        assert!(restored.state.teaching.has_contact(
+            &jojobot_domain::teaching::events::RunId("homer".into()),
+            "claims"
+        ));
+        let said = captured.text();
+        assert!(
+            said.lines()
+                .any(|line| line.contains("INFO") && line.contains("fingerprint")),
+            "{said}"
+        );
+        assert!(!said.contains("WARN"), "{said}");
+        crate::log_snapshot::take_snapshot(&serving, jiff::Timestamp::UNIX_EPOCH)
+            .await
+            .unwrap();
+        let captured = crate::log_capture::Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let restored = crate::log_snapshot::boot(&serving)
+            .with_subscriber(subscriber)
+            .await
+            .unwrap();
+        assert_eq!(restored.position, first.range().last);
+        assert!(
+            captured.text().contains("from_snapshot=true"),
+            "{}",
+            captured.text()
+        );
+    }
+    drop(serving);
+    writer.drain().await;
+    drop(writer);
+    server.stop().await;
 }
