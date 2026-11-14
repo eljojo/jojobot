@@ -2201,6 +2201,59 @@ pub(crate) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn the_collection_elapsed_line_includes_the_server_grace() {
+        use tracing::instrument::WithSubscriber;
+
+        let scratch = Scratch::new("collection-elapsed");
+        let database = scratch.0.join(DATABASE);
+        std::fs::create_dir_all(&database).expect("the database directory");
+        let home = Dolt::server_home(&scratch.0).expect("the home");
+        Dolt::init_if_empty(&database, &home).expect("the database is initialized");
+        // The same live-process metadata shape the ancestry guard reads. Removing it
+        // models the end of a draining server without starting another server.
+        let info = database.join(".dolt/sql-server.info");
+        std::fs::write(
+            &info,
+            format!("{}:{}:secret", std::process::id(), free_port()),
+        )
+        .expect("the server metadata");
+        assert!(Dolt::a_server_serves_over(&database));
+
+        let captured = crate::log_capture::Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_ansi(false)
+            .finish();
+        let (ran, ()) = async {
+            tokio::join!(Dolt::collect_garbage(&database, &home), async {
+                tokio::time::sleep(Duration::from_millis(350)).await;
+                std::fs::remove_file(&info).expect("the draining server lets go");
+            })
+        }
+        .with_subscriber(subscriber)
+        .await;
+        assert!(ran, "the offline collection completes");
+        let said = captured.text();
+        let line = said
+            .lines()
+            .find(|line| line.contains("step=\"store-collection\""))
+            .unwrap_or_else(|| panic!("no collection boot line: {said}"));
+        let elapsed: u64 = line
+            .split("elapsed_ms=")
+            .nth(1)
+            .expect("the elapsed field")
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .expect("elapsed milliseconds");
+        assert!(
+            elapsed >= 300,
+            "collection elapsed excludes the 350 ms grace: {line}"
+        );
+    }
+
     /// **The collection never runs against a store a server is serving.** The command line's
     /// collection is offline only when nothing holds the store: the pinned command finds a live
     /// server through the files it leaves beside the database and runs the collection ON it,
