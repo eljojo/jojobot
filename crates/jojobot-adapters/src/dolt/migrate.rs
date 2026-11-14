@@ -938,15 +938,18 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
 /// no longer protected by the row. The names are the tables the migrations create.
 const DERIVED_TABLES: &[&str] = &["log_snapshot"];
 
-/// **Name each derived table in `dolt_ignore`**, once and before the table exists. A row
-/// that is already there is left as it is, so every start may run it.
+/// **Name each derived table in `dolt_ignore` as ignored**, before the table exists, on every
+/// start. A rule already there is made ignored, whatever it said: a rule that says the table is
+/// not ignored would let a mark commit it.
 async fn keep_derived_tables_out_of_commits(pool: &MySqlPool) -> Result<(), MigrateError> {
     for table in DERIVED_TABLES {
         fail_as(
-            sqlx::query("INSERT IGNORE INTO dolt_ignore VALUES (?, true)")
-                .bind(*table)
-                .execute(pool)
-                .await,
+            sqlx::query(
+                "INSERT INTO dolt_ignore VALUES (?, true) ON DUPLICATE KEY UPDATE ignored = true",
+            )
+            .bind(*table)
+            .execute(pool)
+            .await,
             "dolt_ignore",
         )?;
     }

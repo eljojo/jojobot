@@ -1463,6 +1463,32 @@ async fn the_start_marks_the_window_it_can_be_interrupted_in() {
 
 /// **A second start applies nothing, and the tables are still there.**
 ///
+/// **The runner leaves a derived table ignored, whatever rule the store held for it.** A rule
+/// that says the table is not ignored would let a mark commit it, so the runner states the rule
+/// as ignored, and states it again on every start. A rule written by hand as `false` is the
+/// case an insert that leaves an existing row alone would miss.
+#[tokio::test]
+async fn the_runner_makes_the_snapshot_table_ignored_over_a_rule_that_said_it_is_not() {
+    let scratch = Scratch::new("migrate-ignore-rule");
+    let mut store = crate::dolt::Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    sqlx::query("INSERT INTO dolt_ignore VALUES ('log_snapshot', false)")
+        .execute(store.pool())
+        .await
+        .expect("a rule that says the table is not ignored");
+
+    run(store.pool()).await.expect("the schema moves");
+
+    let ignored: bool =
+        sqlx::query_scalar("SELECT ignored FROM dolt_ignore WHERE pattern = 'log_snapshot'")
+            .fetch_one(store.pool())
+            .await
+            .expect("the rule reads");
+    assert!(ignored, "the table is left unignored");
+    store.stop().await;
+}
+
 /// Both halves. "Applied nothing" alone passes on a run that never applies
 /// anything at all, which is the same database with none of the schema.
 #[tokio::test]
