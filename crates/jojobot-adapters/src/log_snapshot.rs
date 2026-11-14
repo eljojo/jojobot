@@ -395,6 +395,14 @@ async fn replay(
                 total_ms = began.elapsed().as_millis() as u64,
                 "event log boot"
             );
+            if report_skip
+                && !from_snapshot
+                && boot.position != Position(0)
+                && boot.claims_unreadable.is_none()
+            {
+                publish(log, validity, &boot, jiff::Timestamp::now()).await?;
+                tracing::info!(covered = boot.position.0, "snapshot taken after replay");
+            }
             return Ok(boot);
         }
         for batch in batches {
@@ -412,6 +420,15 @@ async fn replay(
 pub async fn take_snapshot(log: &dyn LogStore, at: jiff::Timestamp) -> Result<Position, LogError> {
     let validity = log.validity().await?;
     let boot = replay(log, false, false).await?;
+    publish(log, validity, &boot, at).await
+}
+
+async fn publish(
+    log: &dyn LogStore,
+    validity: Validity,
+    boot: &Boot,
+    at: jiff::Timestamp,
+) -> Result<Position, LogError> {
     // **A snapshot never leaves a claims member out.** A State whose claims stopped at a member
     // this build cannot read would be published as the State of the whole log, and a boot that
     // restored it would serve claims the log has moved past. Nothing is published; the boot of

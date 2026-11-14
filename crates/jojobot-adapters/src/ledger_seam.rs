@@ -190,11 +190,15 @@ impl jojobot_domain::log::LogStore for BootLog<'_> {
 
     async fn store_snapshot(
         &self,
-        _snapshot: &jojobot_domain::log::ValidatedSnapshot,
+        snapshot: &jojobot_domain::log::ValidatedSnapshot,
     ) -> Result<(), jojobot_domain::log::LogError> {
-        Err(jojobot_domain::log::LogError::Store(
-            "the boot reads the log and never stores a snapshot".into(),
-        ))
+        match self.0.store_snapshot(snapshot).await {
+            // A pre-migration reader has no snapshot table yet, as in load_snapshot.
+            Err(jojobot_domain::log::LogError::Store(why)) if why.contains("table not found") => {
+                Ok(())
+            }
+            other => other,
+        }
     }
 }
 
@@ -271,7 +275,7 @@ impl Seam {
         let settled = log.settle_on(&mut tx).await;
         let _ = tx.rollback().await;
         settled.map_err(refused)?;
-        let seam = Box::pin(Self::booted(log)).await?;
+        let seam = Box::pin(Self::booted(log, writer.boot_migrations())).await?;
         seam.catch_up().await?;
         if !seam.lock().seen {
             seam.import(pool).await?;
@@ -283,7 +287,7 @@ impl Seam {
     /// **The seam over the State the boot restored.** The booted State is held by value only in
     /// this function, so a caller that awaits it boxed does not carry the State in its own
     /// future.
-    async fn booted(log: DoltLog) -> Result<Arc<Self>, LedgerError> {
+    async fn booted(log: DoltLog, applied: &[String]) -> Result<Arc<Self>, LedgerError> {
         // **The boot reads the log's identity**, which a log being opened for the first time
         // does not hold yet: this makes it, as it is made when the log opens, and it is idempotent.
         log.create_validity().await.map_err(refused)?;
@@ -295,9 +299,12 @@ impl Seam {
             claims_import_batch,
             report,
             ..
-        } = Box::pin(crate::log_snapshot::boot(&BootLog(&log)))
-            .await
-            .map_err(refused)?;
+        } = Box::pin(crate::log_snapshot::boot_after_migrations(
+            &BootLog(&log),
+            applied,
+        ))
+        .await
+        .map_err(refused)?;
         let jojobot_domain::log::projection::State {
             teaching,
             ledger,

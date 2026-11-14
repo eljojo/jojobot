@@ -66,6 +66,7 @@ struct Driver {
     /// The store's event log, one head for every family that appends to it.
     log: OnceLock<crate::dolt_log::DoltLog>,
     /// The request and app ledgers, opened on the first write to the store.
+    boot_migrations: OnceLock<Vec<String>>,
     seam: tokio::sync::OnceCell<Arc<crate::ledger_seam::Seam>>,
     uncertain: Mutex<BTreeSet<&'static str>>,
     publication: publish::Publication,
@@ -93,6 +94,7 @@ impl Default for Writer {
             sender: OnceLock::new(),
             sql: OnceLock::new(),
             log: OnceLock::new(),
+            boot_migrations: OnceLock::new(),
             seam: tokio::sync::OnceCell::new(),
             uncertain: Mutex::new(BTreeSet::new()),
             publication: publish::Publication::default(),
@@ -169,6 +171,18 @@ impl Writer {
             .log
             .get_or_init(|| crate::dolt_log::DoltLog::unread(pool.clone()))
             .clone()
+    }
+
+    /// Set the migration account before the first job opens the State.
+    pub fn set_boot_migrations(&self, applied: &[String]) {
+        self.0
+            .boot_migrations
+            .set(applied.to_vec())
+            .expect("the boot sets migrations once");
+    }
+
+    pub(crate) fn boot_migrations(&self) -> &[String] {
+        self.0.boot_migrations.get().map_or(&[], Vec::as_slice)
     }
 
     /// The ledgers, when they are open. A covered commit that finds none fails.

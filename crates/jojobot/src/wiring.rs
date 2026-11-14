@@ -830,6 +830,7 @@ pub async fn boot_store_observed(
     // It says so loudly instead.
     let (folded, indexed) =
         assemble_memory_with(observation.memory(resolved), supplied.clone(), clock).await?;
+    folded.writer().set_boot_migrations(&applied);
     // **The ledgers open before anything fills, when the import is done**: the State
     // answers nothing until they are open, and a fill that ran first would read the
     // store thing by thing for every document of the index. A store whose import is

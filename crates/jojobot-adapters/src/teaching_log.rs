@@ -88,7 +88,8 @@ pub async fn serving_kept_after_migrations(
     let was_empty = log.head() == Some(Position::default());
     let marks = import_marks(pool).await?;
     let restored = seam.and_then(|seam| seam.take_teaching());
-    let ledger = LoggedTeachings::open_from_after_migrations(log, &marks, restored, applied).await?;
+    let ledger =
+        LoggedTeachings::open_from_after_migrations(log, &marks, restored, applied).await?;
     if was_empty {
         snapshots.after_import().await;
     }
@@ -253,9 +254,10 @@ impl LoggedTeachings {
                     #[cfg(test)]
                     this.boots_made
                         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let booted = crate::log_snapshot::boot_after_migrations(this.log.as_ref(), applied)
-                        .await
-                        .map_err(refused)?;
+                    let booted =
+                        crate::log_snapshot::boot_after_migrations(this.log.as_ref(), applied)
+                            .await
+                            .map_err(refused)?;
                     (booted.state.teaching, booted.position)
                 }
             };

@@ -8,10 +8,7 @@ use jojobot_domain::teaching::events::{RunId, TeachingEvent};
 
 use crate::teaching_log::codec as teaching;
 
-const SMALL: Cadence = Cadence {
-    events: 3,
-    dirty_for: Duration::from_secs(60),
-};
+const SMALL: Cadence = Cadence { events: 3 };
 
 /// Append one batch of `count` teaching events and return the new head.
 async fn append(log: &InMemoryLog, id: &str, count: u64) -> Position {
@@ -62,10 +59,9 @@ async fn keeper(log: &InMemoryLog, cadence: Cadence) -> SnapshotKeeper {
 }
 
 /// **The decision, one row per case.** Nothing past the snapshot is never due;
-/// events past it are due at the event count; the first sight of them starts a
-/// clock that makes them due after the dirty window.
+/// events past it are due at the event count, regardless of elapsed time.
 #[tokio::test]
-async fn a_snapshot_is_due_by_events_or_by_time_and_never_when_covered() {
+async fn a_snapshot_is_due_by_events_and_never_when_covered() {
     let log = InMemoryLog::default();
     let keeper = keeper(&log, SMALL).await;
     let t0 = Instant::now();
@@ -74,7 +70,7 @@ async fn a_snapshot_is_due_by_events_or_by_time_and_never_when_covered() {
         (0, 0, None),
         (2, 0, None),
         (2, 59, None),
-        (2, 60, Some(Why::Dirty)),
+        (2, 60, None),
         (3, 61, Some(Why::Events)),
         (0, 62, None),
     ];
@@ -237,10 +233,7 @@ async fn the_loop_takes_a_due_snapshot_on_a_tick() {
 #[tokio::test]
 async fn the_loop_leaves_the_shutdown_snapshot_to_the_writer() {
     let log = InMemoryLog::default();
-    let far = Cadence {
-        events: 1_000_000,
-        dirty_for: Duration::from_secs(3600),
-    };
+    let far = Cadence { events: 1_000_000 };
     let keeper = keeper(&log, far).await;
     let head = append(&log, "alpha", 2).await;
     keeper
@@ -370,5 +363,109 @@ async fn the_writer_refuses_work_from_the_moment_the_final_operation_is_queued()
     assert!(
         rejected.is_ok_and(|ended| ended.is_err()),
         "the writer admitted work while its final operation was only queued"
+    );
+}
+
+#[derive(Clone, Default)]
+struct Publications {
+    log: InMemoryLog,
+    count: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Publications {
+    fn count(&self) -> usize {
+        self.count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl LogStore for Publications {
+    async fn validity(&self) -> Result<jojobot_domain::log::Validity, LogError> {
+        self.log.validity().await
+    }
+
+    async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
+        self.log.append(head, batch).await
+    }
+
+    async fn read_from(&self, from: Position, bound: usize) -> Result<Vec<SealedBatch>, LogError> {
+        self.log.read_from(from, bound).await
+    }
+
+    async fn load_snapshot(
+        &self,
+    ) -> Result<Option<jojobot_domain::log::ValidatedSnapshot>, LogError> {
+        self.log.load_snapshot().await
+    }
+
+    async fn store_snapshot(
+        &self,
+        snapshot: &jojobot_domain::log::ValidatedSnapshot,
+    ) -> Result<(), LogError> {
+        self.log.store_snapshot(snapshot).await?;
+        self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn publications_follow_ten_thousand_events_and_not_elapsed_time() {
+    let log = Publications::default();
+    let keeper = SnapshotKeeper::open(Arc::new(log.clone()), CADENCE, Position(0))
+        .await
+        .unwrap();
+    let t0 = Instant::now();
+    let head = append(&log.log, "alpha", 9_999).await;
+    keeper.keep(head, t0, at(1)).await.unwrap();
+    keeper
+        .keep(head, t0 + Duration::from_secs(3600), at(2))
+        .await
+        .unwrap();
+    assert_eq!(log.count(), 0, "elapsed time must not publish");
+    let head = append(&log.log, "beta", 1).await;
+    keeper.keep(head, t0, at(3)).await.unwrap();
+    assert_eq!(log.count(), 1);
+    let head = append(&log.log, "gamma", 9_999).await;
+    keeper.keep(head, t0, at(4)).await.unwrap();
+    assert_eq!(log.count(), 1, "count restarts at the publication");
+    let head = append(&log.log, "delta", 1).await;
+    keeper.keep(head, t0, at(5)).await.unwrap();
+    keeper
+        .keep(head, t0 + Duration::from_secs(7200), at(6))
+        .await
+        .unwrap();
+    assert_eq!(log.count(), 2);
+    assert_eq!(
+        log.load_snapshot().await.unwrap().unwrap().covered_position,
+        head
+    );
+}
+
+#[tokio::test]
+async fn publications_cover_a_full_replay_and_the_writers_orderly_stop() {
+    let log = Publications::default();
+    let head = append(&log.log, "alpha", 2).await;
+    let boot = crate::log_snapshot::boot(&log).await.unwrap();
+    assert_eq!(boot.position, head);
+    assert_eq!(log.count(), 1, "the full replay publishes once");
+    let restored = crate::log_snapshot::boot(&log).await.unwrap();
+    assert_eq!(log.count(), 1, "a restored boot does not publish");
+
+    let keeper = SnapshotKeeper::open(
+        Arc::new(log.clone()),
+        CADENCE,
+        crate::log_snapshot::credited(&restored.report),
+    )
+    .await
+    .unwrap();
+    let writer = crate::writer::Writer::default();
+    let head = append(&log.log, "beta", 1).await;
+    writer
+        .finish(async move { keeper.flush(head, at(2)).await.unwrap() })
+        .await;
+    assert_eq!(log.count(), 2, "the final writer job publishes once");
+    assert_eq!(
+        log.load_snapshot().await.unwrap().unwrap().covered_position,
+        head
     );
 }

@@ -1,7 +1,7 @@
 //! **When the serving process takes a snapshot of the log's State.** The design
-//! (event log, section 7) names three moments: after a family import, after
-//! [`CADENCE`] events or minutes of unsnapshotted writes, and on an orderly
-//! shutdown with writes not yet covered. The snapshot itself is
+//! (event log, section 7) names three moments: after a full replay or family
+//! import, after [`CADENCE`] events, and on an orderly shutdown with writes not
+//! yet covered. The snapshot itself is
 //! [`take_snapshot`]: it rebuilds the State from the log's newest valid snapshot
 //! plus its tail, so the view is coherent at one position. Periodic work does not
 //! hold the writer's queue; the shutdown snapshot is its last job. This type only
@@ -19,26 +19,19 @@ use crate::log_snapshot::take_snapshot;
 pub struct Cadence {
     /// Committed events past the newest snapshot.
     pub events: u64,
-    /// Time since the log was first seen holding an event past the newest snapshot.
-    pub dirty_for: Duration,
 }
 
 /// The design's initial cadence.
-pub const CADENCE: Cadence = Cadence {
-    events: 10_000,
-    dirty_for: Duration::from_secs(5 * 60),
-};
+pub const CADENCE: Cadence = Cadence { events: 10_000 };
 
 /// Why a snapshot is taken now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Why {
     Events,
-    Dirty,
 }
 
 struct Kept {
     covered: Position,
-    dirty_since: Option<Instant>,
 }
 
 pub struct SnapshotKeeper {
@@ -59,10 +52,7 @@ impl SnapshotKeeper {
         Ok(Self {
             log,
             cadence,
-            kept: Mutex::new(Kept {
-                covered,
-                dirty_since: None,
-            }),
+            kept: Mutex::new(Kept { covered }),
         })
     }
 
@@ -74,19 +64,14 @@ impl SnapshotKeeper {
             .covered
     }
 
-    /// Whether a snapshot is due with the log at `head`. The first call that sees
-    /// the head past the snapshot starts the dirty clock.
-    pub fn due(&self, head: Position, now: Instant) -> Option<Why> {
-        let mut kept = self.kept.lock().expect("the keeper is not poisoned");
+    /// Whether enough events have committed past the newest snapshot.
+    pub fn due(&self, head: Position, _now: Instant) -> Option<Why> {
+        let kept = self.kept.lock().expect("the keeper is not poisoned");
         if head <= kept.covered {
-            kept.dirty_since = None;
             return None;
         }
-        let since = *kept.dirty_since.get_or_insert(now);
         if head.0 - kept.covered.0 >= self.cadence.events {
             Some(Why::Events)
-        } else if now.saturating_duration_since(since) >= self.cadence.dirty_for {
-            Some(Why::Dirty)
         } else {
             None
         }
@@ -152,7 +137,6 @@ impl SnapshotKeeper {
         let covered = take_snapshot(self.log.as_ref(), at).await?;
         let mut kept = self.kept.lock().expect("the keeper is not poisoned");
         kept.covered = kept.covered.max(covered);
-        kept.dirty_since = None;
         Ok(covered)
     }
 }
