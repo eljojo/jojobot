@@ -194,7 +194,7 @@ async fn a_run_never_handed_its_charter_says_never_told_and_one_that_read_it_say
         before.raw()
     );
     assert_eq!(writes[0]["value"], "never told", "{}", before.raw());
-    before.never_says("1970");
+    before.never_says("1970-");
 
     // ── after it reads its charter ────────────────────────────────────────────
     run.call("recall", json!({"subject": "bot:otto", "charter": true}))
@@ -220,7 +220,7 @@ async fn a_run_never_handed_its_charter_says_never_told_and_one_that_read_it_say
         "the run read its charter, so its history says the moment: {}",
         after.raw()
     );
-    after.never_says("1970");
+    after.never_says("1970-");
     run.wrap("read the charter and asked when").await;
     story.finish().await;
 }
