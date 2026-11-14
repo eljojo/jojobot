@@ -1,6 +1,61 @@
 //! Every migration added after the deployed store needs both interrupted starts.
 use super::*;
 use jojobot_adapters::dolt::migrate::Interruption;
+use jojobot_domain::log::{
+    Append, LogError, LogStore, Position, SealedBatch, ValidatedSnapshot, Validity,
+};
+
+/// The old publisher's SQL and eleven-member encoder at carry 4a5c332b1,
+/// dolt_log.rs:423-427 and 458-475, fed by the real snapshot producer.
+/// Fixture fidelity cannot redden 0126: its predicate reads only the slot prefix.
+struct OldPublisher {
+    log: BeforeSnapshots,
+    pool: sqlx::MySqlPool,
+}
+
+#[async_trait::async_trait]
+impl LogStore for OldPublisher {
+    async fn validity(&self) -> Result<Validity, LogError> {
+        self.log.validity().await
+    }
+
+    async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
+        self.log.append(head, batch).await
+    }
+
+    async fn read_from(&self, after: Position, limit: usize) -> Result<Vec<SealedBatch>, LogError> {
+        self.log.read_from(after, limit).await
+    }
+
+    async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
+        Ok(None)
+    }
+
+    async fn store_snapshot(&self, s: &ValidatedSnapshot) -> Result<(), LogError> {
+        let bytes = serde_json::to_vec(&(
+            s.snapshot_format_version,
+            s.projection_version,
+            &s.log_identity,
+            s.representation_epoch,
+            s.erasure_epoch,
+            s.covered_position,
+            s.batch_checksum,
+            s.created_at,
+            s.checksum,
+            s.serialized_length,
+            &s.blob,
+        ))
+        .map_err(|e| LogError::Store(e.to_string()))?;
+        sqlx::query("REPLACE INTO event_log (slot, first_position, last_position, payload) VALUES (?, NULL, ?, ?)")
+            .bind(format!("snapshot:{}", s.projection_version))
+            .bind(s.covered_position.0)
+            .bind(bytes)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| LogError::Store(e.to_string()))?;
+        Ok(())
+    }
+}
 
 type LogRow = (String, Option<u64>, u64, Vec<u8>);
 
@@ -106,14 +161,21 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
         // removes every log row but the identity, so without this the migration has nothing
         // to remove in either state and a no-op or a wrong predicate would pass. The boot
         // that follows must remove it; `boots_on_a_restored_store` reads that it did.
-        sqlx::query(
-            "INSERT INTO event_log (slot, first_position, last_position, payload)
-             VALUES ('snapshot:0123456789abcdef', NULL, 0, ?)",
-        )
-        .bind(b"[1,2,3]".as_slice())
-        .execute(store.pool())
-        .await
-        .expect("a snapshot row of the old format lands");
+        let publisher = OldPublisher {
+            log: BeforeSnapshots(
+                jojobot_adapters::writer_log::WriterLog::open(
+                    store.pool().clone(),
+                    jojobot_adapters::writer::Writer::default(),
+                )
+                .await
+                .expect("the original log opens"),
+            ),
+            pool: store.pool().clone(),
+        };
+        jojobot_adapters::log_snapshot::take_snapshot(&publisher, jiff::Timestamp::UNIX_EPOCH)
+            .await
+            .expect("the old publisher writes a snapshot of the real log");
+        drop(publisher);
         let held: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM event_log WHERE slot LIKE 'snapshot:%'")
                 .fetch_one(store.pool())
