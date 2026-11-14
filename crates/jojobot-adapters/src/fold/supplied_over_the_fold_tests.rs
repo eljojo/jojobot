@@ -735,6 +735,52 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
     }
 }
 
+/// **A mark of a thing folded through a long chain of merges renders as the whole roster
+/// renders it.** The scoped read follows the redirects from the mark to the survivor, and
+/// a chain longer than any fixed limit still ends at the survivor.
+#[tokio::test]
+async fn a_mark_followed_through_a_long_chain_of_merges_reaches_the_survivor() {
+    use jojobot_domain::memory::NewEntity;
+    use jojobot_domain::memory::mention::{known_among, render_roster, rendered};
+
+    let (layer, _, provisioned) = the_mention_stack().await;
+    let chain: Vec<EntityId> = (1..=70)
+        .map(|n| EntityId(format!("{}:{}", "person", spelled_slug(n))))
+        .collect();
+    for id in &chain {
+        layer
+            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    for pair in chain.windows(2) {
+        layer
+            .merge(
+                &pair[0],
+                &pair[1],
+                Some("filed twice"),
+                jiff::civil::date(2026, 9, 3),
+                &EntityId("bot:sigma".into()),
+                None,
+            )
+            .await
+            .expect("merged");
+    }
+    let whole = render_roster(&*provisioned).await.expect("the roster");
+    let badge = whole
+        .iter()
+        .find(|entity| entity.id == chain[0])
+        .and_then(|entity| entity.badge.clone())
+        .expect("the first of the chain wears a badge");
+    let text = format!("kept @#{badge} here");
+    let scoped = known_among(&*provisioned, &[text.as_str()])
+        .await
+        .expect("names");
+    assert_eq!(rendered(&text, &scoped), rendered(&text, &whole));
+}
+
 fn spelled_slug(n: usize) -> String {
     spelled_thing(n)
         .0

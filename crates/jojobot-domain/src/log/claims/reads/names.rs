@@ -28,15 +28,14 @@ impl State {
             // The badge is the object's own id; the row it wears forwards to its
             // survivor when a merge folded it away, and the survivor in its turn.
             let mut at = ObjectId(badge.clone());
-            let mut hops = 0;
-            while let Some(row) = self.listed_row(&at) {
+            let mut visited: BTreeSet<ObjectId> = BTreeSet::new();
+            while visited.insert(at.clone())
+                && let Some(row) = self.listed_row(&at)
+            {
                 known(row, &mut names);
                 match self.redirects.get(&at) {
-                    Some(next) if hops < 64 => {
-                        at = next.clone();
-                        hops += 1;
-                    }
-                    _ => break,
+                    Some(next) => at = next.clone(),
+                    None => break,
                 }
             }
         }
