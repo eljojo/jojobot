@@ -1178,17 +1178,22 @@ fn verdict(kib: u64) -> &'static str {
     }
 }
 
-/// Publish only after the measured server stops: its held image must never
-/// share a store with this test-only payload, which no server can boot from.
-async fn record_snapshot_growth(state: &Scratch) {
+/// **Whether a store is about one snapshot larger than it started**, the bound the ruled storage
+/// must keep after any number of changed copies and a collection: growth of at most one and a
+/// half snapshots. A store that came out smaller still holds its one snapshot.
+fn about_one_snapshot(grown: i128, snapshot_bytes: u64) -> bool {
+    grown <= i128::from(snapshot_bytes) * 3 / 2
+}
+
+/// **The claims State as the snapshot will hold it**, replayed in this process from the stopped
+/// store and serialized. The server's own snapshot holds the teaching and ledger State today;
+/// the claims join it in a later change, so the proof publishes the State that is coming.
+async fn claims_state_bytes(state: &Scratch) -> Vec<u8> {
     use jojobot_adapters::claims_log::LoggedClaims;
-    use jojobot_domain::log::LogStore;
-    use sha2::{Digest, Sha256};
     use std::sync::Arc;
 
     jojobot_domain::memory::kinds::load_shipped();
-    let path = state.0.join("db");
-    let mut store = Dolt::start(&path, free_port())
+    let mut store = Dolt::start(&state.0.join("db"), free_port())
         .await
         .expect("the store opens");
     let log = Arc::new(
@@ -1199,104 +1204,98 @@ async fn record_snapshot_growth(state: &Scratch) {
     let claims = LoggedClaims::open(log.clone())
         .await
         .expect("claims replay");
-    let mut held = claims.state().await;
-    let claim_count = shape_in(store.pool()).await.claims;
-    assert!(
-        held.import_completed(),
-        "the reading needs the imported State"
-    );
-    let mut snapshot = log
-        .load_snapshot()
-        .await
-        .expect("snapshot reads")
-        .expect("the boot left a snapshot envelope");
-    snapshot.blob = serde_json::to_vec(&held).expect("the actual State serializes");
-    snapshot.serialized_length = snapshot.blob.len() as u64;
-    snapshot.checksum = Sha256::digest(&snapshot.blob).into();
-    snapshot.created_at = jiff::Timestamp::now();
+    let held = claims.state().await;
     drop(claims);
     drop(log);
     store.stop().await;
-    let mut before = store_bytes(&path);
-
-    for publication in ["first-publication", "same-payload", "small-change"] {
-        if publication == "small-change" {
-            add_the_probe_object(&mut held);
-            snapshot.blob = serde_json::to_vec(&held).expect("the revised State serializes");
-            snapshot.serialized_length = snapshot.blob.len() as u64;
-            snapshot.checksum = Sha256::digest(&snapshot.blob).into();
-        }
-
-        let mut store = Dolt::start(&path, free_port())
-            .await
-            .expect("the store reopens");
-        let log = super::WriterLog::open(store.pool().clone(), super::Writer::default())
-            .await
-            .expect("the publication log opens");
-        log.store_snapshot(&snapshot)
-            .await
-            .expect("one publication lands");
-        log.load_snapshot()
-            .await
-            .expect("publication reads")
-            .expect("the publication left a snapshot");
-        drop(log);
-        store.stop().await;
-        let after = store_bytes(&path);
-        let allocated = i128::from(after.0) - i128::from(before.0);
-        let apparent = i128::from(after.1) - i128::from(before.1);
-        record(&format!(
-            "memory-report snapshot growth: {publication}; {claim_count} claims; payload {} bytes; allocated before {} after {} delta {}; apparent before {} after {} delta {}; includes one Dolt restart and flush; SQL transaction only, no session history mark",
-            snapshot.serialized_length, before.0, after.0, allocated, before.1, after.1, apparent,
-        ));
-        if publication != "first-publication" {
-            record(&format!(
-                "memory-report snapshot growth: daily estimate; {publication}; nominal 288/day allocated {} apparent {} bytes/day; extrapolates this publication including restart and flush, not retained history",
-                allocated * 288,
-                apparent * 288,
-            ));
-        }
-        before = after;
-    }
+    serde_json::to_vec(&held).expect("the State serializes")
 }
 
-/// The object the small change adds.
-const PROBE_OBJECT: &str = "growth-probe";
+/// **The ruled snapshot storage at production size, on the store that served the day.** The
+/// claims State at the import and the claims State after the day, which the day's real writes
+/// changed, are published into the snapshot table through the log's own path, and then the same
+/// State again. Nothing here calls a collection: the store's start does. The tree is read
+/// after each publication, after the stop, and after the next start has collected. Every
+/// commit of the store, made by the server's own marks while the table held snapshots, is
+/// asked whether it holds the table. The ruling holds the tree to about one snapshot over
+/// where it began, and no commit to hold the table.
+async fn record_snapshot_table_proof(state: &Scratch, at_import: &[u8]) {
+    use jojobot_domain::log::LogStore;
+    use sha2::{Digest, Sha256};
 
-/// **The small change between two publications: one object added.** The measurement builds
-/// the object itself, so the change depends on nothing the imported State holds. A
-/// declared kind is not an object with a body, and a change that looked one up panicked
-/// on the production-sized State.
-fn add_the_probe_object(held: &mut jojobot_domain::log::claims::State) {
-    use jojobot_domain::log::claims::{ClaimEvent, KindId, ObjectBody};
-    use jojobot_domain::log::{Event, ObjectId};
-
-    held.apply(&Event {
-        event_kind: "claim".into(),
-        meaning_version: 1,
-        actor: None,
-        run: None,
-        session_card: None,
-        request: None,
-        part: None,
-        occurred_at: None,
-        written_at: None,
-        imported_source_time: None,
-        payload: ClaimEvent::ObjectCreated {
-            object: ObjectId(PROBE_OBJECT.into()),
-            body: ObjectBody {
-                kind: KindId("thing".into()),
-                parent: None,
-                name: "Growth probe".into(),
-                source: "growth-measurement".into(),
-                aliases: Vec::new(),
-                boot: None,
-                metadata: std::collections::BTreeMap::new(),
-                archived: false,
-                bound_to: None,
-            },
-        },
-    });
+    let after_the_day = claims_state_bytes(state).await;
+    let path = state.0.join("db");
+    let mut store = Dolt::start(&path, free_port())
+        .await
+        .expect("the store opens, and the start collects");
+    let log = super::WriterLog::open(store.pool().clone(), super::Writer::default())
+        .await
+        .expect("the log opens");
+    let envelope = log
+        .load_snapshot()
+        .await
+        .expect("the snapshot reads")
+        .expect("the day's stop left a snapshot");
+    let started = store_bytes(&path).0;
+    let mut before = started;
+    for (label, blob) in [
+        ("the State at the import", at_import),
+        ("the State after the day", &after_the_day[..]),
+        ("the State after the day, again", &after_the_day[..]),
+    ] {
+        let mut snapshot = envelope.clone();
+        snapshot.blob = blob.to_vec();
+        snapshot.serialized_length = blob.len() as u64;
+        snapshot.checksum = Sha256::digest(blob).into();
+        snapshot.created_at = jiff::Timestamp::now();
+        log.store_snapshot(&snapshot)
+            .await
+            .expect("a publication lands");
+        let after = store_bytes(&path).0;
+        record(&format!(
+            "memory-report snapshot table: published {label}; payload {} bytes; the tree grew {} \
+             bytes ({before} to {after})",
+            blob.len(),
+            i128::from(after) - i128::from(before),
+        ));
+        before = after;
+    }
+    let commits: Vec<String> = sqlx::query_scalar("SELECT commit_hash FROM dolt_log")
+        .fetch_all(store.pool())
+        .await
+        .expect("the log of commits reads");
+    let mut holding = 0;
+    for commit in &commits {
+        let read = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM log_snapshot AS OF '{commit}'"
+        )))
+        .fetch_one(store.pool())
+        .await;
+        if read.is_ok() {
+            holding += 1;
+        }
+    }
+    drop(log);
+    store.stop().await;
+    let stopped = store_bytes(&path).0;
+    let mut again = Dolt::start(&path, free_port())
+        .await
+        .expect("the store starts again and collects");
+    again.stop().await;
+    let collected = store_bytes(&path).0;
+    let grown = i128::from(collected) - i128::from(started);
+    record(&format!(
+        "memory-report snapshot table: {} commits, {holding} hold the table; the tree began at \
+         {started} bytes, was {stopped} after the publications and the stop, and {collected} after \
+         the next start collected (grew {grown}); a snapshot is {} bytes",
+        commits.len(),
+        after_the_day.len(),
+    ));
+    assert_eq!(holding, 0, "a commit holds the snapshot table");
+    assert!(
+        about_one_snapshot(grown, after_the_day.len() as u64),
+        "the store is not about one snapshot larger after the collection: grew {grown}"
+    );
 }
 
 /// Both readings cover the stopped store tree, after buffered writes drain.
@@ -1344,6 +1343,9 @@ async fn the_servers_memory_after_a_replayed_day() {
     // day, not the import boot, are the bound's.
     let (server_peak, store_peak) = (boot.server_peak, boot.store_peak);
     let (prepared, _) = boot.run.stopped();
+    // **The claims State at the import**, kept for the snapshot proof at the end: the day's
+    // real writes change the State, and the proof publishes it before and after.
+    let claims_at_the_import = claims_state_bytes(&prepared).await;
     let prepared = second_boot(prepared);
     let served = no_snapshot_boot(prepared).await;
     let (pid, port) = (served.pid, served.http_port);
@@ -1404,7 +1406,7 @@ async fn the_servers_memory_after_a_replayed_day() {
         mib(bound),
         verdict(beside),
     ));
-    record_snapshot_growth(&state).await;
+    record_snapshot_table_proof(&state, &claims_at_the_import).await;
     record(&format!(
         "memory-report wall: {} s from the start of the case to its end",
         began.elapsed().as_secs()
@@ -1663,26 +1665,20 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         assert!(line.contains("(1101580 kB)"), "{line}");
     }
 
-    /// **The small change of the growth measurement depends on nothing the State holds.**
-    /// It adds one object the measurement builds itself, so it applies to a State with no
-    /// declared kind and no object, and the serialized State is different after it. A change
-    /// built from an object looked up in the State panicked on the production-sized one.
+    /// **A store that took changed copies of a snapshot and was collected is about one snapshot
+    /// larger than it started**, which is the ruling's bound: growth of at most one and a half
+    /// snapshots, whatever the number of copies. A store that came out smaller, because the
+    /// collection also cleared older garbage, still holds its one snapshot.
     #[test]
-    fn the_growth_measurements_small_change_applies_to_a_state_that_holds_nothing() {
-        let mut held = jojobot_domain::log::claims::State::default();
-        let before = serde_json::to_vec(&held).expect("the empty State serializes");
-        add_the_probe_object(&mut held);
-        let after = serde_json::to_vec(&held).expect("the changed State serializes");
-        assert_ne!(
-            before, after,
-            "the change left the serialized State as it was"
-        );
+    fn a_store_is_about_one_snapshot_larger_when_it_grew_by_at_most_one_and_a_half() {
+        assert!(about_one_snapshot(0, 100));
+        assert!(about_one_snapshot(150, 100));
+        assert!(!about_one_snapshot(151, 100));
         assert!(
-            held.object(&jojobot_domain::log::ObjectId(PROBE_OBJECT.into()))
-                .is_some(),
-            "the probe object is not in the State"
+            about_one_snapshot(-500, 100),
+            "a store that came out smaller holds its snapshot"
         );
-        assert_eq!(held.payload().records, 1, "one object was added");
+        assert!(!about_one_snapshot(100 * 4, 100), "four copies are not one");
     }
 
     /// **The calibration line names what was done and the day production's bytes were
