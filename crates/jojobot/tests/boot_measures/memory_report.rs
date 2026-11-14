@@ -1178,6 +1178,17 @@ fn verdict(kib: u64) -> &'static str {
     }
 }
 
+/// **Whether a commit holds the table, from what a read of it said.** A read that answers says
+/// it does; "table not found" says it does not; any other failure says nothing, and is returned
+/// as an error so a proof cannot count a read it never made as a commit that does not hold it.
+fn commit_holds_the_table(read: Result<i64, String>) -> Result<bool, String> {
+    match read {
+        Ok(_) => Ok(true),
+        Err(said) if said.contains("table not found") => Ok(false),
+        Err(other) => Err(other),
+    }
+}
+
 /// **Whether a store is about one snapshot larger than it started**, the bound the ruled storage
 /// must keep after any number of changed copies and a collection: growth of at most one and a
 /// half snapshots. A store that came out smaller still holds its one snapshot.
@@ -1224,6 +1235,11 @@ async fn record_snapshot_table_proof(state: &Scratch, at_import: &[u8]) {
     use sha2::{Digest, Sha256};
 
     let after_the_day = claims_state_bytes(state).await;
+    assert_ne!(
+        at_import,
+        &after_the_day[..],
+        "the day changed nothing the State holds, so the two publications are one"
+    );
     let path = state.0.join("db");
     let mut store = Dolt::start(&path, free_port())
         .await
@@ -1260,28 +1276,61 @@ async fn record_snapshot_table_proof(state: &Scratch, at_import: &[u8]) {
         ));
         before = after;
     }
-    let commits: Vec<String> = sqlx::query_scalar("SELECT commit_hash FROM dolt_log")
-        .fetch_all(store.pool())
-        .await
-        .expect("the log of commits reads");
+    let commits: Vec<String> =
+        sqlx::query_scalar("SELECT commit_hash FROM dolt_log ORDER BY date DESC")
+            .fetch_all(store.pool())
+            .await
+            .expect("the log of commits reads");
     let mut holding = 0;
     for commit in &commits {
         let read = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM log_snapshot AS OF '{commit}'"
         )))
         .fetch_one(store.pool())
-        .await;
-        if read.is_ok() {
+        .await
+        .map_err(|error| error.to_string());
+        let holds = commit_holds_the_table(read).unwrap_or_else(|other| {
+            panic!("the read of commit {commit} failed for another reason: {other}")
+        });
+        if holds {
             holding += 1;
         }
     }
+    // **The control**: the same kind of read answers on a table the newest commit does hold, so
+    // "no commit holds the snapshot table" is a reading and not a read that never worked.
+    let newest = &commits[0];
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM schema_migration AS OF '{newest}'"
+    )))
+    .fetch_one(store.pool())
+    .await
+    .expect("a read of a commit answers on a table it holds");
     drop(log);
     store.stop().await;
     let stopped = store_bytes(&path).0;
     let mut again = Dolt::start(&path, free_port())
         .await
         .expect("the store starts again and collects");
+    // **The snapshot is read back after the collection**: a store that lost it would come out
+    // smaller, which the bound below passes, so what the collection kept is read, not assumed.
+    let reread = super::WriterLog::open(again.pool().clone(), super::Writer::default())
+        .await
+        .expect("the log opens after the collection")
+        .load_snapshot()
+        .await
+        .expect("the snapshot reads after the collection")
+        .expect("the collection lost the snapshot");
     again.stop().await;
+    assert_eq!(
+        reread.checksum,
+        <[u8; 32]>::from(Sha256::digest(&after_the_day)),
+        "the collection changed the snapshot it kept"
+    );
+    assert_eq!(
+        reread.blob.len(),
+        after_the_day.len(),
+        "the snapshot's length"
+    );
     let collected = store_bytes(&path).0;
     let grown = i128::from(collected) - i128::from(started);
     record(&format!(
@@ -1663,6 +1712,27 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         assert!(!line.starts_with("memory-report boot: "), "{line}");
         assert!(!line.starts_with("memory-report second boot: "), "{line}");
         assert!(line.contains("(1101580 kB)"), "{line}");
+    }
+
+    /// **Only "table not found" says a commit does not hold the table.** A read that answers
+    /// says it does. A read that fails for any other reason, a lost connection or a syntax
+    /// error, says nothing, and counting it as "does not hold" would let a proof pass over a
+    /// store it never read.
+    #[test]
+    fn only_a_missing_table_says_a_commit_does_not_hold_it() {
+        assert_eq!(commit_holds_the_table(Ok(3)), Ok(true));
+        assert_eq!(
+            commit_holds_the_table(Err("table not found: log_snapshot".to_string())),
+            Ok(false)
+        );
+        assert!(
+            commit_holds_the_table(Err("connection reset by peer".to_string())).is_err(),
+            "a failed read counted as a commit that does not hold the table"
+        );
+        assert!(
+            commit_holds_the_table(Err("syntax error at position 9".to_string())).is_err(),
+            "a refused statement counted as a commit that does not hold the table"
+        );
     }
 
     /// **A store that took changed copies of a snapshot and was collected is about one snapshot
