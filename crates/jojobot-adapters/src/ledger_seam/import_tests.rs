@@ -179,6 +179,135 @@ async fn canonical_handle_seam_refuses_duplicates_before_staging_import_or_live_
     server.stop().await;
 }
 
+/// **A retirement of a spelling the object does not hold is refused before staging**, at the
+/// live entrance: the spelling is another object's, or nobody's. The log is unchanged.
+#[tokio::test]
+async fn canonical_handle_seam_refuses_retirement_of_an_unheld_spelling() {
+    let scratch = Scratch::new("seam-unheld-retirement");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let pool = sql::Pool::from(store.clone());
+    let writer = Writer::default();
+    let seam = opened(&writer, &pool).await;
+    staged(
+        &writer,
+        &pool,
+        &seam,
+        vec![],
+        thing("k1", "person:homer"),
+        true,
+    )
+    .await
+    .unwrap();
+    let log = writer.shared_log(&store);
+    let before = log.read_from(Position(0), 100).await.unwrap();
+    for (object, address) in [("k1", "person:marge"), ("k2", "person:homer")] {
+        let retire = vec![Event {
+            payload: ClaimEvent::AddressRetired {
+                object: ObjectId(object.into()),
+                address: address.into(),
+                day: jiff::civil::date(2026, 11, 5),
+            },
+            ..thing("k1", "person:homer").remove(0)
+        }];
+        let result = staged(&writer, &pool, &seam, vec![], retire, false).await;
+        assert!(
+            matches!(result, Err(LedgerError::Refused(_))),
+            "an unheld retirement of {address} for {object} must be refused: {result:?}"
+        );
+        assert_eq!(log.read_from(Position(0), 100).await.unwrap(), before);
+    }
+    writer.drain().await;
+    server.stop().await;
+}
+
+/// **A restart replays to the same State.** What the first seam held after its live writes, a
+/// record and a field write among them, is what a second writer's seam reads back from the log
+/// alone; a field the codec dropped would show as a difference here.
+#[tokio::test]
+async fn a_restarted_seam_holds_the_state_the_first_one_held() {
+    use jojobot_domain::log::RecordId;
+    use jojobot_domain::log::claims::{ClaimBody, FieldValue, KeyId};
+    use jojobot_domain::memory::{FactStatus, Provenance, Standing, WriteClass};
+    let scratch = Scratch::new("seam-restart");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let pool = sql::Pool::from(store.clone());
+    let first = Writer::default();
+    let seam = opened(&first, &pool).await;
+    staged(
+        &first,
+        &pool,
+        &seam,
+        vec![],
+        thing("k2", "person:lisa"),
+        true,
+    )
+    .await
+    .unwrap();
+    let envelope = thing("k1", "person:homer").remove(0);
+    let mut live = thing("k1", "person:homer");
+    live.push(Event {
+        payload: ClaimEvent::RecordCreated {
+            record: RecordId("r1".into()),
+            claim: ClaimBody {
+                label: "f1".into(),
+                home: ObjectId("k1".into()),
+                content: "likes donuts".into(),
+                details: None,
+                provenance: Provenance::Testimony,
+                standing: Standing::Settled,
+                status: FactStatus::Active,
+                recorded_at: jiff::civil::date(2026, 11, 5),
+                happened_at: None,
+                happened_through: None,
+                stale_after: None,
+                edge: None,
+                derived_from: None,
+                refs: Vec::new(),
+                stands_for: Vec::new(),
+                receipt: None,
+                app: None,
+                inserted_at: None,
+            },
+        },
+        ..envelope.clone()
+    });
+    live.push(Event {
+        payload: ClaimEvent::FieldWritten {
+            record: RecordId("r1".into()),
+            subject: ObjectId("k1".into()),
+            key: KeyId("mood".into()),
+            ordinal: 1,
+            class: WriteClass::Sets,
+            write: FieldValue::Set("calm".into()),
+            targets: Vec::new(),
+        },
+        ..envelope
+    });
+    staged(&first, &pool, &seam, vec![], live, false)
+        .await
+        .unwrap();
+    let held = seam.read_claims(Clone::clone);
+    assert!(
+        held.resolve("person:homer").is_some() && held.resolve("person:lisa").is_some(),
+        "the first seam holds what was written"
+    );
+    first.drain().await;
+    drop(seam);
+    drop(first);
+
+    let second = Writer::default();
+    let restarted = opened(&second, &pool).await;
+    assert_eq!(
+        restarted.read_claims(Clone::clone),
+        held,
+        "a restart replays to the State the first seam held"
+    );
+    second.drain().await;
+    server.stop().await;
+}
+
 /// **Before a completed import the seam stages no claims event**, whatever else
 /// the write carries, and the log is unchanged. A write of the ledgers alone goes
 /// on. The import's own batch is staged, and after it the same write is staged.

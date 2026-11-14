@@ -1233,13 +1233,29 @@ fn claims_counts(batches: &[SealedBatch]) -> (usize, usize) {
     (records, imports)
 }
 
+/// **The claims State the production seam holds, copied out of the writer that opened the log.**
+/// Opening a `WriterLog` over a writer runs a job of that writer, which opens the seam production
+/// serves from: it replays both families and imports nothing into a log that already holds the
+/// import. The lend answers only when the import is in the log and no member is unread, so the
+/// State this returns is the State a read would be answered from, not one a test rebuilt.
+pub(crate) fn claims_state_from(writer: &Writer) -> jojobot_domain::log::claims::State {
+    let lender = writer
+        .claims_lender()
+        .expect("opening the log opened the seam");
+    let mut taken = None;
+    let answered = lender.lend(&mut |state| taken = Some(state.clone()));
+    assert!(
+        answered,
+        "the seam's claims State could not answer: the import is not in the log, or a member is unread"
+    );
+    taken.expect("the lend answered and ran its reader")
+}
+
 async fn compare_grown_claims(scaled: bool) {
-    use jojobot_adapters::claims_log::LoggedClaims;
     use jojobot_adapters::dolt::memory::DoltMemory;
     use jojobot_domain::memory::{EntityId, Memory};
     use jojobot_exercise::surface::Surface;
     use serde_json::json;
-    use std::sync::Arc;
 
     let mut running = recording(Scratch::new("grown-claims-seed"));
     running.first_answer();
@@ -1343,7 +1359,8 @@ async fn compare_grown_claims(scaled: bool) {
     assert_eq!(facts.iter().any(|fact| fact.id.0.ends_with("x1")), scaled);
     facts.sort_by_key(|fact| !fact.id.0.ends_with("x1"));
     jojobot_domain::memory::kinds::load_shipped();
-    let log = WriterLog::open(pool.clone(), Writer::default())
+    let seam_writer = Writer::default();
+    let log = WriterLog::open(pool.clone(), seam_writer.clone())
         .await
         .expect("the restored log opens");
     let batches = log
@@ -1370,11 +1387,7 @@ async fn compare_grown_claims(scaled: bool) {
             "scaling claims preserves the other family's event exactly once"
         );
     }
-    let held = LoggedClaims::open(Arc::new(log))
-        .await
-        .expect("the claims family opens")
-        .state()
-        .await;
+    let held = claims_state_from(&seam_writer);
     let addresses: Vec<_> = facts
         .iter()
         .map(|fact| fact.address().to_string())
@@ -1434,7 +1447,8 @@ async fn compare_grown_claims(scaled: bool) {
     let mut store = Dolt::start(&restored.0.join("db"), free_port())
         .await
         .expect("the replayed store opens");
-    let log = WriterLog::open(store.pool().clone(), Writer::default())
+    let replay_writer = Writer::default();
+    let log = WriterLog::open(store.pool().clone(), replay_writer.clone())
         .await
         .expect("the replayed log opens");
     assert_eq!(
@@ -1442,11 +1456,7 @@ async fn compare_grown_claims(scaled: bool) {
         imported,
         "the second head boot replays without importing again"
     );
-    let replayed = LoggedClaims::open(Arc::new(log))
-        .await
-        .unwrap()
-        .state()
-        .await;
+    let replayed = claims_state_from(&replay_writer);
     for address in addresses {
         assert!(replayed.claim_at(&address).is_some(), "{address}");
     }

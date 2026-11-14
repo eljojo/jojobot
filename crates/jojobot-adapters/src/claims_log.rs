@@ -83,6 +83,34 @@ pub(crate) fn apply(state: &mut State, event: &Event<ClaimEvent>) {
     }
 }
 
+/// **The claims State an independent replay of the durable batches builds**: each claims member
+/// decoded and applied to an empty State, in log order. It shares nothing with the seam, so a
+/// State the seam holds wrongly cannot also be what a test compares it with.
+#[cfg(test)]
+pub(crate) async fn replayed_from(log: &dyn LogStore) -> State {
+    let mut state = State::default();
+    let mut head = Position(0);
+    loop {
+        let batches = log
+            .read_from(head, READ_BOUND)
+            .await
+            .expect("the durable batches read");
+        if batches.is_empty() {
+            return state;
+        }
+        for batch in batches {
+            for member in batch.members() {
+                if let Some(event) =
+                    codec::decode_own(member).expect("a stored claims member reads")
+                {
+                    let _ = state.apply(&event);
+                }
+            }
+            head = batch.range().last;
+        }
+    }
+}
+
 pub(crate) fn report_replay(state: &State) {
     tracing::info!(
         duplicate_handle_bindings = state.duplicate_handle_bindings(),

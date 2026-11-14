@@ -1276,23 +1276,15 @@ fn about_one_snapshot(grown: i128, snapshot_bytes: u64) -> bool {
 /// store and serialized. The server's own snapshot holds the teaching and ledger State today;
 /// the claims join it in a later change, so the proof publishes the State that is coming.
 async fn claims_state_bytes(state: &Scratch) -> Vec<u8> {
-    use jojobot_adapters::claims_log::LoggedClaims;
-    use std::sync::Arc;
-
     jojobot_domain::memory::kinds::load_shipped();
     let mut store = Dolt::start(&state.0.join("db"), free_port())
         .await
         .expect("the store opens");
-    let log = Arc::new(
-        super::WriterLog::open(store.pool().clone(), super::Writer::default())
-            .await
-            .expect("the log opens"),
-    );
-    let claims = LoggedClaims::open(log.clone())
+    let writer = super::Writer::default();
+    let log = super::WriterLog::open(store.pool().clone(), writer.clone())
         .await
-        .expect("claims replay");
-    let held = claims.state().await;
-    drop(claims);
+        .expect("the log opens");
+    let held = super::claims_state_from(&writer);
     drop(log);
     store.stop().await;
     serde_json::to_vec(&held).expect("the State serializes")

@@ -522,11 +522,7 @@ async fn declaration_after_unknown_commit(change: DeclarationChange) {
     let read = DoltMemory::open(store.clone()).import_rows().await.unwrap();
     assert!(read.findings.is_empty(), "{:?}", read.findings);
     let imported = State::replay(import(&read.rows).unwrap().iter());
-    let replay = crate::claims_log::LoggedClaims::open(log)
-        .await
-        .unwrap()
-        .state()
-        .await;
+    let replay = crate::claims_log::replayed_from(log.as_ref()).await;
     for name in ["alpha", "beta"] {
         let key = ObjectId(name.into());
         assert_eq!(held.declared(&key), imported.declared(&key), "held {name}");
