@@ -1562,16 +1562,18 @@ async fn dump_store(state_dir: &std::path::Path) -> String {
     text
 }
 
-/// **A dump without the rows of the event log.** A boot that imports the store
-/// again writes its log again, so two dumps of a store booted twice before the
-/// import differ in the log and in nothing else. The table's definition stays in,
-/// and every other table is compared as it was.
+/// **A dump without the rows of the event log and of the snapshot table.** A boot that
+/// imports the store again writes its log again, and the snapshot taken from it, so two
+/// dumps of a store booted twice before the import differ in those two tables and in
+/// nothing else. The store's tool dumps the snapshot table although no commit holds it.
+/// The tables' definitions stay in, and every other table is compared as it was.
 fn without_the_log(dump: &str) -> String {
     split_sql_statements(dump)
         .into_iter()
         .filter(|statement| {
-            !statement.contains("`event_log`")
-                || statement.trim_start().to_uppercase().starts_with("CREATE")
+            let of_the_log =
+                statement.contains("`event_log`") || statement.contains("`log_snapshot`");
+            !of_the_log || statement.trim_start().to_uppercase().starts_with("CREATE")
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -3491,6 +3493,20 @@ async fn lines_logged_around_a_slow_statement(label: &str) -> Vec<String> {
 
 /// The warning a boot logs when it finds no snapshot, as a boot of the binary wrote
 /// it (the shape a real boot printed, with its timestamp and target).
+/// **The comparison that ignores the log ignores its snapshot too, and nothing else.**
+#[test]
+fn a_dump_without_the_log_keeps_every_table_but_the_log_and_its_snapshot() {
+    let dump = "CREATE TABLE `log_snapshot` (`slot` varchar(32));\n\
+                INSERT INTO `log_snapshot` (`slot`) VALUES ('alpha');\n\
+                INSERT INTO `event_log` (`slot`) VALUES ('beta');\n\
+                INSERT INTO `fact` (`entity`) VALUES ('gamma');";
+    let kept = without_the_log(dump);
+    assert!(kept.contains("CREATE TABLE `log_snapshot`"), "{kept}");
+    assert!(!kept.contains("INSERT INTO `log_snapshot`"), "{kept}");
+    assert!(!kept.contains("INSERT INTO `event_log`"), "{kept}");
+    assert!(kept.contains("INSERT INTO `fact`"), "{kept}");
+}
+
 const THE_NO_SNAPSHOT_LINE: &str = "2026-11-10T12:57:34.178514Z  WARN jojobot_adapters::log_snapshot: SNAPSHOT NOT USED — the boot replays the whole log, not a fast boot reason=\"none_held\"";
 
 /// **The first boot over a recording that holds no snapshot may warn that none was
