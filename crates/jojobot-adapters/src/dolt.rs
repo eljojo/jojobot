@@ -317,7 +317,7 @@ impl Dolt {
         })?;
         // **Held until this start returns**, so the check for a server and the collection that
         // follows cannot interleave with another start of the same store.
-        let _owning = Self::own_the_start(data_dir, START_OWNERSHIP_WAIT).await?;
+        let _owning = Self::own_the_start(&database, START_OWNERSHIP_WAIT).await?;
         let home = Self::server_home(data_dir)?;
         let held_a_store = database.join(".dolt").exists();
         Self::init_if_empty(&database, &home)?;
@@ -621,16 +621,28 @@ impl Dolt {
     /// The pinned command walks up from the database directory and reads the first
     /// `.dolt/sql-server.info` it meets, so every directory from the database to the root is
     /// read here, the database's own included.
+    ///
+    /// **The walk is over the physical path**: the command runs from its working directory as the
+    /// system resolves it, so a database directory reached through a link is walked from where the
+    /// link leads, not from where it sits.
     fn a_server_serves_over(database: &Path) -> bool {
-        database.ancestors().any(Self::a_server_serves)
+        let physical = database
+            .canonicalize()
+            .unwrap_or_else(|_| database.to_path_buf());
+        physical.ancestors().any(Self::a_server_serves)
     }
 
-    /// **Own the start of the store in this data directory.** An advisory lock on a file in the
-    /// directory, held until the start returns, so two starts of one store, in this process or
-    /// another, cannot both find no server and then collect while the other spawns. The wait
-    /// for it ends with an error that names what holds the directory.
-    async fn own_the_start(data_dir: &Path, wait: Duration) -> Result<std::fs::File, StartError> {
-        let path = data_dir.join(".jojobot-start.lock");
+    /// **Own the start of the store at this database directory.** An advisory lock on a file
+    /// beside the database's physical location, held until the start returns, so two starts of
+    /// one store, in this process or another and through any path to it, cannot both find no
+    /// server and then collect while the other spawns. The wait for it ends with an error that
+    /// names what holds the directory. A server another tool started is outside this lock.
+    async fn own_the_start(database: &Path, wait: Duration) -> Result<std::fs::File, StartError> {
+        let physical = database
+            .canonicalize()
+            .unwrap_or_else(|_| database.to_path_buf());
+        let beside = physical.parent().unwrap_or(&physical);
+        let path = beside.join(".jojobot-start.lock");
         let fail = |why: String| StartError::DataDir {
             path: path.clone(),
             why,
@@ -2289,6 +2301,42 @@ pub(crate) mod tests {
         );
     }
 
+    /// **A database reached through a link is guarded where the link leads.** The command walks
+    /// up from the physical directory, so a server over the directory the link points into is the
+    /// one a collection would run on, and two starts that name the store by different paths hold
+    /// one lock.
+    #[tokio::test]
+    async fn a_database_reached_through_a_link_is_guarded_where_it_leads() {
+        let scratch = Scratch::new("guard-link");
+        let beta = scratch.0.join("beta");
+        let real = beta.join(DATABASE);
+        std::fs::create_dir_all(&real).expect("the real database directory");
+        let alpha = scratch.0.join("alpha");
+        std::fs::create_dir_all(&alpha).expect("the directory holding the link");
+        let linked = alpha.join(DATABASE);
+        std::os::unix::fs::symlink(&real, &linked).expect("the link");
+        std::fs::create_dir_all(beta.join(".dolt")).expect("the server's directory");
+        std::fs::write(
+            beta.join(".dolt").join("sql-server.info"),
+            format!("{}:{}:secret", std::process::id(), free_port()),
+        )
+        .expect("the info file");
+        assert!(
+            Dolt::a_server_serves_over(&linked),
+            "a server over the directory the link leads into was not seen"
+        );
+
+        let first = Dolt::own_the_start(&real, Duration::from_secs(5))
+            .await
+            .expect("the first start owns the store");
+        let through_the_link = Dolt::own_the_start(&linked, Duration::from_millis(300)).await;
+        assert!(
+            through_the_link.is_err(),
+            "a start through the link was let in beside one by the real path"
+        );
+        drop(first);
+    }
+
     /// **Two starts of one store do not interleave.** The start owns the directory through an
     /// advisory lock until it returns, so the check for a server and the collection after it
     /// cannot run while another start spawns. A second owner waits, and gives up with an error
@@ -2296,18 +2344,20 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_second_start_of_a_store_waits_for_the_first_to_let_go() {
         let scratch = Scratch::new("start-ownership");
-        let first = Dolt::own_the_start(&scratch.0, Duration::from_secs(5))
+        let database = scratch.0.join(DATABASE);
+        std::fs::create_dir_all(&database).expect("the database directory");
+        let first = Dolt::own_the_start(&database, Duration::from_secs(5))
             .await
             .expect("the first start owns the directory");
 
-        let refused = Dolt::own_the_start(&scratch.0, Duration::from_millis(300)).await;
+        let refused = Dolt::own_the_start(&database, Duration::from_millis(300)).await;
         assert!(
             matches!(&refused, Err(StartError::DataDir { why, .. }) if why.contains("another start")),
             "a second start was let in, or refused without saying why: {refused:?}"
         );
 
         drop(first);
-        Dolt::own_the_start(&scratch.0, Duration::from_secs(5))
+        Dolt::own_the_start(&database, Duration::from_secs(5))
             .await
             .expect("the directory is free once the first start lets go");
     }
