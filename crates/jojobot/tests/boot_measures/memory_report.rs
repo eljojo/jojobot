@@ -647,6 +647,29 @@ struct Replayed {
     made: usize,
 }
 
+/// **Write the count and mean time of each kind of call since the last line**, and
+/// start a new window.
+fn record_latency(
+    latency: &std::sync::Mutex<std::collections::BTreeMap<String, (usize, u128)>>,
+    at: Duration,
+) {
+    let mut window = latency.lock().expect("the latencies");
+    let kinds: Vec<String> = window
+        .iter()
+        .map(|(kind, (count, total))| {
+            format!("{kind} {count} at {} ms", total / (*count).max(1) as u128)
+        })
+        .collect();
+    if !kinds.is_empty() {
+        record(&format!(
+            "memory-report day-latency: {} s into the replay: {}",
+            at.as_secs(),
+            kinds.join(", ")
+        ));
+    }
+    window.clear();
+}
+
 /// **Replay one day through a running server**, for no longer than `budget`,
 /// sampling the server's memory about every half second and writing a line of
 /// progress about every ten, so a run that is stopped still leaves its numbers.
@@ -709,21 +732,7 @@ async fn replay_day(pid: u32, port: u16, first_call: usize, budget: Duration) ->
                             started.elapsed().as_secs(),
                             mib(memory.resident),
                         ));
-                        let mut window = latency.lock().expect("the latencies");
-                        let kinds: Vec<String> = window
-                            .iter()
-                            .map(|(kind, (count, total))| {
-                                format!("{kind} {count} at {} ms", total / (*count).max(1) as u128)
-                            })
-                            .collect();
-                        if !kinds.is_empty() {
-                            record(&format!(
-                                "memory-report day-latency: {} s into the replay: {}",
-                                started.elapsed().as_secs(),
-                                kinds.join(", ")
-                            ));
-                        }
-                        window.clear();
+                        record_latency(&latency, started.elapsed());
                     }
                     taken += 1;
                 }
@@ -767,11 +776,21 @@ async fn replay_day(pid: u32, port: u16, first_call: usize, budget: Duration) ->
         if started.elapsed() >= budget {
             break;
         }
+        let asked = Instant::now();
         make(&peer, &sid, *call, first_call + calls.len() + at, &mut mine).await;
+        {
+            let mut window = latency.lock().expect("the latencies");
+            let kind = window.entry(format!("{call:?}")).or_default();
+            kind.0 += 1;
+            kind.1 += asked.elapsed().as_millis();
+        }
         made.fetch_add(1, Ordering::SeqCst);
     }
     finished.store(true, Ordering::SeqCst);
     sampler.await.expect("the sampler stopped");
+    // **The last window is written too**, which the sampler's own count of ten seconds
+    // never reaches when the replay ends between two lines.
+    record_latency(&latency, started.elapsed());
     client.cancel().await.expect("the client closes");
     let samples = samples.lock().expect("the samples").clone();
     Replayed {
