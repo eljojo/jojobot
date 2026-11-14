@@ -729,6 +729,7 @@ impl Dolt {
             }
             (total, unreadable)
         }
+        let began = std::time::Instant::now();
         if !Self::nothing_serves_within(database, SERVER_GRACE).await {
             tracing::warn!(
                 database = %database.display(),
@@ -737,8 +738,10 @@ impl Dolt {
             );
             return false;
         }
+        let grace_ms = began.elapsed().as_millis() as u64;
+        let walking = std::time::Instant::now();
         let (before, _) = tree_bytes(database);
-        let began = std::time::Instant::now();
+        let first_walk_ms = walking.elapsed().as_millis() as u64;
         let mut collecting = tokio::process::Command::new("dolt");
         collecting
             .env("DOLT_ROOT_PATH", home)
@@ -748,15 +751,22 @@ impl Dolt {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         die_with_this_process(&mut collecting);
+        let collecting_since = std::time::Instant::now();
         let done = Self::run_within(COLLECTION_DEADLINE, &mut collecting).await;
+        let gc_ms = collecting_since.elapsed().as_millis() as u64;
         let elapsed_ms = began.elapsed().as_millis() as u64;
         match done {
             Some(Ok(done)) if done.status.success() => {
+                let walking = std::time::Instant::now();
                 let (after, unreadable) = tree_bytes(database);
+                let walk_ms = first_walk_ms + walking.elapsed().as_millis() as u64;
                 tracing::info!(
                     step = "store-collection",
                     database = %database.display(),
-                    elapsed_ms,
+                    elapsed_ms = began.elapsed().as_millis() as u64,
+                    grace_ms,
+                    walk_ms,
+                    gc_ms,
                     bytes_before = before,
                     bytes_after = after,
                     unreadable_entries = unreadable,
