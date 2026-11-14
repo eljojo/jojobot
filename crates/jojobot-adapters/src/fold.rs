@@ -1704,25 +1704,31 @@ impl Memory for Folded {
         if self.held(|_| ()).is_none() {
             return self.inner.keys_holding(key, test, kind).await;
         }
+        let lease = key.trim() == jojobot_domain::session::ROLE_CLAIMED_AT;
         match self.claims(|state| {
             (
                 state.keys_holding(key, test, kind),
-                state.declined_among(kind),
+                if lease {
+                    state.roles_among(kind)
+                } else {
+                    Vec::new()
+                },
             )
         }) {
-            Ok((mut held, declined)) => {
-                // **A thing the State declines is read from the store**, as the full read
-                // reads it: through the fields the fold serves for it, which refuse while
-                // the rail is uncertain. The State answers for every other thing.
-                // TEMPORARY(9.3.4) `q-934-role-lease-read-from-heartbeat-home` and
-                // `q-934-merge-version-row-in-state`.
-                if !declined.is_empty() {
+            Ok((mut held, roles)) => {
+                // **A role is read from the store when the key is its lease moment**: a
+                // plain renewal overwrites that one write without an event, so the State's
+                // held value can be the one before. The role is read through the fields the
+                // fold serves for it, which come from the store and refuse while the rail is
+                // uncertain. TEMPORARY(9.3.4) `q-934-role-lease-read-from-heartbeat-home`.
+                // Every other key of every thing is an event's, and the State answers it.
+                if !roles.is_empty() {
                     let leaf = jojobot_domain::memory::filter::Filter::leaf(
                         Some(key.trim()),
                         test.clone(),
                     );
-                    held.retain(|id| !declined.contains(id));
-                    for id in declined {
+                    held.retain(|id| !roles.contains(id));
+                    for id in roles {
                         if leaf.holds(&self.fields(&id).await?) {
                             held.push(id);
                         }

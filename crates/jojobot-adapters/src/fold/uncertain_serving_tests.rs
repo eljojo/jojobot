@@ -104,18 +104,21 @@ async fn a_scan_listing_no_declined_thing_is_served_from_the_state_while_the_rai
     assert_eq!(counted.calls(), 0, "the scan crossed the rail");
 }
 
-/// **A holder query that must read a declined thing is refused while the rail is
-/// uncertain**, as a scan listing one is: the State does not decide a role or a
-/// thing a merge touched, and the store beyond the rail is not read for it.
+/// **A holder query that must read a role is refused while the rail is uncertain**,
+/// as a scan listing one is: the State does not decide a role's lease moment, and the
+/// store beyond the rail is not read for it. Any other key is the State's, so it is
+/// served.
 #[tokio::test]
-async fn a_holder_query_over_a_declined_thing_is_refused_while_the_rail_is_uncertain() {
+async fn a_holder_query_of_a_lease_moment_is_refused_while_the_rail_is_uncertain() {
     let (folded, counted, _, _role) = uncertain_fold().await;
+    let test = jojobot_domain::memory::filter::Test::NotEquals(String::new());
+    folded
+        .keys_holding("agent", &test, None)
+        .await
+        .expect("another key is the State's");
+    assert_eq!(counted.calls(), 0, "the query crossed the rail");
     let refused = folded
-        .keys_holding(
-            "agent",
-            &jojobot_domain::memory::filter::Test::NotEquals(String::new()),
-            None,
-        )
+        .keys_holding(jojobot_domain::session::ROLE_CLAIMED_AT, &test, None)
         .await;
     assert!(
         matches!(&refused, Err(MemoryError::Store(why)) if why.contains("uncertain")),
