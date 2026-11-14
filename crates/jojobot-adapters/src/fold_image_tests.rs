@@ -602,3 +602,115 @@ async fn a_scan_listing_a_few_declined_things_reads_only_those_things() {
     );
     assert!(scanned.len() > 40, "the scan lists the rest from the State");
 }
+
+/// **The store, but for a whole read that fails**, as one unreadable row anywhere in
+/// it fails the read that builds every document.
+struct WholeScanFails(Arc<InMemoryMemory>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl jojobot_domain::memory::Memory for WholeScanFails {
+    async fn scan(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::search::DocScan>, jojobot_domain::memory::MemoryError>
+    {
+        Err(jojobot_domain::memory::MemoryError::Store(
+            "a row cannot be read".into(),
+        ))
+    }
+}
+
+/// **A merged parent with `children` children and `served` plain things beside
+/// it**: `children + 2` things the State declines, `served` it serves.
+async fn declined_and_served(
+    store: Arc<dyn jojobot_domain::memory::Memory>,
+    children: usize,
+    served: usize,
+) -> Folded {
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity};
+
+    let folded = Folded::new(store);
+    folded.rebuild().await.expect("the fold loads");
+    let handle = |kind: &str, n: usize| EntityId(format!("{kind}:{}", spelled(n)));
+    let (survivor, merged) = (handle("project", 1), handle("project", 2));
+    for parent in [&survivor, &merged] {
+        folded
+            .add_entity(NewEntity::new(parent.clone(), &parent.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    for n in 0..children {
+        let child = handle("work", 10 + n);
+        let mut entity = NewEntity::new(child.clone(), &child.0, "fold-image");
+        entity.parent = Some(merged.clone());
+        folded
+            .add_entity(entity)
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    for n in 0..served {
+        let plain = handle("project", 100 + n);
+        folded
+            .add_entity(NewEntity::new(plain.clone(), &plain.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    folded
+        .merge(
+            &merged,
+            &survivor,
+            Some("filed twice"),
+            jiff::civil::date(2026, 9, 2),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("merged");
+    folded
+}
+
+/// **The line between reading the whole store and reading each declined thing is
+/// five declined in six listed.** Six declined and one served is over it, five and
+/// one is not.
+#[tokio::test]
+async fn a_scan_reads_the_whole_store_past_five_in_six_declined_and_not_at_five() {
+    use jojobot_domain::memory::Memory;
+    for (children, served, whole) in [(4, 1, true), (3, 1, false)] {
+        let store = Arc::new(InMemoryMemory::booted());
+        let counted = Arc::new(Counted::new(store));
+        let folded = declined_and_served(counted.clone(), children, served).await;
+        counted.reset();
+        folded.scan().await.expect("the fold scans");
+        let seen = counted.seen();
+        match whole {
+            true => {
+                assert_eq!(seen.get("scan"), Some(&1), "{children} declined: {seen:?}");
+                assert_eq!(seen.get("scan_entity"), None, "{seen:?}");
+            }
+            false => {
+                assert_eq!(seen.get("scan"), None, "{children} declined: {seen:?}");
+                assert_eq!(seen.get("scan_entity"), Some(&(children + 2)), "{seen:?}");
+            }
+        }
+    }
+}
+
+/// **A whole read that fails does not fail the scan.** One unreadable row anywhere
+/// in the store fails the read that builds every document; the scan then reads the
+/// declined things on its own and lists all of them.
+#[tokio::test]
+async fn a_scan_whose_whole_read_fails_reads_the_declined_things_on_their_own() {
+    use jojobot_domain::memory::Memory;
+    let store = Arc::new(InMemoryMemory::booted());
+    let folded = declined_and_served(Arc::new(WholeScanFails(store)), 4, 1).await;
+    let scanned = folded
+        .scan()
+        .await
+        .expect("the declined things are read one by one");
+    assert_eq!(scanned.len(), 7, "every thing is listed");
+}

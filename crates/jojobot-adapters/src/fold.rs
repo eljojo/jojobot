@@ -1483,20 +1483,23 @@ impl Memory for Folded {
             })
             .collect();
         let declined = slots.iter().filter(|slot| slot.is_err()).count();
-        let mut from_store = if declined * 6 > slots.len() * 5 {
+        // **A whole read that fails reads nothing**: it builds every document, one the
+        // State serves included, so an unreadable row elsewhere in the store would
+        // otherwise fail a scan that needs only the declined things. Each of those is
+        // then read on its own, and only an unreadable declined thing fails the scan.
+        let mut from_store = HashMap::new();
+        if declined * 6 > slots.len() * 5 {
             self.unheld()?;
-            self.inner
-                .scan()
-                .await?
-                .into_iter()
-                .filter_map(|doc| {
-                    let id = doc.entity.as_ref()?.id.clone();
-                    Some((id, doc))
-                })
-                .collect::<HashMap<_, _>>()
-        } else {
-            HashMap::new()
-        };
+            if let Ok(whole) = self.inner.scan().await {
+                from_store = whole
+                    .into_iter()
+                    .filter_map(|doc| {
+                        let id = doc.entity.as_ref()?.id.clone();
+                        Some((id, doc))
+                    })
+                    .collect();
+            }
+        }
         let mut scanned = Vec::with_capacity(slots.len());
         for slot in slots {
             let doc = match slot {
