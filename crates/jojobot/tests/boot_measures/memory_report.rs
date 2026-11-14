@@ -1189,6 +1189,24 @@ fn commit_holds_the_table(read: Result<i64, String>) -> Result<bool, String> {
     }
 }
 
+/// **Whether the body a collection kept is the body that was published**, byte for byte. The
+/// answer names the first byte that differs and never prints a body: it is the size of a store.
+fn body_kept_whole(kept: &[u8], published: &[u8]) -> Result<(), String> {
+    if kept.len() != published.len() {
+        return Err(format!(
+            "the kept body is {} bytes, the published one {}",
+            kept.len(),
+            published.len()
+        ));
+    }
+    match kept.iter().zip(published).position(|(a, b)| a != b) {
+        Some(at) => Err(format!(
+            "the kept body differs from the published one at byte {at}"
+        )),
+        None => Ok(()),
+    }
+}
+
 /// **Whether a store is about one snapshot larger than it started**, the bound the ruled storage
 /// must keep after any number of changed copies and a collection: growth of at most one and a
 /// half snapshots. A store that came out smaller still holds its one snapshot.
@@ -1326,11 +1344,7 @@ async fn record_snapshot_table_proof(state: &Scratch, at_import: &[u8]) {
         <[u8; 32]>::from(Sha256::digest(&after_the_day)),
         "the collection changed the snapshot it kept"
     );
-    assert_eq!(
-        reread.blob.len(),
-        after_the_day.len(),
-        "the snapshot's length"
-    );
+    body_kept_whole(&reread.blob, &after_the_day).unwrap_or_else(|said| panic!("{said}"));
     let collected = store_bytes(&path).0;
     let grown = i128::from(collected) - i128::from(started);
     record(&format!(
@@ -1739,6 +1753,14 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
     /// larger than it started**, which is the ruling's bound: growth of at most one and a half
     /// snapshots, whatever the number of copies. A store that came out smaller, because the
     /// collection also cleared older garbage, still holds its one snapshot.
+    #[test]
+    fn a_kept_body_must_equal_the_published_one_byte_for_byte() {
+        assert!(body_kept_whole(b"abcd", b"abcd").is_ok());
+        let same_length = body_kept_whole(b"abXd", b"abcd").expect_err("a changed byte");
+        assert!(same_length.contains("byte 2"), "{same_length}");
+        assert!(body_kept_whole(b"abc", b"abcd").is_err(), "a shorter body");
+    }
+
     #[test]
     fn a_store_is_about_one_snapshot_larger_when_it_grew_by_at_most_one_and_a_half() {
         assert!(about_one_snapshot(0, 100));
