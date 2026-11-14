@@ -89,7 +89,8 @@ pub use seats::{CarriedSeats, carried_seats_status};
 ///
 /// `project` is jojobot's own personal-goal sense (trips, big rocks, builds),
 /// deliberately not schema.org's Organization-subtype meaning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, schemars::JsonSchema)]
+#[schemars(transparent)]
 pub struct EntityKind(&'static str);
 
 impl EntityKind {
@@ -369,7 +370,9 @@ impl std::fmt::Display for EntityKind {
 /// entity by its id, so the id is a stable typed string with the grammar
 /// `kind:slug` (`person:alpha`) — the **handle**: identity, not position. There is
 /// no privileged `self`/owner entity: the user is a person like any other.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct EntityId(pub String);
 
 impl EntityId {
@@ -1131,7 +1134,9 @@ pub fn check_promotion(
 /// not tied to the user's own words is a hypothesis until confirmed. Stored in
 /// its **own** table column — never folded into the content — so a claim that
 /// happens to end in a marker glyph can't be misread as inference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Provenance {
     /// The user said or confirmed it.
@@ -1187,7 +1192,7 @@ impl Provenance {
 /// All four pairings are legal. Settling is gated on a receipt
 /// ([`check_standing`]) and nothing else, so a derived claim somebody has since
 /// checked or confirmed says exactly that.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Standing {
     /// Nobody is treating this as open to question.
@@ -1418,7 +1423,9 @@ impl Edge {
 /// it reads back as the current truth rather than as a flag beside a claim the
 /// reader then has to adjudicate. That is fix-the-source; a card is what is so
 /// today, and the journal keeps the history.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum FactStatus {
     /// The current truth.
@@ -3757,7 +3764,18 @@ pub fn is_quiet(touched_at: Option<jiff::Timestamp>, aged_before: Option<jiff::T
 /// class is the fact that lasts about a write, and whether the write reaches the
 /// thing is a reading of it ([`reaches_the_thing`]). `Legacy` is every write made
 /// before the class was kept: it was an own field, and it reached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub enum WriteClass {
     /// Written before the class was kept.
     Legacy,

@@ -62,7 +62,7 @@ pub fn carry(fact: &mut Fact, reworded: bool, brought: Option<Receipt>) {
 
 /// What a promotion to settled carries. The serialized form is what a store
 /// keeps in its `receipt` column, so the two tags are stored spellings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Receipt {
     /// **A check that ran**, written so another agent can run it again.

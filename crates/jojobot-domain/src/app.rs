@@ -58,7 +58,9 @@ pub const MAX_APP_ID: usize = 32;
 /// **The name the operator gives an app.** Lowercase letters, digits and
 /// hyphens, starting with a letter, so it is safe in a log line, a file name
 /// and a `read_from` value.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(into = "String", try_from = "String")]
 pub struct AppId(String);
 
@@ -356,7 +358,7 @@ fn deploy_event_grant(
 /// can send one and no filter on keys can mistake it for data. A reader tells
 /// "the app recorded this" from "a bot said so" by this mark alone: a bot that
 /// writes an app's name in `read_from` gets no mark.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AppStamp {
     /// The app that wrote the claim.
     pub app: String,

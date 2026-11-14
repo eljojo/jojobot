@@ -14,7 +14,7 @@ use crate::memory::EntityId;
 use serde::{Deserialize, Serialize};
 
 /// **Who a write is attributed to.**
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum Actor {
     /// A bot, as its writer is filed (`authorship::stored_writer`).
     Bot(EntityId),

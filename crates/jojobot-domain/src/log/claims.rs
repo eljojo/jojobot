@@ -32,16 +32,40 @@ use crate::memory::{
 
 /// **The identity of a key across every thing that holds it.** The text a caller
 /// typed is a spelling of it; the key a thing holds is this.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct KeyId(pub String);
 
 /// The identity of a kind.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct KindId(pub String);
 
 /// **What one write of a key did.** A clear is a write: it takes the key off the
 /// thing until a later write puts it back.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum FieldValue {
     Set(String),
     Clear,
@@ -52,7 +76,9 @@ pub enum FieldValue {
 }
 
 /// **Everything an object is, complete when written.**
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ObjectBody {
     pub kind: KindId,
     pub parent: Option<ObjectId>,
@@ -72,7 +98,9 @@ pub struct ObjectBody {
 /// The columns of a stored snapshot, decoded: `parent` and `merged_into` are the
 /// permanent keys they name. `merged_into` is history only; identity is decided
 /// by the merge events and nothing else.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ObjectSnapshot {
     pub kind: String,
     pub name: String,
@@ -92,7 +120,9 @@ pub struct ObjectSnapshot {
 /// build recorded with no snapshot has none: the snapshot is unknown, and nothing
 /// stands in for it. The moment and the run are the envelope's, as for any other
 /// imported write.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ObservedWrite {
     /// The handle the row was filed under when it was written.
     pub filed_under: String,
@@ -106,7 +136,9 @@ pub struct ObservedWrite {
 
 /// **Everything a claim says, complete when written.** `label` is the address
 /// binding (`fN`) and never the claim's identity.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ClaimBody {
     pub label: String,
     pub home: ObjectId,
@@ -268,7 +300,9 @@ pub enum ClaimEvent {
 }
 
 /// What the state holds of one claim.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct Record {
     pub claim: ClaimBody,
     /// The actor on the envelope of the event that created the claim; a
@@ -289,7 +323,9 @@ pub struct Record {
 
 /// **One write of one claim**: the claim complete as that write left it, and
 /// what the envelope of the event says of the write.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct Revision {
     pub claim: ClaimBody,
     /// The actor on the envelope of the event that made this write.
@@ -306,7 +342,9 @@ pub struct Revision {
 /// it, and what the envelope says of the write. `seq` is the place of the write
 /// among all object writes, so the versions of an object and of the things
 /// folded into it read in the order they were made.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ObjectVersion {
     pub seq: u64,
     /// The object that was written, which is not the one asked about when the
@@ -320,7 +358,9 @@ pub struct ObjectVersion {
     pub position: Position,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 struct Write {
     record: RecordId,
     ordinal: u64,
@@ -339,7 +379,9 @@ struct Write {
 }
 
 /// **One spelling retired from an object**, and the day it stopped being current.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 struct Retirement {
     address: String,
     object: ObjectId,
@@ -348,7 +390,9 @@ struct Retirement {
 
 /// **One numbered merge**: the two objects, when the store took it in, the run
 /// that made it and each claim's label before and after.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 struct MergeEntry {
     /// **The number the merge holds**, counting the numbers the store left empty
     /// before it: the number the store holds it under.
@@ -430,7 +474,17 @@ fn stream_bytes(key: &KeyId, stream: &[Write]) -> u64 {
 
 /// **The bytes of text the State serves now, and the records that hold them**: every
 /// object and claim at any status, and no history. An overhead measure divides what the process holds by this.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct Payload {
     pub records: u64,
     pub bytes: u64,
@@ -439,7 +493,7 @@ pub struct Payload {
 /// **The folded fields of each thing, held beside the streams they fold.** It is
 /// derived from the streams and the declarations, so two states that hold the same
 /// events are equal whatever they hold here.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct HeldFields {
     things: BTreeMap<ObjectId, HeldThing>,
     /// **The records that carry the ledger of release notes**, which no write of
@@ -452,7 +506,7 @@ struct HeldFields {
 /// change of the thing was taken in. Worked out where the thing is folded and
 /// where a claim or its own row is written, never when a read asks: once the
 /// writes a snapshot covers are gone, a read could not work them out.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct HeldThing {
     keys: BTreeMap<String, HeldKey>,
     newest: Option<Timestamp>,
@@ -460,7 +514,7 @@ struct HeldThing {
 
 /// One held key: its value and the moment its holding write was taken in, absent
 /// when that write was never stamped.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct HeldKey {
     value: String,
     age: Option<Timestamp>,
@@ -487,7 +541,9 @@ thread_local! {
 }
 
 /// **What the events so far say.**
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct State {
     objects: BTreeMap<ObjectId, ObjectBody>,
     addresses: BTreeMap<String, ObjectId>,
@@ -497,24 +553,28 @@ pub struct State {
     /// bound again answers to its new object.
     retired_addresses: BTreeMap<String, ObjectId>,
     records: BTreeMap<RecordId, Record>,
-    #[serde(serialize_with = "serialize_entries")]
+    #[serde(
+        serialize_with = "serialize_entries",
+        deserialize_with = "deserialize_entries"
+    )]
+    #[schemars(with = "Vec<((ObjectId, KeyId), Vec<Write>)>")]
     streams: BTreeMap<(ObjectId, KeyId), Vec<Write>>,
     /// Every declaration of each kind, oldest first.
     declarations: BTreeMap<ObjectId, Vec<DeclaredType>>,
     /// **What each thing holds, folded** under the declarations in force: a write
     /// folds the thing it lands on, a declaration folds the things that hold a key
     /// it names, and a read takes this and folds nothing. Keyed by the survivor of a
-    /// merge; a thing that holds nothing has no entry. **Not serialized**: it is
-    /// worked out from the streams and the declarations as each event applies, and the
-    /// State is only ever built by applying events, so a serialized copy is measured
-    /// and never loaded.
-    #[serde(skip)]
+    /// merge; a thing that holds nothing has no entry. It is worked out as each event
+    /// applies, and **it is serialized and loaded**: a State read back from a snapshot
+    /// goes on from the folds it held, and once the writes a snapshot covers are no
+    /// longer kept, a fold could not be made again from the streams.
     held_fields: HeldFields,
     /// **The declaration in force of each kind, as one shared list**, rebuilt when a
     /// declaration lands or is withdrawn and never by a read, so a read of the types
-    /// copies nothing. **Not serialized**, for the reason `held_fields` is not: it is
-    /// rebuilt from `declarations` whenever one lands or is withdrawn.
+    /// copies nothing. **Not serialized**: it is a copy of what `declarations` holds in
+    /// force, rebuilt whenever one lands or is withdrawn and by [`State::restored`].
     #[serde(skip)]
+    #[schemars(skip)]
     declared_snapshot: std::sync::Arc<Vec<DeclaredType>>,
     /// Every observed write of each object's own row, in the order the events
     /// arrived, under the object that was written.
@@ -546,6 +606,19 @@ pub struct State {
     indexes: indexes::Indexes,
 }
 
+/// The inverse of [`serialize_entries`]: the entries read back into the map they came from.
+fn deserialize_entries<
+    'de,
+    K: serde::Deserialize<'de> + Ord,
+    V: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+>(
+    deserializer: D,
+) -> Result<BTreeMap<K, V>, D::Error> {
+    let entries: Vec<(K, V)> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(entries.into_iter().collect())
+}
+
 // JSON object keys cannot hold tuples; entries preserve their structure.
 fn serialize_entries<K: serde::Serialize, V: serde::Serialize, S: serde::Serializer>(
     entries: &BTreeMap<K, V>,
@@ -555,6 +628,14 @@ fn serialize_entries<K: serde::Serialize, V: serde::Serialize, S: serde::Seriali
 }
 
 impl State {
+    /// **A State read back from its serialized form, finished.** Everything the events built is
+    /// in the bytes except the shared declarations, which are a copy of the declarations in
+    /// force and are made again here, so this is the one door a loaded State comes through.
+    pub fn restored(mut self) -> Self {
+        self.rebuild_declared_snapshot();
+        self
+    }
+
     /// **The interpreter**, for an event whose position in the log is not known: it
     /// is applied as the first position, which no log batch holds. Only a State
     /// built from events that were never in a log is built this way.
@@ -1637,6 +1718,9 @@ pub use prepare::{
     Route, prepare, server_written_error, server_written_key,
 };
 pub use rules::{HeldRecord, StarredRule};
+
+#[cfg(test)]
+mod restore_tests;
 
 #[cfg(test)]
 mod tests;

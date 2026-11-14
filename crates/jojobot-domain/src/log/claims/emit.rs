@@ -18,7 +18,7 @@ use crate::memory::{Fact, WriteClass};
 
 /// **Who wrote, in which run, and when.** Read from the write itself by the store
 /// that made it.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
 pub struct Origin {
     pub actor: Option<Actor>,
     pub run: Option<String>,
