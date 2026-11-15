@@ -7,15 +7,9 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::fold::Folded;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::{Scratch, booted, free_port, migrated_database};
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityId, Memory, MemoryError, NewFact};
-
-async fn booted(pool: &sqlx::MySqlPool) {
-    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
-        .await
-        .expect("the kinds are seeded");
-}
 
 /// **A retracted member's number is still issued after a restart.** The spec
 /// runs against the store, then a second store and a second fold are built over

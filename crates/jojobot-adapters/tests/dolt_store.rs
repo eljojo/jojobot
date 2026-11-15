@@ -22,7 +22,7 @@ use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::{Provisioned, SuppliedOverFold};
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::teaching_log::LoggedTeachings;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database, shared_database};
+use jojobot_adapters::testing::{Scratch, booted, free_port, migrated_database, shared_database};
 use jojobot_adapters::writer::Writer;
 use jojobot_adapters::writer_log::WriterLog;
 use jojobot_domain::mailbox::testing::contract as mailboxes;
@@ -40,22 +40,6 @@ use jojobot_domain::memory::{
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionError, SessionState, Sessions, Sid};
 use jojobot_domain::teaching::testing::contract as teachings;
-
-/// **The two steps a boot takes after the schema**, in the order it takes them:
-/// write the kinds this build ships, then parse handles against what the store
-/// answered with.
-///
-/// A suite that stands a rail up is standing up a process, and a process that
-/// never seeded cannot read a handle at all — which is the refusal a caller
-/// meets and not a state a suite should be in silently. Opening a store does
-/// not do this, deliberately: a load hidden inside `open` would make a suite
-/// that touches memory look seeded while one that touches only the mail rail
-/// does not.
-async fn booted(pool: &sqlx::MySqlPool) {
-    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
-        .await
-        .expect("the kinds are seeded");
-}
 
 /// **What a handle's row is stored under**, for a case that reads the
 /// substrate directly. `fact`/`fact_write` key on the badge now, never the

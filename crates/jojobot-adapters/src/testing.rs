@@ -40,6 +40,22 @@ pub fn scratch_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(jojobot_ports::scratch::name(name))
 }
 
+/// **The two steps a boot takes after the schema**, in the order it takes them:
+/// write the kinds this build ships, then parse handles against what the store
+/// answered with.
+///
+/// A suite that stands a rail up is standing up a process, and a process that
+/// never seeded cannot read a handle at all — which is the refusal a caller
+/// meets and not a state a suite should be in silently. Opening a store does
+/// not do this, deliberately: a load hidden inside `open` would make a suite
+/// that touches memory look seeded while one that touches only the mail rail
+/// does not.
+pub async fn booted(pool: &sqlx::MySqlPool) {
+    jojobot_domain::memory::kinds::seed(&crate::dolt::memory::DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+}
+
 /// A directory of this run's own, removed when it is done. Named for the case
 /// that asks for it, through [`scratch_path`].
 pub struct Scratch(pub std::path::PathBuf);

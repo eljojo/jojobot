@@ -10,18 +10,12 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::{booted, free_port, migrated_database};
 use jojobot_domain::memory::{Edge, EdgeShape, EntityId, Memory, NewEntity, NewFact};
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewSession, Sessions, Sid};
 
 use jojobot_adapters::testing::Scratch;
-
-async fn booted(pool: &sqlx::MySqlPool) {
-    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
-        .await
-        .expect("the kinds are seeded");
-}
 
 /// **What a handle's row is stored under**, for a session row that names the bot
 /// by the key its entity is filed under.

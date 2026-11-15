@@ -4,17 +4,11 @@
 use jiff::civil::date;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::shared_database;
+use jojobot_adapters::testing::{booted, shared_database};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::types::{DeclaredType, Field};
 use jojobot_domain::memory::{FactPatch, MemoryError, NewEntity, NewFact};
-
-async fn booted(pool: &sqlx::MySqlPool) {
-    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
-        .await
-        .expect("the kinds are seeded");
-}
 
 async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
     sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")

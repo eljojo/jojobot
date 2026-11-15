@@ -13,18 +13,10 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::{Scratch, booted, free_port, migrated_database};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::testing::contract as memory;
-
-/// **The step a boot takes after the schema**: write the kinds this build ships.
-/// A process that never seeded cannot read a handle at all.
-async fn booted(pool: &sqlx::MySqlPool) {
-    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
-        .await
-        .expect("the kinds are seeded");
-}
 
 /// **One part of a contract, on a database of its own.**
 ///

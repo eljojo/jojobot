@@ -12,18 +12,12 @@ use jiff::civil::date;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::fold::Folded;
-use jojobot_adapters::testing::shared_database;
+use jojobot_adapters::testing::{booted, shared_database};
 use jojobot_domain::app::{
     AppOutcome, AppPrincipal, AppSpec, DeployEvent, authorize, hash_token, mint_token,
 };
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity};
-
-async fn booted(pool: &sqlx::MySqlPool) {
-    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
-        .await
-        .expect("the kinds are seeded");
-}
 
 /// **The app contract, through the fold.** An app write runs only as a job of
 /// the writer, which the fold owns: the attempt is decided from the ledger the
