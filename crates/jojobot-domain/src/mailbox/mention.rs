@@ -493,6 +493,24 @@ mod tests {
             .unwrap_or_else(|| panic!("the guard must not block a fresh handle {id}"));
     }
 
+    async fn fixture(
+        memory: Arc<dyn Memory>,
+        name: &str,
+    ) -> (Arc<InMemoryMailboxes>, Mentioning, MailboxName) {
+        let owner = crate::memory::EntityId(format!("bot:{name}"));
+        let bare = Arc::new(InMemoryMailboxes::new());
+        bare.know_owner(&owner);
+        let mailboxes = Mentioning::new(bare.clone(), memory);
+        let mailbox_name = MailboxName(name.to_string());
+        mailboxes
+            .create_mailbox(&mailbox_name, &owner, None)
+            .await
+            .expect("create_mailbox should succeed")
+            .written()
+            .expect("the guard must not block creating the box");
+        (bare, mailboxes, mailbox_name)
+    }
+
     #[tokio::test]
     async fn a_renamed_things_mailbox_mention_follows_it() {
         let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
@@ -500,18 +518,7 @@ mod tests {
         let now = crate::memory::EntityId("thing:contract-mailbox-mention-now".into());
         add(memory.as_ref(), &was).await;
 
-        let owner = crate::memory::EntityId("bot:gamma".into());
-        let bare = Arc::new(InMemoryMailboxes::new());
-        bare.know_owner(&owner);
-        let mailboxes = Mentioning::new(bare.clone(), memory.clone());
-        let mailbox_name = MailboxName("gamma".to_string());
-
-        mailboxes
-            .create_mailbox(&mailbox_name, &owner, None)
-            .await
-            .expect("create_mailbox should succeed")
-            .written()
-            .expect("the guard must not block creating gamma's box");
+        let (bare, mailboxes, mailbox_name) = fixture(memory.clone(), "gamma").await;
 
         let posted = mailboxes
             .post_message(NewMessage {
@@ -603,18 +610,7 @@ mod tests {
         let now = crate::memory::EntityId("bot:sigma".into());
         add(memory.as_ref(), &was).await;
 
-        let owner = crate::memory::EntityId("bot:delta".into());
-        let bare = Arc::new(InMemoryMailboxes::new());
-        bare.know_owner(&owner);
-        let mailboxes = Mentioning::new(bare.clone(), memory.clone());
-        let mailbox_name = MailboxName("delta".to_string());
-
-        mailboxes
-            .create_mailbox(&mailbox_name, &owner, None)
-            .await
-            .expect("create_mailbox should succeed")
-            .written()
-            .expect("the guard must not block creating delta's box");
+        let (bare, mailboxes, mailbox_name) = fixture(memory.clone(), "delta").await;
 
         let posted = mailboxes
             .post_message(NewMessage {
@@ -676,17 +672,7 @@ mod tests {
     #[tokio::test]
     async fn a_never_existed_handle_is_marked_but_not_screened() {
         let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
-        let owner = crate::memory::EntityId("bot:delta".into());
-        let bare = Arc::new(InMemoryMailboxes::new());
-        bare.know_owner(&owner);
-        let mailboxes = Mentioning::new(bare.clone(), memory);
-        let mailbox_name = MailboxName("delta".to_string());
-        mailboxes
-            .create_mailbox(&mailbox_name, &owner, None)
-            .await
-            .expect("create_mailbox should succeed")
-            .written()
-            .expect("the guard must not block creating delta's box");
+        let (bare, mailboxes, mailbox_name) = fixture(memory, "delta").await;
 
         let never = crate::memory::EntityId("thing:contract-mailbox-mention-never-existed".into());
         let posted = mailboxes
@@ -727,17 +713,7 @@ mod tests {
     #[tokio::test]
     async fn a_caller_cannot_write_the_stored_mark_into_mail() {
         let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
-        let owner = crate::memory::EntityId("bot:delta".into());
-        let bare = Arc::new(InMemoryMailboxes::new());
-        bare.know_owner(&owner);
-        let mailboxes = Mentioning::new(bare, memory);
-        let mailbox_name = MailboxName("delta".to_string());
-        mailboxes
-            .create_mailbox(&mailbox_name, &owner, None)
-            .await
-            .expect("create_mailbox should succeed")
-            .written()
-            .expect("the guard must not block creating delta's box");
+        let (_, mailboxes, mailbox_name) = fixture(memory, "delta").await;
         let message = |body: &str, subject: Option<&str>| NewMessage {
             mailbox: mailbox_name.clone(),
             body: body.to_string(),
