@@ -12,20 +12,17 @@
 use std::sync::Arc;
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::requests::DoltRequests;
 use jojobot_adapters::fold::Folded;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::mailbox::{
     MailboxError, MailboxName, Mailboxes, MessageId, NewMessage, OwnerIndex, OwnerLookup,
 };
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
 use jojobot_domain::request::{Request, RequestId, Requests, Scope, armed, digest_of, within};
-
-use jojobot_adapters::testing::Scratch;
 
 /// An owner index that answers for anybody: the cases need a box, not the
 /// roster that decides who may have one.
@@ -56,14 +53,7 @@ fn sent(mailbox: &MailboxName, sender: &str, body: &str) -> NewMessage {
 /// only in case, each read back by the exact spelling it was given.**
 #[tokio::test]
 async fn messages_and_senders_that_differ_only_in_case_are_two_in_the_real_store() {
-    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
-        "jojobot-id-case-mail",
-    ));
-    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "id_case_mail")
+    let pool = shared_database("id_case_mail")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -147,8 +137,6 @@ async fn messages_and_senders_that_differ_only_in_case_are_two_in_the_real_store
         by_ids(mail.sent_by(&["sigma"]).await.expect("reads")),
         vec!["from the lower-case sender".to_string()]
     );
-
-    store.stop().await;
 }
 
 /// **A handle spelled with a capital is no handle, and it does not read the
@@ -159,14 +147,7 @@ async fn messages_and_senders_that_differ_only_in_case_are_two_in_the_real_store
 /// answers that it names nothing.
 #[tokio::test]
 async fn a_handle_spelled_with_a_capital_does_not_read_the_thing_the_lower_case_handle_names() {
-    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
-        "jojobot-id-case-handle",
-    ));
-    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "id_case_handle")
+    let pool = shared_database("id_case_handle")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -221,8 +202,6 @@ async fn a_handle_spelled_with_a_capital_does_not_read_the_thing_the_lower_case_
         ),
         "a capital spelling cannot make a second thing: {created:?}"
     );
-
-    store.stop().await;
 }
 
 /// **Two request ids that differ only in case are two ids.** The ledger case
@@ -230,14 +209,7 @@ async fn a_handle_spelled_with_a_capital_does_not_read_the_thing_the_lower_case_
 /// lookup alone, so the three ids sit in one file.
 #[tokio::test]
 async fn request_ids_that_differ_only_in_case_are_two_in_the_real_ledger() {
-    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
-        "jojobot-id-case-request",
-    ));
-    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "id_case_request")
+    let pool = shared_database("id_case_request")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -296,6 +268,4 @@ async fn request_ids_that_differ_only_in_case_are_two_in_the_real_ledger() {
             .is_none(),
         "the other spelling is not found: it reads no row of the first"
     );
-
-    store.stop().await;
 }

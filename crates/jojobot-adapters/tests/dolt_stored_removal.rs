@@ -5,28 +5,19 @@
 //! the row says so. Both are NULL values; the reader must not read them alike.
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::{EntityId, FactPatch, Memory, NewEntity, NewFact};
 
-async fn a_store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
-    let dir = jojobot_adapters::testing::scratch_path(label);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let scratch = Scratch(dir.clone());
-    let server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, label)
-        .await
-        .expect("a database of its own");
+async fn a_store(label: &str) -> (sqlx::MySqlPool, DoltMemory) {
+    let pool = shared_database(label).await.expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory)
         .await
         .expect("the kinds are seeded");
-    (scratch, server, pool, memory)
+    (pool, memory)
 }
 
 /// A thing whose mood two claims wrote, the older `calm` and the newer `queasy`.
@@ -62,7 +53,7 @@ async fn two_claims_on_one_key(
 /// newer claim's value, and the reader serves no mood.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_historical_clear_by_a_claim_that_did_not_hold_the_key_takes_it_off() {
-    let (_scratch, _server, pool, memory) = a_store("stored-removal-historical").await;
+    let (pool, memory) = a_store("stored-removal-historical").await;
     let (thing, older) = two_claims_on_one_key(&memory, "thing:kettle").await;
     let entity: String = sqlx::query_scalar("SELECT COALESCE(badge, id) FROM entity WHERE id = ?")
         .bind(thing.as_str())
@@ -91,7 +82,7 @@ async fn a_historical_clear_by_a_claim_that_did_not_hold_the_key_takes_it_off() 
 /// own write**, and the reader keeps the newer claim's value.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_live_clear_by_a_claim_that_does_not_hold_the_key_leaves_the_value() {
-    let (_scratch, _server, pool, memory) = a_store("stored-removal-live").await;
+    let (pool, memory) = a_store("stored-removal-live").await;
     let (thing, older) = two_claims_on_one_key(&memory, "thing:kettle").await;
     memory
         .add_entity(NewEntity::new(

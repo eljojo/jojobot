@@ -9,10 +9,9 @@
 //! not reach it.
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity, NewFact, graph};
 
 async fn thing(memory: &dyn Memory, handle: &str) -> EntityId {
@@ -32,13 +31,7 @@ async fn thing(memory: &dyn Memory, handle: &str) -> EntityId {
 
 #[tokio::test]
 async fn a_row_the_store_cannot_scan_is_named_and_the_others_are_served() {
-    let dir = jojobot_adapters::testing::scratch_path("unreadable-scan");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "unreadable-scan")
+    let pool = shared_database("unreadable-scan")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -95,5 +88,4 @@ async fn a_row_the_store_cannot_scan_is_named_and_the_others_are_served() {
     assert_eq!(served, ["thing:alpha", "thing:delta"]);
     assert_eq!(named.len(), 1, "{named:?}");
     assert_eq!(named[0].0.as_str(), "thing:gamma");
-    drop(server);
 }
