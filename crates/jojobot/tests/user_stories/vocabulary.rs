@@ -19,7 +19,20 @@
 
 use serde_json::json;
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
+
+/// The answer to asking for things that carry a trip's keys, when nothing does yet.
+async fn an_empty_read_of_trips(s: &Session) -> serde_json::Value {
+    let answer = s
+        .call("recall", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert!(
+        answer["objects"].as_array().is_some_and(Vec::is_empty),
+        "nothing carries a trip's keys yet, or this proves nothing: {answer}"
+    );
+    answer
+}
 
 #[tokio::test]
 async fn the_software_ships_a_vocabulary_a_session_never_declared() {
@@ -317,14 +330,7 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
     s.add("place:daredevil-gorge", "The Daredevil Gorge").await;
 
     // ── nothing is a trip yet, and the answer says what one is ──────────────
-    let asked = s
-        .call("recall", json!({ "answers_type": "trip" }))
-        .await
-        .json();
-    assert!(
-        asked["objects"].as_array().is_some_and(Vec::is_empty),
-        "nothing carries a trip's keys yet, or this proves nothing: {asked}"
-    );
+    let asked = an_empty_read_of_trips(&s).await;
     let described = asked["type_keys"]
         .as_array()
         .and_then(|types| types.iter().find(|t| t["name"] == "trip"))
@@ -379,14 +385,7 @@ async fn a_record_holding_only_some_of_a_types_keys_is_kept_and_found_with_what_
     // note there names the bag that sets keys on a thing and says that a record
     // holding only what is known is kept and found.
     let (_story, s) = Story::begin_with_session("bot:gamma").await;
-    let empty = s
-        .call("recall", json!({ "answers_type": "trip" }))
-        .await
-        .json();
-    assert!(
-        empty["objects"].as_array().is_some_and(Vec::is_empty),
-        "nothing carries a trip's keys yet, or this proves nothing: {empty}"
-    );
+    let empty = an_empty_read_of_trips(&s).await;
     let note = empty["teaching"][0]
         .as_str()
         .unwrap_or_else(|| panic!("the first empty read of a shipped type teaches: {empty}"));
@@ -442,14 +441,7 @@ async fn the_first_empty_read_of_a_shipped_type_says_to_capture_under_its_keys_a
     // declared.
     let (story, s) = Story::begin_with_session("bot:gamma").await;
     // ── a session that reads before it writes ───────────────────────────────
-    let first = s
-        .call("recall", json!({ "answers_type": "trip" }))
-        .await
-        .json();
-    assert!(
-        first["objects"].as_array().is_some_and(Vec::is_empty),
-        "nothing carries a trip's keys yet, or this proves nothing: {first}"
-    );
+    let first = an_empty_read_of_trips(&s).await;
     let taught = first["teaching"]
         .as_array()
         .unwrap_or_else(|| panic!("the first empty read of a shipped type teaches: {first}"));
