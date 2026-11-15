@@ -5703,90 +5703,251 @@ async fn a_message_comes_back_in_the_same_ranked_list() {
     );
 }
 
-/// **A failed write mid-ingest must not leave its own staged delete for a
-/// LATER, unrelated commit to apply.** A rewrite stages the old posting's
-/// delete before writing the new one; if the write fails, that delete is
-/// still sitting in the shared writer, uncommitted — and without a
-/// rollback, the next successful ingest of something else entirely
-/// commits it too, dropping a message neither call meant to touch out of
-/// search.
+/// The fault a write is made to hit, once it has staged the delete of the document it rewrites.
+#[derive(Clone, Copy, Debug)]
+enum Fault {
+    /// The write of the new document fails.
+    Write,
+    /// The commit fails.
+    Commit,
+}
+
+/// **One write path of the index, as the cases that fail it see it**: the call that writes
+/// the original, the call that rewrites it, the unrelated call that follows, and what a
+/// search finds.
+struct WritePath {
+    name: &'static str,
+    /// The call of `add_document` that fails under [`Fault::Write`]: the one that writes
+    /// the new document. `None` for a path that writes no document.
+    write_at: Option<usize>,
+    seed: fn(&FullTextIndex),
+    /// The rewrite, which fails. True when the call returned an error.
+    rewrite: fn(&FullTextIndex) -> bool,
+    /// An unrelated write that reports the original unchanged, beside a new document. A
+    /// call that reads a whole board leaves the original out only when it is evicted, which
+    /// is a different question from the one asked here.
+    unrelated: fn(&FullTextIndex),
+    /// Whether the original, the rewrite and the unrelated text are found.
+    found: fn(&FullTextIndex) -> (bool, bool, bool),
+}
+
+fn mail_message(id: &str, body: &str) -> Message {
+    message(id, "pm", "dev", None, body, MessageState::New)
+}
+
+fn mail_found(index: &FullTextIndex) -> (bool, bool, bool) {
+    (
+        mail_ids_for(index, "quokka") == ["1"],
+        !mail_ids_for(index, "pangolin").is_empty(),
+        mail_ids_for(index, "axolotl") == ["2"],
+    )
+}
+
+fn gamma_run(beat: &str) -> jojobot_domain::session::Session {
+    run_of(
+        "s-gamma",
+        "bot:gamma",
+        &[
+            ("e1", "the damper is hand-cut"),
+            ("e2", beat),
+            ("e3", "the glaze is mixed"),
+        ],
+    )
+}
+
+fn doc_found(index: &FullTextIndex) -> (bool, bool, bool) {
+    (
+        fact_ids_for(index, "quokka") == ["f1"],
+        !fact_ids_for(index, "pangolin").is_empty(),
+        fact_ids_for(index, "axolotl") == ["f2"],
+    )
+}
+
+fn write_paths() -> Vec<WritePath> {
+    vec![
+        WritePath {
+            name: "a mail batch",
+            write_at: Some(1),
+            seed: |index| {
+                index
+                    .ingest_mail(&[mail_message("1", "original quokka")])
+                    .expect("the first ingest lands")
+            },
+            rewrite: |index| {
+                index
+                    .ingest_mail(&[mail_message("1", "rewritten pangolin")])
+                    .is_err()
+            },
+            unrelated: |index| {
+                index
+                    .ingest_mail(&[
+                        mail_message("1", "original quokka"),
+                        mail_message("2", "unrelated axolotl"),
+                    ])
+                    .expect("the unrelated ingest lands")
+            },
+            found: mail_found,
+        },
+        WritePath {
+            name: "a single message",
+            write_at: Some(1),
+            seed: |index| {
+                index
+                    .ingest_message(&mail_message("1", "original quokka"))
+                    .expect("the first write lands")
+            },
+            rewrite: |index| {
+                index
+                    .ingest_message(&mail_message("1", "rewritten pangolin"))
+                    .is_err()
+            },
+            unrelated: |index| {
+                index
+                    .ingest_message(&mail_message("2", "unrelated axolotl"))
+                    .expect("the unrelated write lands")
+            },
+            found: mail_found,
+        },
+        WritePath {
+            name: "a session run",
+            write_at: Some(3),
+            seed: |index| {
+                index
+                    .ingest_sessions(&[gamma_run("original quokka")])
+                    .expect("the first ingest lands");
+            },
+            rewrite: |index| {
+                index
+                    .ingest_sessions(&[gamma_run("rewritten pangolin")])
+                    .is_err()
+            },
+            unrelated: |index| {
+                index
+                    .ingest_sessions(&[
+                        gamma_run("original quokka"),
+                        run_of("s-other", "bot:otto", &[("f1", "unrelated axolotl")]),
+                    ])
+                    .expect("the unrelated ingest lands");
+            },
+            found: |index| {
+                (
+                    finds(index, "bot:gamma", "quokka"),
+                    finds(index, "bot:gamma", "pangolin"),
+                    finds(index, "bot:otto", "axolotl"),
+                )
+            },
+        },
+        WritePath {
+            name: "a document batch",
+            write_at: Some(2),
+            seed: |index| {
+                index
+                    .ingest_all(
+                        &[alpha_scan("original quokka")],
+                        index.reading_begins(),
+                        &Default::default(),
+                    )
+                    .expect("the first ingest lands")
+            },
+            rewrite: |index| {
+                index
+                    .ingest_all(
+                        &[alpha_scan("rewritten pangolin")],
+                        index.reading_begins(),
+                        &Default::default(),
+                    )
+                    .is_err()
+            },
+            unrelated: |index| {
+                index
+                    .ingest_all(
+                        &[alpha_scan("original quokka"), beta_scan()],
+                        index.reading_begins(),
+                        &Default::default(),
+                    )
+                    .expect("the unrelated ingest lands")
+            },
+            found: doc_found,
+        },
+        WritePath {
+            name: "a single document",
+            write_at: Some(2),
+            seed: |index| {
+                index
+                    .ingest_doc(&alpha_scan("original quokka"), &FactHistoryTerms::new())
+                    .expect("the first write lands")
+            },
+            rewrite: |index| {
+                index
+                    .ingest_doc(&alpha_scan("rewritten pangolin"), &FactHistoryTerms::new())
+                    .is_err()
+            },
+            unrelated: |index| {
+                index
+                    .ingest_doc(&beta_scan(), &FactHistoryTerms::new())
+                    .expect("the unrelated write lands")
+            },
+            found: doc_found,
+        },
+        // `forget` stages only a delete, so the leftover would drop the document the
+        // failed call meant to evict from a commit that never named it. It writes no
+        // document, so only the commit can fail.
+        WritePath {
+            name: "a forget",
+            write_at: None,
+            seed: |index| {
+                index
+                    .ingest_doc(&alpha_scan("original quokka"), &FactHistoryTerms::new())
+                    .expect("the first write lands")
+            },
+            rewrite: |index| index.forget(&EntityId("person:alpha".into())).is_err(),
+            unrelated: |index| {
+                index
+                    .ingest_doc(&beta_scan(), &FactHistoryTerms::new())
+                    .expect("the unrelated write lands")
+            },
+            found: doc_found,
+        },
+    ]
+}
+
+/// **A write that fails must not leave its staged operations for a later, unrelated
+/// commit.** A rewrite stages the delete of the old document before it writes the new one,
+/// and both sit in the shared writer, uncommitted. Without a rollback the next successful
+/// write commits them too, dropping a document neither call meant to touch out of search.
+/// Every path is failed once on the write of its new document and once on its commit, then
+/// followed by an unrelated write, and three things are asserted: the original survives,
+/// the failed call's rewrite is absent, and the unrelated document is there, the last so
+/// that the other two cannot pass over an empty index.
 #[tokio::test]
-async fn a_failed_write_does_not_leave_its_staged_delete_for_a_later_commit() {
-    let index = index_of(vec![]);
-    index
-        .ingest_mail(&[message(
-            "1",
-            "pm",
-            "dev",
-            None,
-            "original body unique-needle-survivor",
-            MessageState::New,
-        )])
-        .expect("the first ingest lands");
-    assert!(
-        index
-            .search(&asking_for_mail("unique-needle-survivor"))
-            .expect("search ok")
-            .iter()
-            .any(|h| matches!(h, Hit::Message { message, .. } if message.id.as_str() == "1")),
-        "findable before anything goes wrong",
-    );
-
-    // Rewriting it stages the old posting's delete, then the write that
-    // was meant to replace it is made to fail.
-    index.fail_add_document_at(1);
-    let failed = index.ingest_mail(&[message(
-        "1",
-        "pm",
-        "dev",
-        None,
-        "rewritten body unique-needle-rewrite",
-        MessageState::New,
-    )]);
-    assert!(
-        failed.is_err(),
-        "the injected fault must surface: {failed:?}"
-    );
-
-    // An unrelated, entirely successful ingest — of a different message,
-    // alongside the board's own unchanged report of message 1's ORIGINAL
-    // content. `ingest_mail_changes` reads a full board state each call,
-    // so leaving message 1 out here would evict it legitimately, which
-    // is a different question from the one this case asks: whether the
-    // FAILED call's own staged delete survives a commit that never
-    // touched message 1 at all.
-    index
-        .ingest_mail(&[
-            message(
-                "1",
-                "pm",
-                "dev",
-                None,
-                "original body unique-needle-survivor",
-                MessageState::New,
-            ),
-            message(
-                "2",
-                "pm",
-                "dev",
-                None,
-                "an unrelated message unique-needle-other",
-                MessageState::New,
-            ),
-        ])
-        .expect("the unrelated ingest lands");
-
-    // The original message must still be findable: the failed call's own
-    // staged delete must not have been left for this unrelated commit to
-    // apply.
-    let hits = index
-        .search(&asking_for_mail("unique-needle-survivor"))
-        .expect("search ok");
-    assert!(
-        hits.iter()
-            .any(|h| matches!(h, Hit::Message { message, .. } if message.id.as_str() == "1")),
-        "the failed call's own staged delete must not survive it: {hits:?}",
-    );
+async fn a_failed_write_leaves_nothing_for_a_later_commit() {
+    for path in write_paths() {
+        for fault in [Fault::Write, Fault::Commit] {
+            let at = format!("{} under {fault:?}", path.name);
+            let index = index_of(vec![]);
+            (path.seed)(&index);
+            assert_eq!(
+                (path.found)(&index),
+                (true, false, false),
+                "findable before anything goes wrong: {at}"
+            );
+            match (fault, path.write_at) {
+                (Fault::Write, Some(call)) => index.fail_add_document_at(call),
+                (Fault::Write, None) => continue,
+                (Fault::Commit, _) => index.fail_next_commit(),
+            }
+            assert!(
+                (path.rewrite)(&index),
+                "the injected fault must surface: {at}"
+            );
+            (path.unrelated)(&index);
+            assert_eq!(
+                (path.found)(&index),
+                (true, false, true),
+                "the failed call left nothing for the unrelated commit: {at}"
+            );
+        }
+    }
 }
 
 /// **The paired proof that commit and reload failures surface, rather
@@ -5821,137 +5982,6 @@ async fn a_commit_failure_and_a_reload_failure_each_surface_as_an_error() {
     assert!(
         reload_failed.is_err(),
         "a reload failure must not read as success: {reload_failed:?}"
-    );
-}
-
-/// **The same proof, on `ingest_message`'s single-item path.** No board
-/// diff to get wrong here — the fault sits in the same shared writer, so
-/// the failed call's staged delete is exactly as reachable by a later,
-/// unrelated commit.
-#[tokio::test]
-async fn a_failed_single_message_write_does_not_leave_its_staged_delete_for_a_later_commit() {
-    let index = index_of(vec![]);
-    index
-        .ingest_message(&message(
-            "1",
-            "pm",
-            "dev",
-            None,
-            "original body unique-needle-survivor",
-            MessageState::New,
-        ))
-        .expect("the first write lands");
-    assert!(
-        index
-            .search(&asking_for_mail("unique-needle-survivor"))
-            .expect("search ok")
-            .iter()
-            .any(|h| matches!(h, Hit::Message { message, .. } if message.id.as_str() == "1")),
-        "findable before anything goes wrong",
-    );
-
-    index.fail_add_document_at(1);
-    let failed = index.ingest_message(&message(
-        "1",
-        "pm",
-        "dev",
-        None,
-        "rewritten body unique-needle-rewrite",
-        MessageState::New,
-    ));
-    assert!(
-        failed.is_err(),
-        "the injected fault must surface: {failed:?}"
-    );
-
-    index
-        .ingest_message(&message(
-            "2",
-            "pm",
-            "dev",
-            None,
-            "an unrelated message unique-needle-other",
-            MessageState::New,
-        ))
-        .expect("the unrelated write lands");
-
-    let hits = index
-        .search(&asking_for_mail("unique-needle-survivor"))
-        .expect("search ok");
-    assert!(
-        hits.iter()
-            .any(|h| matches!(h, Hit::Message { message, .. } if message.id.as_str() == "1")),
-        "the failed call's own staged delete must not survive it: {hits:?}",
-    );
-}
-
-/// **The same proof, on the sessions half.** Amending a beat stages the
-/// old posting's delete before writing the new one, exactly as a mail
-/// rewrite does; a failed amend must not leave that delete for a later,
-/// unrelated commit to apply.
-#[tokio::test]
-async fn a_failed_session_entry_write_does_not_leave_its_staged_delete_for_a_later_commit() {
-    let index = FullTextIndex::open().expect("index opens");
-    index
-        .ingest_sessions(&[run_of(
-            "s-gamma",
-            "bot:gamma",
-            &[
-                ("e1", "the damper is hand-cut"),
-                ("e2", "original beat unique-needle-survivor"),
-                ("e3", "the glaze is mixed"),
-            ],
-        )])
-        .expect("the first ingest lands");
-    assert!(
-        finds(&index, "bot:gamma", "unique-needle-survivor"),
-        "findable before anything goes wrong",
-    );
-
-    // Amending e2 stages its old posting's delete, then the write meant
-    // to replace it is made to fail.
-    index.fail_add_document_at(3);
-    let failed = index.ingest_sessions(&[run_of(
-        "s-gamma",
-        "bot:gamma",
-        &[
-            ("e1", "the damper is hand-cut"),
-            ("e2", "rewritten beat unique-needle-rewrite"),
-            ("e3", "the glaze is mixed"),
-        ],
-    )]);
-    assert!(
-        failed.is_err(),
-        "the injected fault must surface: {failed:?}"
-    );
-
-    // An unrelated, entirely successful ingest — a different run
-    // entirely, alongside this run's own unchanged report of its
-    // ORIGINAL entries. `ingest_sessions_changes` reads a full board
-    // state each call, so leaving s-gamma out here would evict it
-    // legitimately, a different question from the one this case asks.
-    index
-        .ingest_sessions(&[
-            run_of(
-                "s-gamma",
-                "bot:gamma",
-                &[
-                    ("e1", "the damper is hand-cut"),
-                    ("e2", "original beat unique-needle-survivor"),
-                    ("e3", "the glaze is mixed"),
-                ],
-            ),
-            run_of(
-                "s-other",
-                "bot:otto",
-                &[("f1", "an unrelated beat unique-needle-other")],
-            ),
-        ])
-        .expect("the unrelated ingest lands");
-
-    assert!(
-        finds(&index, "bot:gamma", "unique-needle-survivor"),
-        "the failed call's own staged delete must not survive it",
     );
 }
 
@@ -6143,128 +6173,6 @@ async fn a_reload_begun_before_a_commit_does_not_clear_that_commits_failed_reloa
     assert!(!index.owes_a_reload(), "the retry covers the commit");
 }
 
-/// **The same proof, on the memory half's batch path.** `ingest_changes`
-/// stages a document's delete before rewriting it; a failed rewrite must
-/// not leave that delete for a later, unrelated commit to apply.
-#[tokio::test]
-async fn a_failed_doc_write_does_not_leave_its_staged_delete_for_a_later_commit() {
-    let index = FullTextIndex::open().expect("index opens");
-    index
-        .ingest_all(
-            &[alpha_scan("keeps a ferret unique-needle-survivor")],
-            index.reading_begins(),
-            &Default::default(),
-        )
-        .expect("the first ingest lands");
-    assert_eq!(
-        index
-            .search(&SearchQuery::text("unique-needle-survivor"))
-            .expect("search ok")
-            .len(),
-        1,
-        "findable before anything goes wrong",
-    );
-
-    // Rewriting it stages the old posting's delete, then the write that
-    // was meant to replace it is made to fail.
-    index.fail_add_document_at(2);
-    let failed = index.ingest_all(
-        &[alpha_scan("keeps a tortoise unique-needle-rewrite")],
-        index.reading_begins(),
-        &Default::default(),
-    );
-    assert!(
-        failed.is_err(),
-        "the injected fault must surface: {failed:?}"
-    );
-
-    // An unrelated, entirely successful ingest — a different document
-    // entirely, alongside doc-1's own unchanged, pre-failure state.
-    index
-        .ingest_all(
-            &[
-                alpha_scan("keeps a ferret unique-needle-survivor"),
-                scan(
-                    "doc-2",
-                    Some(entity("person:beta", "Beta")),
-                    "",
-                    vec![fact(
-                        "person:beta",
-                        "f2",
-                        "an unrelated fact unique-needle-other",
-                        date(2026, 1, 1),
-                    )],
-                ),
-            ],
-            index.reading_begins(),
-            &Default::default(),
-        )
-        .expect("the unrelated ingest lands");
-
-    let hits = index
-        .search(&SearchQuery::text("unique-needle-survivor"))
-        .expect("search ok");
-    assert!(
-        hits.iter()
-            .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.id.as_str() == "f1")),
-        "the failed call's own staged delete must not survive it: {hits:?}",
-    );
-}
-
-/// **The same proof, on `ingest_doc`'s single-item path.** No board diff
-/// to get wrong here — the fault sits in the same shared writer, so the
-/// failed call's staged delete is exactly as reachable by a later,
-/// unrelated commit.
-#[tokio::test]
-async fn a_failed_single_doc_write_does_not_leave_its_staged_delete_for_a_later_commit() {
-    let index = FullTextIndex::open().expect("index opens");
-    let none = FactHistoryTerms::new();
-    index
-        .ingest_doc(&alpha_scan("keeps a ferret unique-needle-survivor"), &none)
-        .expect("the first write lands");
-    assert_eq!(
-        index
-            .search(&SearchQuery::text("unique-needle-survivor"))
-            .expect("search ok")
-            .len(),
-        1,
-        "findable before anything goes wrong",
-    );
-
-    index.fail_add_document_at(2);
-    let failed = index.ingest_doc(&alpha_scan("keeps a tortoise unique-needle-rewrite"), &none);
-    assert!(
-        failed.is_err(),
-        "the injected fault must surface: {failed:?}"
-    );
-
-    index
-        .ingest_doc(
-            &scan(
-                "doc-2",
-                Some(entity("person:beta", "Beta")),
-                "",
-                vec![fact(
-                    "person:beta",
-                    "f2",
-                    "an unrelated fact unique-needle-other",
-                    date(2026, 1, 1),
-                )],
-            ),
-            &none,
-        )
-        .expect("the unrelated write lands");
-
-    let hits = index
-        .search(&SearchQuery::text("unique-needle-survivor"))
-        .expect("search ok");
-    assert!(
-        hits.iter()
-            .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.id.as_str() == "f1")),
-        "the failed call's own staged delete must not survive it: {hits:?}",
-    );
-}
-
 /// The ids of the messages a mail search returns for one distinctive word.
 fn mail_ids_for(index: &FullTextIndex, needle: &str) -> Vec<String> {
     index
@@ -6291,124 +6199,6 @@ fn fact_ids_for(index: &FullTextIndex, needle: &str) -> Vec<String> {
         .collect()
 }
 
-/// **A commit that fails must not leave its staged operations for the next
-/// commit.** The fault is injected on `commit` itself, after staging has
-/// succeeded: the rewrite's delete and its new document are both in the
-/// shared writer, uncommitted. Every case below follows the failed call with
-/// an unrelated commit and asserts three things: the original document
-/// survives, the failed call's rewrite is absent, and the unrelated call's
-/// own document is there — the last so the other two cannot pass over an
-/// empty index.
-#[tokio::test]
-async fn a_failed_mail_batch_commit_leaves_nothing_for_a_later_commit() {
-    let index = index_of(vec![]);
-    let original = message("1", "pm", "dev", None, "original quokka", MessageState::New);
-    index
-        .ingest_mail(std::slice::from_ref(&original))
-        .expect("the first ingest lands");
-    assert_eq!(mail_ids_for(&index, "quokka"), ["1"]);
-
-    index.fail_next_commit();
-    let failed = index.ingest_mail(&[message(
-        "1",
-        "pm",
-        "dev",
-        None,
-        "rewritten pangolin",
-        MessageState::New,
-    )]);
-    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
-
-    index
-        .ingest_mail(&[
-            original,
-            message(
-                "2",
-                "pm",
-                "dev",
-                None,
-                "unrelated axolotl",
-                MessageState::New,
-            ),
-        ])
-        .expect("the unrelated ingest lands");
-
-    assert_eq!(mail_ids_for(&index, "axolotl"), ["2"]);
-    assert_eq!(mail_ids_for(&index, "quokka"), ["1"]);
-    assert!(mail_ids_for(&index, "pangolin").is_empty());
-}
-
-#[tokio::test]
-async fn a_failed_single_message_commit_leaves_nothing_for_a_later_commit() {
-    let index = index_of(vec![]);
-    index
-        .ingest_message(&message(
-            "1",
-            "pm",
-            "dev",
-            None,
-            "original quokka",
-            MessageState::New,
-        ))
-        .expect("the first write lands");
-    assert_eq!(mail_ids_for(&index, "quokka"), ["1"]);
-
-    index.fail_next_commit();
-    let failed = index.ingest_message(&message(
-        "1",
-        "pm",
-        "dev",
-        None,
-        "rewritten pangolin",
-        MessageState::New,
-    ));
-    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
-
-    index
-        .ingest_message(&message(
-            "2",
-            "pm",
-            "dev",
-            None,
-            "unrelated axolotl",
-            MessageState::New,
-        ))
-        .expect("the unrelated write lands");
-
-    assert_eq!(mail_ids_for(&index, "axolotl"), ["2"]);
-    assert_eq!(mail_ids_for(&index, "quokka"), ["1"]);
-    assert!(mail_ids_for(&index, "pangolin").is_empty());
-}
-
-#[tokio::test]
-async fn a_failed_session_commit_leaves_nothing_for_a_later_commit() {
-    let index = FullTextIndex::open().expect("index opens");
-    let original = run_of("s-gamma", "bot:gamma", &[("e1", "original quokka")]);
-    index
-        .ingest_sessions(std::slice::from_ref(&original))
-        .expect("the first ingest lands");
-    assert!(finds(&index, "bot:gamma", "quokka"));
-
-    index.fail_next_commit();
-    let failed = index.ingest_sessions(&[run_of(
-        "s-gamma",
-        "bot:gamma",
-        &[("e1", "rewritten pangolin")],
-    )]);
-    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
-
-    index
-        .ingest_sessions(&[
-            original,
-            run_of("s-other", "bot:otto", &[("f1", "unrelated axolotl")]),
-        ])
-        .expect("the unrelated ingest lands");
-
-    assert!(finds(&index, "bot:otto", "axolotl"));
-    assert!(finds(&index, "bot:gamma", "quokka"));
-    assert!(!finds(&index, "bot:gamma", "pangolin"));
-}
-
 fn alpha_scan(content: &str) -> DocScan {
     scan(
         "doc-1",
@@ -6430,84 +6220,6 @@ fn beta_scan() -> DocScan {
             date(2026, 1, 1),
         )],
     )
-}
-
-#[tokio::test]
-async fn a_failed_doc_batch_commit_leaves_nothing_for_a_later_commit() {
-    let index = FullTextIndex::open().expect("index opens");
-    index
-        .ingest_all(
-            &[alpha_scan("original quokka")],
-            index.reading_begins(),
-            &Default::default(),
-        )
-        .expect("the first ingest lands");
-    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
-
-    index.fail_next_commit();
-    let failed = index.ingest_all(
-        &[alpha_scan("rewritten pangolin")],
-        index.reading_begins(),
-        &Default::default(),
-    );
-    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
-
-    index
-        .ingest_all(
-            &[alpha_scan("original quokka"), beta_scan()],
-            index.reading_begins(),
-            &Default::default(),
-        )
-        .expect("the unrelated ingest lands");
-
-    assert_eq!(fact_ids_for(&index, "axolotl"), ["f2"]);
-    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
-    assert!(fact_ids_for(&index, "pangolin").is_empty());
-}
-
-#[tokio::test]
-async fn a_failed_single_doc_commit_leaves_nothing_for_a_later_commit() {
-    let index = FullTextIndex::open().expect("index opens");
-    let none = FactHistoryTerms::new();
-    index
-        .ingest_doc(&alpha_scan("original quokka"), &none)
-        .expect("the first write lands");
-    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
-
-    index.fail_next_commit();
-    let failed = index.ingest_doc(&alpha_scan("rewritten pangolin"), &none);
-    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
-
-    index
-        .ingest_doc(&beta_scan(), &none)
-        .expect("the unrelated write lands");
-
-    assert_eq!(fact_ids_for(&index, "axolotl"), ["f2"]);
-    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
-    assert!(fact_ids_for(&index, "pangolin").is_empty());
-}
-
-/// `forget` stages only a delete, so the leftover would drop the document
-/// the failed call meant to evict from a commit that never named it.
-#[tokio::test]
-async fn a_failed_forget_commit_leaves_nothing_for_a_later_commit() {
-    let index = FullTextIndex::open().expect("index opens");
-    let none = FactHistoryTerms::new();
-    index
-        .ingest_doc(&alpha_scan("original quokka"), &none)
-        .expect("the first write lands");
-    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
-
-    index.fail_next_commit();
-    let failed = index.forget(&EntityId("person:alpha".into()));
-    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
-
-    index
-        .ingest_doc(&beta_scan(), &none)
-        .expect("the unrelated write lands");
-
-    assert_eq!(fact_ids_for(&index, "axolotl"), ["f2"]);
-    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
 }
 
 /// **Every state is searchable, `processed` included** — an archive is
