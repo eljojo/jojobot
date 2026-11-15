@@ -79,6 +79,26 @@ async fn records_of(session: &Session, document: &str) -> Vec<serde_json::Value>
     }
 }
 
+/// beta's text in the stories that put it short: two sections of one line each.
+const BETAS: &str = "# Beta one\n\nb1\n\n# Beta two\n\nb2\n";
+
+/// **Alpha and beta, each put as a document**: alpha holds ALPHA and beta holds
+/// the two short sections of BETAS.
+async fn alpha_and_a_short_beta(s: &Session) {
+    s.add("document:alpha", "Alpha notes").await;
+    s.add("document:beta", "Beta notes").await;
+    s.call(
+        "put_document",
+        json!({"document": "document:alpha", "markdown": ALPHA}),
+    )
+    .await;
+    s.call(
+        "put_document",
+        json!({"document": "document:beta", "markdown": BETAS}),
+    )
+    .await;
+}
+
 /// **Beta merged into alpha reads as alpha's three sections and then beta's
 /// two, the long one whole, and no chunk on alpha continues an id outside it.**
 #[tokio::test]
@@ -209,19 +229,7 @@ async fn a_document_and_a_thing_do_not_merge_and_the_refusal_names_the_route() {
 async fn a_read_as_of_before_the_merge_returns_only_the_survivors_own_sections() {
     let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
     let s = story.session().await;
-    s.add("document:alpha", "Alpha notes").await;
-    s.add("document:beta", "Beta notes").await;
-    s.call(
-        "put_document",
-        json!({"document": "document:alpha", "markdown": ALPHA}),
-    )
-    .await;
-    let betas = "# Beta one\n\nb1\n\n# Beta two\n\nb2\n";
-    s.call(
-        "put_document",
-        json!({"document": "document:beta", "markdown": betas}),
-    )
-    .await;
+    alpha_and_a_short_beta(&s).await;
     clock.stating(OCTOBER.parse().expect("a day"));
     s.merge_entities("document:beta", "document:alpha", "one manual twice", None)
         .await;
@@ -234,7 +242,7 @@ async fn a_read_as_of_before_the_merge_returns_only_the_survivors_own_sections()
     for day in [OCTOBER, "2026-10-09"] {
         assert_eq!(
             read_whole(&s, "document:alpha", Some(day)).await,
-            format!("{ALPHA}{betas}"),
+            format!("{ALPHA}{BETAS}"),
             "as of {day} alpha's sections, then beta's, whole"
         );
     }
@@ -252,19 +260,7 @@ async fn a_read_as_of_before_the_merge_returns_only_the_survivors_own_sections()
 async fn a_read_as_of_under_a_former_name_matches_the_current_names() {
     let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
     let s = story.session().await;
-    s.add("document:alpha", "Alpha notes").await;
-    s.add("document:beta", "Beta notes").await;
-    s.call(
-        "put_document",
-        json!({"document": "document:alpha", "markdown": ALPHA}),
-    )
-    .await;
-    let betas = "# Beta one\n\nb1\n\n# Beta two\n\nb2\n";
-    s.call(
-        "put_document",
-        json!({"document": "document:beta", "markdown": betas}),
-    )
-    .await;
+    alpha_and_a_short_beta(&s).await;
     clock.stating(OCTOBER.parse().expect("a day"));
     s.merge_entities("document:beta", "document:alpha", "one manual twice", None)
         .await;
@@ -278,7 +274,7 @@ async fn a_read_as_of_under_a_former_name_matches_the_current_names() {
     for name in ["document:marge", "document:alpha"] {
         assert_eq!(
             read_whole(&s, name, Some(OCTOBER)).await,
-            format!("{ALPHA}{betas}"),
+            format!("{ALPHA}{BETAS}"),
             "as of the merge day {name} holds both documents' sections"
         );
         assert_eq!(
@@ -299,19 +295,7 @@ async fn a_read_as_of_under_a_former_name_matches_the_current_names() {
 async fn a_restore_under_a_former_name_puts_the_document_back_as_it_stood() {
     let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:gamma", AUGUST).await;
     let s = story.session().await;
-    s.add("document:alpha", "Alpha notes").await;
-    s.add("document:beta", "Beta notes").await;
-    s.call(
-        "put_document",
-        json!({"document": "document:alpha", "markdown": ALPHA}),
-    )
-    .await;
-    let betas = "# Beta one\n\nb1\n\n# Beta two\n\nb2\n";
-    s.call(
-        "put_document",
-        json!({"document": "document:beta", "markdown": betas}),
-    )
-    .await;
+    alpha_and_a_short_beta(&s).await;
     clock.stating(OCTOBER.parse().expect("a day"));
     s.merge_entities("document:beta", "document:alpha", "one manual twice", None)
         .await;
@@ -323,7 +307,7 @@ async fn a_restore_under_a_former_name_puts_the_document_back_as_it_stood() {
     .await;
     assert_eq!(
         read_whole(&s, "document:marge", None).await,
-        format!("{ALPHA}{betas}"),
+        format!("{ALPHA}{BETAS}"),
         "the merged sections stand before the restore"
     );
 
