@@ -10,6 +10,7 @@
 // different part of it, so what one uses reads as dead to another.
 #![allow(dead_code)]
 
+pub mod app_state;
 pub mod ui_board;
 
 use std::collections::HashMap;

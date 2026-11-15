@@ -423,38 +423,20 @@ async fn mcp_accepts_public_host_but_still_guards_dns_rebinding() {
 /// A **live** store behind the real index, wired the way `main` wires it: one
 /// `IndexedMemory` serving both ports. The fake stands in for the real Memory
 /// adapter; nothing else about the pairing is faked.
+///
+/// **Real session and mailbox ports, unlike the other fixtures here, and
+/// not to make a test pass.** A memory write now carries an identity, an
+/// identity needs a `sid`, and a `sid` needs a session world that can
+/// start one. A deployment that captures facts therefore HAS a session
+/// store — so this fixture has one because the deployment it stands for
+/// does, not because the assertion below wants it. The half-wired shape
+/// is a legitimate scenario and it is `no_auth_state`'s, where losing
+/// writes is the correct behaviour rather than a gap.
 fn searchable_state(addr: SocketAddr) -> AppState {
     let indexed = Arc::new(
         IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("the search index opens"),
     );
-    AppState {
-        apps: Default::default(),
-        metrics: None,
-        resource: format!("http://{addr}/mcp"),
-        issuer: None,
-        validator: None,
-        metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.memory(),
-        search: Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
-        // **Real session and mailbox ports, unlike the other fixtures here, and
-        // not to make a test pass.** A memory write now carries an identity, an
-        // identity needs a `sid`, and a `sid` needs a session world that can
-        // start one. A deployment that captures facts therefore HAS a session
-        // store — so this fixture has one because the deployment it stands for
-        // does, not because the assertion below wants it. The half-wired shape
-        // is a legitimate scenario and it is `no_auth_state`'s, where losing
-        // writes is the correct behaviour rather than a gap.
-        mailboxes: Arc::new(
-            jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
-        ),
-        sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
-        teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
-        requests: None,
-        registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
-        ui: None,
-        clock: jojobot_domain::clock::Clock::default(),
-        quiet_after: None,
-    }
+    support::app_state::app_state(addr, &indexed)
 }
 
 /// **The front door, over the wire.** A fact captured through the `capture` tool

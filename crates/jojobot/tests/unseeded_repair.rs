@@ -15,10 +15,13 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use jojobot::{AppState, build_app};
-use jojobot_adapters::search::{IndexedMemory, Retrieval};
+use jojobot::build_app;
+use jojobot_adapters::search::IndexedMemory;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use tokio_util::sync::CancellationToken;
+
+#[path = "support/app_state.rs"]
+mod app_state;
 
 #[tokio::test]
 async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_call() {
@@ -31,26 +34,7 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
     // the call under test, which is the state this case is about.
     let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store.clone()).expect("the search index opens"));
-    let state = AppState {
-        apps: Default::default(),
-        metrics: None,
-        resource: format!("http://{addr}/mcp"),
-        issuer: None,
-        validator: None,
-        metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.memory(),
-        search: Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
-        mailboxes: Arc::new(
-            jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
-        ),
-        sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
-        teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
-        requests: None,
-        registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
-        ui: None,
-        clock: jojobot_domain::clock::Clock::default(),
-        quiet_after: None,
-    };
+    let state = app_state::app_state(addr, &indexed);
     // The store is fine and the set is not loaded — what `main` tolerates when
     // the store was unreachable at startup, and serves anyway.
     jojobot_mcp::seed::ensure_default_identity(&state.memory, &state.mailboxes).await;

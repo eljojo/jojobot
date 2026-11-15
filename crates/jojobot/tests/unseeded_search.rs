@@ -14,10 +14,13 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use jojobot::{AppState, build_app};
-use jojobot_adapters::search::{IndexedMemory, Retrieval};
+use jojobot::build_app;
+use jojobot_adapters::search::IndexedMemory;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use tokio_util::sync::CancellationToken;
+
+#[path = "support/app_state.rs"]
+mod app_state;
 
 #[tokio::test]
 async fn a_search_on_an_unloaded_process_is_an_answer_rather_than_a_broken_store() {
@@ -29,26 +32,7 @@ async fn a_search_on_an_unloaded_process_is_an_answer_rather_than_a_broken_store
     // before the search, which is the half this case is about.
     let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
-    let state = AppState {
-        apps: Default::default(),
-        metrics: None,
-        resource: format!("http://{addr}/mcp"),
-        issuer: None,
-        validator: None,
-        metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.memory(),
-        search: Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
-        mailboxes: Arc::new(
-            jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
-        ),
-        sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
-        teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
-        requests: None,
-        registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
-        ui: None,
-        clock: jojobot_domain::clock::Clock::default(),
-        quiet_after: None,
-    };
+    let state = app_state::app_state(addr, &indexed);
     // Records written and indexed while the set was loaded, which is where the
     // index gets documents in the first place.
     jojobot_mcp::seed::ensure_default_identity(&state.memory, &state.mailboxes).await;

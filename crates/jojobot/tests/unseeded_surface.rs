@@ -19,10 +19,13 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use jojobot::{AppState, build_app};
-use jojobot_adapters::search::{IndexedMemory, Retrieval};
+use jojobot::build_app;
+use jojobot_adapters::search::IndexedMemory;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use tokio_util::sync::CancellationToken;
+
+#[path = "support/app_state.rs"]
+mod app_state;
 
 #[tokio::test]
 async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
@@ -34,26 +37,7 @@ async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
     // its store was being filled.
     let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
-    let state = AppState {
-        apps: Default::default(),
-        metrics: None,
-        resource: format!("http://{addr}/mcp"),
-        issuer: None,
-        validator: None,
-        metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.memory(),
-        search: Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
-        mailboxes: Arc::new(
-            jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
-        ),
-        sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
-        teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
-        requests: None,
-        registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
-        ui: None,
-        clock: jojobot_domain::clock::Clock::default(),
-        quiet_after: None,
-    };
+    let state = app_state::app_state(addr, &indexed);
     // **A store with its records, and a process that never loaded the set.**
     // That is the state `main` tolerates and logs: the store was unreachable
     // when the boot reached for the kinds, and it serves anyway rather than
