@@ -347,6 +347,13 @@ async fn a_warm_boot_loads_the_claims_from_the_snapshot_and_replays_only_the_tai
         "the boot replayed more than the tail"
     );
     assert!(report.snapshot_bytes > 0);
+    // **The cursor starts at the boot's head**: a seam whose cursor restarted at zero would read
+    // the whole prefix again while its report still said one tail batch.
+    assert_eq!(
+        seam.batches_reread(),
+        0,
+        "the seam read batches again after its boot"
+    );
     assert_eq!(
         seam.read_claims(|state| {
             (

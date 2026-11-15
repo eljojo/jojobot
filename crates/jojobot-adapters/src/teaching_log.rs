@@ -134,6 +134,10 @@ pub struct LoggedTeachings {
     /// without the held mutex, which covers log I/O. A pair here is answered
     /// before the writer queue; see [`LoggedTeachings::publish`].
     known: Arc<std::sync::RwLock<Known>>,
+    /// How many times this ledger booted on its own, for the cases that hold the process to one
+    /// boot: a ledger handed the boot's State makes none.
+    #[cfg(test)]
+    boots_made: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Publishing uncertainty beside the pairs keeps an unknown new run from
@@ -184,6 +188,8 @@ impl LoggedTeachings {
                 uncertain: BTreeSet::new(),
             })),
             known: Arc::default(),
+            #[cfg(test)]
+            boots_made: Arc::default(),
         };
         this.fill(marks, restored).await?;
         Ok(this)
@@ -196,6 +202,12 @@ impl LoggedTeachings {
         self
     }
 
+    /// The boots this ledger made on its own.
+    #[cfg(test)]
+    pub(crate) fn boots_made(&self) -> u64 {
+        self.boots_made.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     async fn fill(
         &self,
         marks: &[Mark],
@@ -204,9 +216,13 @@ impl LoggedTeachings {
         let this = self;
         {
             let mut held = this.held.lock().await;
+            let handed = restored.is_some();
             let (state, head) = match restored {
                 Some(handed) => handed,
                 None => {
+                    #[cfg(test)]
+                    this.boots_made
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let booted = crate::log_snapshot::boot(this.log.as_ref())
                         .await
                         .map_err(refused)?;
@@ -215,6 +231,13 @@ impl LoggedTeachings {
             };
             held.state = state;
             held.head = head;
+            // **A State handed over is current through the position the boot restored it at**,
+            // and the log may have moved on since: the batches after it are read here, so the
+            // ledger starts from the log's head and not from a cursor that passed an event the
+            // State never applied.
+            if handed {
+                this.catch_up(&mut held).await?;
+            }
             this.publish(&held);
             if held.head == Position::default() && !marks.is_empty() {
                 let mut ordered = marks.to_vec();

@@ -40,6 +40,9 @@ mod claims_tests;
 mod emission_tests;
 
 #[cfg(test)]
+mod handoff_tests;
+
+#[cfg(test)]
 mod generation_tests;
 
 #[cfg(test)]
@@ -121,13 +124,20 @@ impl Held {
 pub(crate) struct Seam {
     log: DoltLog,
     held: Mutex<Held>,
-    /// **The teaching half of the State the boot restored**, held for the teaching ledger to
-    /// take once. One boot serves every family, so the teaching ledger does not boot again.
-    teaching: Mutex<Option<jojobot_domain::teaching::events::State>>,
+    /// **The teaching half of the State the boot restored, with the position the boot restored
+    /// it at**, held for the teaching ledger to take once. One boot serves every family, so the
+    /// teaching ledger does not boot again. The position stays the boot's: the seam's own cursor
+    /// moves with later commits and recovery, and a State paired with a cursor past it would
+    /// start beyond an event it never applied.
+    teaching: Mutex<Option<(jojobot_domain::teaching::events::State, Position)>>,
     /// What the boot that opened the seam did. Read by the cases that hold a boot to what it
     /// must not replay.
     #[cfg_attr(not(test), allow(dead_code))]
     boot: crate::log_snapshot::BootReport,
+    /// How many batches `catch_up` has read and applied: a seam that booted to the log's head
+    /// reads none at its open, and a cursor that restarted at zero would read the whole prefix.
+    #[cfg(test)]
+    reread: std::sync::atomic::AtomicU64,
 }
 
 /// **The log as the boot reads it from inside the seam's own open.** The open already runs as a
@@ -307,29 +317,35 @@ impl Seam {
                 seen: ledger_seen,
                 claims_import,
             }),
-            teaching: Mutex::new(Some(teaching)),
+            teaching: Mutex::new(Some((teaching, position))),
             boot: report,
+            #[cfg(test)]
+            reread: std::sync::atomic::AtomicU64::new(0),
         }))
     }
 
-    /// **The teaching State the boot restored, once.** The teaching ledger takes it and goes on
-    /// from the position the seam has applied through; a second call finds none and the ledger
-    /// boots on its own.
+    /// **The teaching State the boot restored, once, at the position the boot restored it at.**
+    /// The teaching ledger takes it and reads the batches after that position; a second call
+    /// finds none and the ledger boots on its own.
     pub(crate) fn take_teaching(
         &self,
     ) -> Option<(jojobot_domain::teaching::events::State, Position)> {
-        let state = self
-            .teaching
+        self.teaching
             .lock()
             .expect("the teaching half is not poisoned")
-            .take()?;
-        Some((state, self.lock().applied))
+            .take()
     }
 
     /// What the boot that opened the seam did.
     #[cfg(test)]
     pub(crate) fn boot_report(&self) -> &crate::log_snapshot::BootReport {
         &self.boot
+    }
+
+    /// The batches `catch_up` has read since the seam opened.
+    #[cfg(test)]
+    pub(crate) fn batches_reread(&self) -> u64 {
+        self.reread.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Apply every committed batch after the position applied through.
@@ -347,6 +363,9 @@ impl Seam {
             }
             let mut held = self.lock();
             for batch in batches {
+                #[cfg(test)]
+                self.reread
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if is_claims_import(&batch) {
                     held.claims_import = true;
                 }
