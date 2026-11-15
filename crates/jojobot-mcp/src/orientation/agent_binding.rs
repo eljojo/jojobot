@@ -41,14 +41,7 @@ impl Jojobot {
             .as_deref()
             .map(str::trim)
             .filter(|a| !a.is_empty())
-            // **An agent that hosts a live run is not finished** because a run it once
-            // hosted wrapped: the boot goes on and resumes the live run.
-            && self
-                .sessions
-                .live_by_agent(agent)
-                .await
-                .map_err(session_error)?
-                .is_none()
+            && !self.compaction_by_the_live_run_of(args, agent).await?
             && let Some(run) = self
                 .sessions
                 .wrapped_by_agent(agent)
@@ -66,6 +59,37 @@ impl Jojobot {
             )));
         }
         Ok(None)
+    }
+
+    /// **Whether this is a compaction report that the agent's live run answers**, so a run
+    /// the agent hosted that wrapped does not make it finished. It holds only for a call with
+    /// no key that names a bot whose one live run, the run the report would select, is the
+    /// run the agent hosts. Any other call keeps the refusal, so a report is never made about
+    /// a run the agent does not host.
+    async fn compaction_by_the_live_run_of(
+        &self,
+        args: &OrientArgs,
+        agent: &str,
+    ) -> Result<bool, McpError> {
+        let keyless = args.sid.as_deref().is_none_or(|sid| sid.trim().is_empty());
+        if args.compacted != Some(true) || !keyless {
+            return Ok(false);
+        }
+        let Some(named) = named_bot(args.bot.as_deref())? else {
+            return Ok(false);
+        };
+        let Some(live) = self
+            .sessions
+            .live_by_agent(agent)
+            .await
+            .map_err(session_error)?
+        else {
+            return Ok(false);
+        };
+        Ok(self
+            .sole_live_run(&named)
+            .await
+            .is_ok_and(|selected| selected.card.as_ref() == Some(&live.id)))
     }
 
     pub(crate) async fn record_boot_agent(

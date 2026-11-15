@@ -634,7 +634,9 @@ async fn p1_previous_host_sid_cannot_boot_after_wrap() {
 /// it as finished orders a working session to stop.
 #[tokio::test]
 async fn a_compacted_boot_by_an_agent_with_a_live_run_is_not_told_it_is_finished() {
-    live_agent_journey(&handler()).await;
+    let jojobot = handler();
+    live_agent_journey(&jojobot).await;
+    another_bots_live_run_is_left_alone(&jojobot).await;
 }
 
 /// The same case over the real store, whose lookup is a query of its own.
@@ -653,6 +655,7 @@ async fn a_compacted_boot_by_an_agent_with_a_live_run_is_not_told_it_is_finished
     let sessions = std::sync::Arc::new(jojobot_adapters::dolt::sessions::DoltSessions::open(pool));
     let (jojobot, _) = crate::session::testing::with_sessions_port_and_memory(sessions);
     live_agent_journey(&jojobot).await;
+    another_bots_live_run_is_left_alone(&jojobot).await;
     store.stop().await;
 }
 
@@ -665,6 +668,12 @@ async fn live_agent_journey(jojobot: &Jojobot) {
     )
     .await;
     wrap(jojobot, sid_of(&old).expect("key")).await;
+    let wrapped = jojobot
+        .sessions
+        .sessions_of(&EntityId("bot:gamma".into()))
+        .await
+        .expect("the runs of gamma")
+        .remove(0);
 
     let live = boot_args(
         jojobot,
@@ -684,6 +693,11 @@ async fn live_agent_journey(jojobot: &Jojobot) {
         .set_agent(&run, "shared-agent")
         .await
         .expect("the live run is hosted by the agent");
+    let before = jojobot
+        .sessions
+        .read_session(&run)
+        .await
+        .expect("the live run");
 
     let answer = boot_args(
         jojobot,
@@ -696,4 +710,128 @@ async fn live_agent_journey(jojobot: &Jojobot) {
         "an active run was told it is finished: {answer}"
     );
     assert_ne!(answer["status"], "blocked", "{answer}");
+    assert_ne!(
+        jojobot
+            .sessions
+            .read_session(&run)
+            .await
+            .expect("the live run"),
+        before,
+        "the compaction was not reported on the live run the agent hosts"
+    );
+    assert_eq!(
+        jojobot
+            .sessions
+            .read_session(&wrapped.id)
+            .await
+            .expect("the wrapped run"),
+        wrapped,
+        "the wrapped run was touched"
+    );
+}
+
+/// **An agent's live run is only a reason to go on for the bot that run belongs to.** The
+/// agent hosted a run that wrapped and now hosts a live run of one bot. A compacted boot
+/// that names ANOTHER bot, which has a live run hosted by someone else, is still refused as
+/// finished, and the run of the bot it names is left as it was.
+async fn another_bots_live_run_is_left_alone(jojobot: &Jojobot) {
+    for slug in ["omicron", "kappa", "upsilon"] {
+        make_bot(jojobot, slug).await;
+    }
+    let old = boot_args(
+        jojobot,
+        serde_json::json!({"bot":"omicron", "resume":"new", "agent":"agent-a"}),
+    )
+    .await;
+    wrap(jojobot, sid_of(&old).expect("key")).await;
+
+    boot_args(
+        jojobot,
+        serde_json::json!({"bot":"kappa", "resume":"new", "claim":"dev-dispatch-two"}),
+    )
+    .await;
+    let hosted = jojobot
+        .sessions
+        .sessions_of(&EntityId("bot:kappa".into()))
+        .await
+        .expect("the runs of kappa")
+        .remove(0)
+        .id;
+    jojobot
+        .sessions
+        .set_agent(&hosted, "agent-a")
+        .await
+        .expect("kappa's live run is hosted by the agent");
+
+    boot_args(
+        jojobot,
+        serde_json::json!({"bot":"upsilon", "resume":"new", "agent":"agent-b"}),
+    )
+    .await;
+    let named = jojobot
+        .sessions
+        .sessions_of(&EntityId("bot:upsilon".into()))
+        .await
+        .expect("the runs of upsilon")
+        .remove(0)
+        .id;
+    let before = jojobot
+        .sessions
+        .read_session(&named)
+        .await
+        .expect("upsilon's run");
+
+    let answer = boot_args(
+        jojobot,
+        serde_json::json!({"bot":"upsilon", "compacted":true, "agent":"agent-a"}),
+    )
+    .await;
+    assert_eq!(answer["status"], "blocked", "{answer}");
+    assert!(
+        answer.to_string().contains("end the turn and do nothing"),
+        "{answer}"
+    );
+    assert_eq!(
+        jojobot
+            .sessions
+            .read_session(&named)
+            .await
+            .expect("upsilon's run"),
+        before,
+        "a compaction was reported on a run the call did not name its agent for"
+    );
+
+    // **The run the report would select has to be the agent's.** A bot with two live runs, one
+    // of them hosted by the agent, has no one run a report with no key is about.
+    make_bot(jojobot, "chi").await;
+    boot_args(
+        jojobot,
+        serde_json::json!({"bot":"chi", "resume":"new", "claim":"dev-dispatch-three"}),
+    )
+    .await;
+    boot_args(
+        jojobot,
+        serde_json::json!({"bot":"chi", "resume":"new", "agent":"agent-d"}),
+    )
+    .await;
+    let runs = jojobot
+        .sessions
+        .sessions_of(&EntityId("bot:chi".into()))
+        .await
+        .expect("the runs of chi");
+    assert_eq!(runs.len(), 2, "two live runs of one bot: {runs:?}");
+    jojobot
+        .sessions
+        .set_agent(&runs[0].id, "agent-a")
+        .await
+        .expect("one of the two is hosted by the agent");
+    let answer = boot_args(
+        jojobot,
+        serde_json::json!({"bot":"chi", "compacted":true, "agent":"agent-a"}),
+    )
+    .await;
+    assert!(
+        answer.to_string().contains("end the turn and do nothing"),
+        "a report with no key was let through for a bot with two live runs: {answer}"
+    );
 }

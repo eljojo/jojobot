@@ -26,7 +26,7 @@ impl Jojobot {
     /// A run that wrapped holds no key and is not live; a card that is not
     /// `active` is not live either.
     // TEMPORARY(9.3.7): off the composer, start_here.
-    async fn sole_live_run(&self, bot: &EntityId) -> Result<Caller, CallToolResult> {
+    pub(super) async fn sole_live_run(&self, bot: &EntityId) -> Result<Caller, CallToolResult> {
         let mut live = Vec::new();
         for held in self.registry.held_runs_of(bot) {
             let active = match &held.card {
