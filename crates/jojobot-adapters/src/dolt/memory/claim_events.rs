@@ -361,9 +361,9 @@ impl DoltMemory {
             match next {
                 Some(next) if visited.insert(next.clone()) => at = next,
                 Some(_) => {
-                    return Err(MemoryError::Store(format!(
-                        "the merges of {key} loop back on themselves"
-                    )));
+                    return Err(MemoryError::StoredDamage {
+                        what: format!("the merges of {key} loop back on themselves"),
+                    });
                 }
                 None => return Ok(at),
             }
@@ -449,9 +449,9 @@ impl DoltMemory {
             match next {
                 Some(next) if visited.insert(next.clone()) => at = next,
                 Some(_) => {
-                    return Err(MemoryError::Store(format!(
-                        "the merges of {home}/{local} loop back on themselves"
-                    )));
+                    return Err(MemoryError::StoredDamage {
+                        what: format!("the merges of {home}/{local} loop back on themselves"),
+                    });
                 }
                 None => return Ok(at),
             }

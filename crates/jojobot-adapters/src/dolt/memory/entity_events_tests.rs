@@ -1227,16 +1227,15 @@ async fn a_loop_among_the_merges_refuses_the_write_and_commits_nothing() {
         assert!(
             matches!(
                 &refused,
-                Err(jojobot_domain::memory::MemoryError::StoredDamage { .. }
-                    | jojobot_domain::memory::MemoryError::Store(_))
+                Err(jojobot_domain::memory::MemoryError::StoredDamage { .. })
             ),
-            "{name} refuses the write: {refused:?}"
+            "{name} refuses the write as damage in the store, which no retry mends: {refused:?}"
         );
         // **The walk refuses on its own**, whatever answers first: it follows no loop.
         let mut tx = world.store.begin().await.expect("a transaction");
         let walked = DoltMemory::final_survivor(&mut tx, &alpha_key).await;
         assert!(
-            matches!(&walked, Err(jojobot_domain::memory::MemoryError::Store(why)) if why.contains("loop")),
+            matches!(&walked, Err(jojobot_domain::memory::MemoryError::StoredDamage { what }) if what.contains("loop")),
             "{name}: the walk of the last survivor refuses: {walked:?}"
         );
         let _ = tx.rollback().await;
@@ -1283,15 +1282,14 @@ async fn a_loop_among_the_merges_refuses_the_write_and_commits_nothing() {
     assert!(
         matches!(
             &refused,
-            Err(jojobot_domain::memory::MemoryError::StoredDamage { .. }
-                | jojobot_domain::memory::MemoryError::Store(_))
+            Err(jojobot_domain::memory::MemoryError::StoredDamage { .. })
         ),
-        "a claim served from itself refuses the revision: {refused:?}"
+        "a claim served from itself refuses the revision as damage in the store: {refused:?}"
     );
     let mut tx = world.store.begin().await.expect("a transaction");
     let walked = DoltMemory::served_address(&mut tx, &alpha_key, held.local.as_str()).await;
     assert!(
-        matches!(&walked, Err(jojobot_domain::memory::MemoryError::Store(why)) if why.contains("loop")),
+        matches!(&walked, Err(jojobot_domain::memory::MemoryError::StoredDamage { what }) if what.contains("loop")),
         "the walk of the address refuses: {walked:?}"
     );
     let _ = tx.rollback().await;
@@ -1300,6 +1298,45 @@ async fn a_loop_among_the_merges_refuses_the_write_and_commits_nothing() {
         before,
         "the revision committed nothing"
     );
+
+    // A claim served through a loop of two addresses. A walk that refuses only an address that
+    // points at itself never ends here, so it is bounded: a walk that does not end is a failure.
+    sqlx::query("DELETE FROM merge_event")
+        .execute(&world.store)
+        .await
+        .expect("the merges are cleared");
+    loop_row(
+        world.store.clone(),
+        960,
+        1,
+        alpha_key.clone(),
+        beta_key.clone(),
+        held.local.as_str().to_string(),
+        "x1".to_string(),
+    )
+    .await;
+    loop_row(
+        world.store.clone(),
+        961,
+        1,
+        beta_key.clone(),
+        alpha_key.clone(),
+        "x1".to_string(),
+        held.local.as_str().to_string(),
+    )
+    .await;
+    let mut tx = world.store.begin().await.expect("a transaction");
+    let walked = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        DoltMemory::served_address(&mut tx, &alpha_key, held.local.as_str()),
+    )
+    .await
+    .expect("the walk of a loop of two addresses ends");
+    assert!(
+        matches!(&walked, Err(jojobot_domain::memory::MemoryError::StoredDamage { what }) if what.contains("loop")),
+        "the walk of a loop of two addresses refuses: {walked:?}"
+    );
+    let _ = tx.rollback().await;
     world.writer.drain().await;
     world.server.stop().await;
 }
