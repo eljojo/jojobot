@@ -57,8 +57,6 @@ async fn runs_on_the_page(story: &Story) -> HashMap<String, String> {
         .collect()
 }
 
-/// A beat that names the run, so the run can be found in `list_runs` by what it
-/// was working on.
 /// Wrap a run and keep the code the wrap hands back.
 async fn wrap_for_a_code(run: &Session) -> String {
     run.call("wrap_session", json!({"story": "told"}))
@@ -69,6 +67,8 @@ async fn wrap_for_a_code(run: &Session) -> String {
         .to_string()
 }
 
+/// A beat that names the run, so the run can be found in `list_runs` by what it
+/// was working on.
 async fn working_on(who: &Session, focus: &str, entry: &str) {
     who.call("journal", json!({"entry": entry, "focus": focus}))
         .await;
