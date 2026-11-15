@@ -583,17 +583,10 @@ async fn a_loop_holding_counts_from_and_no_cadence_is_overdue_and_one_holding_no
     s.wrap("one half-built loop, one with no schedule").await;
 }
 
-/// "Stop the leap check."
-///
-/// **Clearing the rule, the policy and the basis from a calendar loop a
-/// check-in has anchored leaves it overdue, and the receipt of the clearing
-/// names the key that holds it so.** The first check-in wrote `anchored_on`,
-/// which none of the three cleared keys is, so the loop reads as half a
-/// schedule until that key goes too.
-#[tokio::test]
-async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_overdue() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await.asking_whole();
+/// **A monthly loop under Homer with its first check-in**, and what the check-in
+/// computed. Returns the address of the loop's setup record and the address of the
+/// schedule record that cites the check-in.
+async fn a_checked_in_monthly_loop(s: &Session) -> (String, String) {
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "rhythm:leap-check", "Leap check")
         .await;
@@ -629,6 +622,21 @@ async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_over
         .as_str()
         .expect("the schedule has an address")
         .to_string();
+    (setup, check_in)
+}
+
+/// "Stop the leap check."
+///
+/// **Clearing the rule, the policy and the basis from a calendar loop a
+/// check-in has anchored leaves it overdue, and the receipt of the clearing
+/// names the key that holds it so.** The first check-in wrote `anchored_on`,
+/// which none of the three cleared keys is, so the loop reads as half a
+/// schedule until that key goes too.
+#[tokio::test]
+async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_overdue() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await.asking_whole();
+    let (setup, check_in) = a_checked_in_monthly_loop(&s).await;
     s.recall("rhythm:leap-check").await.says("anchored_on");
     assert!(
         !owed_on(&s, "rhythm:leap-check", d(2026, 1, 2)).await,
@@ -676,41 +684,7 @@ async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_over
 #[tokio::test]
 async fn clearing_a_snoozed_calendar_loop_names_the_anchor_and_the_snooze() {
     let (_story, s) = Story::begin_with_session("bot:otto").await;
-    s.add("person:homer", "Homer").await;
-    s.add_under("person:homer", "rhythm:leap-check", "Leap check")
-        .await;
-    let setup = s
-        .call(
-            "capture",
-            json!({"subject": "rhythm:leap-check", "content": "the first of every month",
-                   "provenance": "testimony",
-                   "sets": {"rrule": "FREQ=MONTHLY;BYMONTHDAY=1", "advances_from": "due_date",
-                            "counts_from": "2026-01-01"}}),
-        )
-        .await;
-    let setup = setup.json()["address"]
-        .as_str()
-        .expect("a capture answers with the address")
-        .to_string();
-    let check_in = s
-        .call(
-            "capture",
-            json!({"subject": "rhythm:leap-check", "content": "looked at it",
-                   "provenance": "testimony", "recorded_at": "2026-01-01",
-                   "check_in": "ran"}),
-        )
-        .await;
-    let source = check_in.json()["address"].clone();
-    let read = s.recall("rhythm:leap-check").await.json();
-    let check_in = read["objects"][0]["facts"]
-        .as_array()
-        .expect("claims")
-        .iter()
-        .find(|fact| fact["derived_from"] == source)
-        .expect("the computed schedule cites this check-in")["address"]
-        .as_str()
-        .expect("the schedule has an address")
-        .to_string();
+    let (setup, check_in) = a_checked_in_monthly_loop(&s).await;
 
     // The pair: before any snooze the clearing names the anchor and not the snooze.
     // The basis lives on the derived record, so that is where it is cleared.
