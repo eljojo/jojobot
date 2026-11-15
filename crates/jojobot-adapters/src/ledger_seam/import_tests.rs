@@ -1,38 +1,16 @@
 //! A claims event is staged only into a log that holds a completed claims
 //! import: before it, the seam refuses the write and the log is unchanged.
 
-use jiff::Timestamp;
 use jojobot_domain::log::claims::{ClaimEvent, KindId, ObjectBody};
-use jojobot_domain::log::{Event, ObjectId, Position, RequestId, RunId};
-use jojobot_domain::request::events::{Commit, LedgerEvent, Request, RequestKey};
+use jojobot_domain::log::{Event, ObjectId, Position, RunId};
+use jojobot_domain::request::events::LedgerEvent;
 
+use super::fixtures::{at, spent};
 use super::{CLAIMS_IMPORT_PREFIX, Seam};
 use crate::dolt::Dolt;
 use crate::ledger_log::LedgerError;
 use crate::testing::{Scratch, free_port, migrated_database};
 use crate::writer::{Writer, sql};
-
-fn at(second: i64) -> Timestamp {
-    Timestamp::from_second(1_700_000_000 + second).expect("a moment")
-}
-
-fn spent() -> LedgerEvent {
-    LedgerEvent::RequestCommitted(Commit {
-        request: Request {
-            key: RequestKey {
-                actor: ObjectId("bot:homer".into()),
-                id: RequestId("alpha".into()),
-                generation: 1,
-            },
-            verb: "capture".into(),
-            digest: "digest-alpha".into(),
-        },
-        landed: "{\"address\":\"topic:alpha#f1\"}".into(),
-        receipt: None,
-        written_at: at(0),
-        expires_at: at(10),
-    })
-}
 
 /// A thing created and given a handle, as two claims events.
 fn thing(id: &str, handle: &str) -> Vec<Event<ClaimEvent>> {

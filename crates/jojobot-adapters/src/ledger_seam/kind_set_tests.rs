@@ -18,6 +18,7 @@ use jojobot_domain::memory::types::{DeclaredType, Field, Fold, Kinds, Origin, Va
 use jojobot_domain::request::events::{Commit, LedgerEvent, Request, RequestKey};
 
 use super::Seam;
+use super::fixtures::{actor, request_id};
 use crate::dolt::Dolt;
 use crate::ledger_log::LedgerError;
 use crate::testing::{Scratch, free_port, migrated_database};
@@ -75,14 +76,6 @@ fn declaration_naming(pair: &str) -> Vec<u8> {
     let stored = String::from_utf8(declaration_member()).expect("json is text");
     assert!(stored.contains("person|bot"), "{stored}");
     stored.replace("person|bot", pair).into_bytes()
-}
-
-fn actor() -> ObjectId {
-    ObjectId("bot:homer".into())
-}
-
-fn request_id() -> RequestId {
-    RequestId("alpha".into())
 }
 
 /// A ledger member: a request that spent its id, kept for the next minute.

@@ -2,20 +2,16 @@
 //! batch changes carries its next generation in the same batch, and a batch that
 //! leaves the spec as it was carries none.
 
-use jiff::Timestamp;
 use jiff::civil::date;
 use jojobot_domain::log::claims::{ClaimBody, ClaimEvent, FieldValue, KeyId, KindId, ObjectBody};
 use jojobot_domain::log::{Event, ObjectId, Position, RecordId};
 use jojobot_domain::memory::{FactStatus, Provenance, Standing, WriteClass};
 
 use super::Seam;
+use super::fixtures::at;
 use crate::dolt::Dolt;
 use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::{Writer, sql};
-
-fn at(second: i64) -> Timestamp {
-    Timestamp::from_second(1_700_000_000 + second).expect("a moment")
-}
 
 fn envelope(payload: ClaimEvent) -> Event<ClaimEvent> {
     Event {

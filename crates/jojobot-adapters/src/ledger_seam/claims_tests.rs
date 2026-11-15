@@ -1,59 +1,13 @@
 //! The seam holds the claims state beside the ledgers', filled by the one replay.
 
 use jojobot_domain::log::claims::{ClaimEvent, KindId, ObjectBody};
-use jojobot_domain::log::{BatchId, Event, LogStore, ObjectId, Position, RunId, SealedBatch};
+use jojobot_domain::log::{BatchId, Event, LogStore, ObjectId, Position, SealedBatch};
 
+use super::fixtures::{at, claims_events, event, homer};
 use crate::dolt::Dolt;
 use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::Writer;
 use crate::writer_log::WriterLog;
-
-fn event(payload: ClaimEvent) -> Event<ClaimEvent> {
-    Event {
-        event_kind: String::new(),
-        meaning_version: 1,
-        actor: None,
-        run: Some(RunId("run-a".into())),
-        session_card: None,
-        request: None,
-        part: None,
-        occurred_at: None,
-        written_at: Some(jiff::Timestamp::from_second(1_700_000_000).expect("a moment")),
-        imported_source_time: None,
-        payload,
-    }
-}
-
-fn at(second: i64) -> jiff::Timestamp {
-    jiff::Timestamp::from_second(1_700_000_000 + second).expect("a moment")
-}
-
-fn homer() -> ObjectId {
-    ObjectId("k1".into())
-}
-
-fn claims_events() -> Vec<Event<ClaimEvent>> {
-    vec![
-        event(ClaimEvent::ObjectCreated {
-            object: homer(),
-            body: ObjectBody {
-                kind: KindId("person".into()),
-                parent: None,
-                name: "person:homer".into(),
-                source: "operator".into(),
-                aliases: Vec::new(),
-                boot: None,
-                metadata: Default::default(),
-                archived: false,
-                bound_to: None,
-            },
-        }),
-        event(ClaimEvent::AddressBound {
-            object: homer(),
-            address: "person:homer".into(),
-        }),
-    ]
-}
 
 /// **One replay fills the claims state the seam holds.** The log holds a batch of
 /// claims events with a member of another family on each side of it; the seam

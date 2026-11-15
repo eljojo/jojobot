@@ -37,6 +37,9 @@ use crate::writer::{Writer, sql};
 mod claims_tests;
 
 #[cfg(test)]
+mod fixtures;
+
+#[cfg(test)]
 mod emission_tests;
 
 #[cfg(test)]

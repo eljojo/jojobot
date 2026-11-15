@@ -2,87 +2,12 @@
 //! into one batch, commit or roll back as one, and are applied to the seam's two
 //! states together.
 
-use jiff::Timestamp;
-use jojobot_domain::log::claims::{ClaimEvent, KindId, ObjectBody};
-use jojobot_domain::log::{Event, ObjectId, Position, RequestId, RunId};
-use jojobot_domain::request::events::{Commit, LedgerEvent, Request, RequestKey};
+use jojobot_domain::log::Position;
 
+use super::fixtures::{actor, at, claims_events, homer, request_id, spent};
 use crate::dolt::Dolt;
 use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::{Writer, sql};
-
-fn at(second: i64) -> Timestamp {
-    Timestamp::from_second(1_700_000_000 + second).expect("a moment")
-}
-
-fn actor() -> ObjectId {
-    ObjectId("bot:homer".into())
-}
-
-fn id() -> RequestId {
-    RequestId("alpha".into())
-}
-
-fn spent() -> LedgerEvent {
-    LedgerEvent::RequestCommitted(Commit {
-        request: Request {
-            key: RequestKey {
-                actor: actor(),
-                id: id(),
-                generation: 1,
-            },
-            verb: "capture".into(),
-            digest: "digest-alpha".into(),
-        },
-        landed: "{\"address\":\"topic:alpha#f1\"}".into(),
-        receipt: None,
-        written_at: at(0),
-        expires_at: at(10),
-    })
-}
-
-fn claim(payload: ClaimEvent) -> Event<ClaimEvent> {
-    Event {
-        event_kind: String::new(),
-        meaning_version: 1,
-        actor: None,
-        run: Some(RunId("run-a".into())),
-        session_card: None,
-        request: None,
-        part: None,
-        occurred_at: None,
-        written_at: Some(at(0)),
-        imported_source_time: None,
-        payload,
-    }
-}
-
-fn homer() -> ObjectId {
-    ObjectId("k1".into())
-}
-
-fn claims() -> Vec<Event<ClaimEvent>> {
-    vec![
-        claim(ClaimEvent::ObjectCreated {
-            object: homer(),
-            body: ObjectBody {
-                kind: KindId("person".into()),
-                parent: None,
-                name: "person:homer".into(),
-                source: "operator".into(),
-                aliases: Vec::new(),
-                boot: None,
-                metadata: Default::default(),
-                archived: false,
-                bound_to: None,
-            },
-        }),
-        claim(ClaimEvent::AddressBound {
-            object: homer(),
-            address: "person:homer".into(),
-        }),
-    ]
-}
 
 /// **A write's ledger and claims events are one batch**, at consecutive
 /// positions, and the seam applies both of them when the commit is acknowledged.
@@ -108,7 +33,7 @@ async fn a_batch_carries_both_families_and_the_seam_applies_both() {
             .run(async move {
                 let mut tx = pool.writer().begin().await.unwrap();
                 let pending = seam
-                    .stage_with(&mut tx, vec![spent()], claims(), at(1))
+                    .stage_with(&mut tx, vec![spent()], claims_events(), at(1))
                     .await
                     .unwrap();
                 sql::commit(tx).await.unwrap();
@@ -131,7 +56,7 @@ async fn a_batch_carries_both_families_and_the_seam_applies_both() {
     );
     assert_eq!(batches[1].range().last, Position(4));
     assert!(
-        seam.read(|state| state.lookup(&actor(), &id(), at(1)).is_some()),
+        seam.read(|state| state.lookup(&actor(), &request_id(), at(1)).is_some()),
         "the spent id answers from the ledgers"
     );
     assert_eq!(
@@ -160,7 +85,7 @@ async fn a_batch_carries_both_families_and_the_seam_applies_both() {
         applied,
         "the replay builds the claims the commit applied"
     );
-    assert!(reopened.read(|state| state.lookup(&actor(), &id(), at(1)).is_some()));
+    assert!(reopened.read(|state| state.lookup(&actor(), &request_id(), at(1)).is_some()));
     second.drain().await;
     server.stop().await;
 }
@@ -189,7 +114,7 @@ async fn a_rolled_back_transaction_leaves_neither_family() {
             .run(async move {
                 let mut tx = pool.writer().begin().await.unwrap();
                 let pending = seam
-                    .stage_with(&mut tx, vec![spent()], claims(), at(1))
+                    .stage_with(&mut tx, vec![spent()], claims_events(), at(1))
                     .await
                     .unwrap();
                 tx.rollback().await.unwrap();
@@ -208,7 +133,7 @@ async fn a_rolled_back_transaction_leaves_neither_family() {
         "the rolled-back batch is not in the log"
     );
     assert_eq!(seam.read_claims(Clone::clone), before);
-    assert!(!seam.read(|state| state.lookup(&actor(), &id(), at(1)).is_some()));
+    assert!(!seam.read(|state| state.lookup(&actor(), &request_id(), at(1)).is_some()));
     writer.drain().await;
     server.stop().await;
 }
