@@ -22,6 +22,22 @@ async fn say(store: &InMemoryMemory, about: &EntityId, what: &str) -> FactAddres
         .address()
 }
 
+/// A claim that carries a field, so a rollback has a retained field, a badge and a version to
+/// put back and not only a claim.
+async fn say_with_a_field(store: &InMemoryMemory, about: &EntityId, what: &str) -> FactAddress {
+    store
+        .capture(NewFact {
+            fields: [("colour".into(), "red".into())].into(),
+            sets: ["colour".into()].into(),
+            ..NewFact::about(about.clone(), what, date(2026, 6, 2))
+        })
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked")
+        .address()
+}
+
 async fn refused_claimed_edit(drop_thought: bool) {
     use crate::memory::{EdgeShape, THOUGHT_CAPACITY};
     use crate::request::{Request, RequestId, Scope, armed, digest_of, within};
@@ -1535,7 +1551,7 @@ async fn every_refused_composite_leaves_the_whole_store_and_the_claims_state_as_
     // A claim edit with its claim.
     let store = InMemoryMemory::booted();
     let subject = thing(&store, "person:ralph", "Ralph").await;
-    let held = say(&store, &subject, "likes glue").await;
+    let held = say_with_a_field(&store, &subject, "likes glue").await;
     let reword = || FactPatch {
         content: Some("likes paste".into()),
         ..Default::default()
@@ -1555,7 +1571,7 @@ async fn every_refused_composite_leaves_the_whole_store_and_the_claims_state_as_
     // A retraction with its claim.
     let store = InMemoryMemory::booted();
     let subject = thing(&store, "person:nelson", "Nelson").await;
-    let held = say(&store, &subject, "laughs at it").await;
+    let held = say_with_a_field(&store, &subject, "laughs at it").await;
     let before = leaves_to_keep(&store).await;
     store
         .retract_with_claim(&held, None, date(2026, 6, 3), &bot, None, bad(&subject))
@@ -1572,7 +1588,7 @@ async fn every_refused_composite_leaves_the_whole_store_and_the_claims_state_as_
     let store = InMemoryMemory::booted();
     let folded = thing(&store, "person:martin", "Martin").await;
     let survivor = thing(&store, "person:marge", "Marge").await;
-    say(&store, &folded, "owns a book").await;
+    say_with_a_field(&store, &folded, "owns a book").await;
     let before = leaves_to_keep(&store).await;
     store
         .merge_with_claim(
