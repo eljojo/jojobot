@@ -7,18 +7,15 @@
 use std::sync::Arc;
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::requests::DoltRequests;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::fold::mail::FoldedMailboxes;
 use jojobot_adapters::fold::sessions::FoldedSessions;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
 use jojobot_domain::request::{Request, RequestId, Requests, Scope, armed, digest_of, within};
-
-use jojobot_adapters::testing::Scratch;
 
 async fn thing(memory: &dyn Memory, handle: &str, name: &str) -> EntityId {
     let id = EntityId(handle.to_string());
@@ -76,13 +73,7 @@ async fn rows(pool: &sqlx::MySqlPool) -> i64 {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_capture_spends_its_id_with_the_claim_and_a_second_one_stores_nothing() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests")
+    let pool = shared_database("requests")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -176,8 +167,6 @@ async fn a_capture_spends_its_id_with_the_claim_and_a_second_one_stores_nothing(
         .await
         .expect("capture");
     assert_eq!(rows(&pool).await, 2);
-
-    server.stop().await;
 }
 
 // ── every covered write, in the real store ──────────────────────────────────
@@ -220,13 +209,7 @@ async fn spending<T>(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn every_covered_write_spends_its_id_with_its_own_commit() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-all");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_all")
+    let pool = shared_database("requests_all")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -495,20 +478,12 @@ async fn every_covered_write_spends_its_id_with_its_own_commit() {
         mail.quarantine(&second.id, &inbox, "not for me", acting),
         mail.quarantine(&third.id, &inbox, "not for me", acting)
     );
-
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_new_holder_of_the_name()
  {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-rename");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_rename")
+    let pool = shared_database("requests_rename")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -589,8 +564,6 @@ async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_n
             .is_some(),
         "the renamed bot still has"
     );
-
-    server.stop().await;
 }
 
 /// **A large old ledger and a row nobody can read do not stop the first write.**
@@ -601,13 +574,7 @@ async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_n
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() {
     use jojobot_domain::request::events::LedgerEvent;
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-large");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_large")
+    let pool = shared_database("requests_large")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -684,8 +651,6 @@ async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() 
         widest <= 256,
         "no batch holds more than 256 events, widest {widest}"
     );
-
-    server.stop().await;
 }
 
 /// **A failure in the middle of the import rolls the whole import back.** The
@@ -697,13 +662,7 @@ async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_next_write_imports() {
     use jojobot_domain::request::events::LedgerEvent;
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-middle");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_middle")
+    let pool = shared_database("requests_middle")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -781,8 +740,6 @@ async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_ne
         .filter(|event| matches!(event, LedgerEvent::Imported { .. }))
         .count();
     assert_eq!(imported, 600, "the retry imported every row");
-
-    server.stop().await;
 }
 
 /// **The rows of the old tables are imported once, before the first live event,
@@ -793,13 +750,7 @@ async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_ne
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_old_ledger_rows_are_imported_once_and_read_from_the_log() {
     use jojobot_domain::request::events::LedgerEvent;
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-keep");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_keep")
+    let pool = shared_database("requests_keep")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -887,19 +838,11 @@ async fn the_old_ledger_rows_are_imported_once_and_read_from_the_log() {
         .await
         .expect("readable");
     assert_eq!(legacy, 2, "the old table is not written");
-
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-race");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_race")
+    let pool = shared_database("requests_race")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -941,8 +884,6 @@ async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
             "round {round}: exactly one claim was stored"
         );
     }
-
-    server.stop().await;
 }
 
 /// **The calls that lose a race under one id are told to send the call again.**
@@ -956,13 +897,7 @@ async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
 async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
     use jojobot_domain::memory::MemoryError;
 
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-losers");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_losers")
+    let pool = shared_database("requests_losers")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1020,8 +955,6 @@ async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
         );
     }
     assert!(losers > 0, "four calls at once never lost a race: {losers}");
-
-    server.stop().await;
 }
 
 /// **Stop a call partway through its transaction.** The call is polled by hand
@@ -1059,13 +992,7 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
 
     const STOPS: usize = 30;
     let case = tracing::warn_span!("commit_race_case");
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-commit");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_commit")
+    let pool = shared_database("requests_commit")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1130,7 +1057,6 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
         losses_after_a_stop > 0,
         "no stopped call lost to a commit: the case never overlapped two transactions"
     );
-    server.stop().await;
 }
 
 /// **A request id answers as a repeat exactly while the ledger keeps it.** A row
@@ -1142,13 +1068,7 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
 async fn an_id_is_a_repeat_only_while_it_is_kept() {
     use jojobot_domain::clock::Clock;
     use jojobot_domain::request::KEPT_FOR;
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-window");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_window")
+    let pool = shared_database("requests_window")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1243,8 +1163,6 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
         generations[1] > generations[0],
         "the second spend starts a distinct, later generation"
     );
-
-    server.stop().await;
 }
 
 /// **Lead (a): two ids that differ only in case are two ids in the real store.**
@@ -1252,13 +1170,7 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
 /// would read `Req-A` as `req-a`: the second write would hit the first one's row.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_ids_that_differ_only_in_case_are_two_ids_in_the_ledger() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-case");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_case")
+    let pool = shared_database("requests_case")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1315,8 +1227,6 @@ async fn two_ids_that_differ_only_in_case_are_two_ids_in_the_ledger() {
             .expect("readable")
             .is_some()
     );
-
-    server.stop().await;
 }
 
 /// **Lead (c): a handle that two things have worn resolves to the newest.** The
@@ -1325,13 +1235,7 @@ async fn two_ids_that_differ_only_in_case_are_two_ids_in_the_ledger() {
 /// older thing, and the id is then spent for the wrong bot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_handle_two_bots_have_worn_belongs_to_the_newer_one_in_the_ledger() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-former");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_former")
+    let pool = shared_database("requests_former")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1424,8 +1328,6 @@ async fn a_handle_two_bots_have_worn_belongs_to_the_newer_one_in_the_ledger() {
         newer.is_some() && older.is_none(),
         "the id was spent for the wrong bot: newer {newer:?}, older {older:?}"
     );
-
-    server.stop().await;
 }
 
 /// **Lead (b): a claim that fails before it inserts hands the id back.** The
@@ -1435,13 +1337,7 @@ async fn a_handle_two_bots_have_worn_belongs_to_the_newer_one_in_the_ledger() {
 /// twice.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_commit() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-claim");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_claim")
+    let pool = shared_database("requests_claim")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1489,8 +1385,6 @@ async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_co
         "the failed claim kept the request, so the write stored with no row for its id"
     );
     assert_eq!(rows(&pool).await, 1);
-
-    server.stop().await;
 }
 
 /// **Two merges under one id leave one event in the real store**, as the fake
@@ -1499,13 +1393,7 @@ async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_co
 /// folded is still a thing. **Paired**: the first merge landed.
 #[tokio::test]
 async fn two_merges_under_one_id_leave_one_event() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-merge");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_merge")
+    let pool = shared_database("requests_merge")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1543,8 +1431,6 @@ async fn two_merges_under_one_id_leave_one_event() {
             .any(|e| e.id == second && e.merged_into.is_none()),
         "the refused merge folded nothing"
     );
-
-    server.stop().await;
 }
 
 // ── a write that commits in parts ───────────────────────────────────────────
@@ -1578,13 +1464,7 @@ async fn part_rows(pool: &sqlx::MySqlPool) -> i64 {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_finishes() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-parts");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_parts")
+    let pool = shared_database("requests_parts")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1743,8 +1623,6 @@ async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_
         .await
         .expect("finishing again is no error");
     assert_eq!(rows(&pool).await, 1, "one row for one id");
-
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1752,13 +1630,7 @@ async fn the_note_of_a_charter_change_is_a_part_of_its_own_in_the_real_store() {
     use jojobot_adapters::dolt::sessions::DoltSessions;
     use jojobot_domain::session::{CharterChange, Sessions};
 
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-charter");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_charter")
+    let pool = shared_database("requests_charter")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1854,19 +1726,11 @@ async fn the_note_of_a_charter_change_is_a_part_of_its_own_in_the_real_store() {
         .await
         .expect("readable");
     assert_eq!(noted, 1, "the repeated note was rolled back with its row");
-
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_restore_as_a_part_keeps_what_it_cleared_for_the_claim_that_records_it() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-restore");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_restore")
+    let pool = shared_database("requests_restore")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1903,19 +1767,11 @@ async fn a_restore_as_a_part_keeps_what_it_cleared_for_the_claim_that_records_it
     assert_eq!(landed["archived_reason"], "listed \"twice\"");
     assert_eq!(landed["archived_reason"], was.reason.as_str());
     assert_eq!(landed["archived_at"], was.at.to_string());
-
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_rename_and_the_move_of_its_box_are_two_parts_in_the_real_store() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-rename-box");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_rename")
+    let pool = shared_database("requests_rename")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1976,19 +1832,11 @@ async fn a_rename_and_the_move_of_its_box_are_two_parts_in_the_real_store() {
         held[1].recorded.landed
     );
     assert_eq!(rows(&pool).await, 0, "the whole write waits for the verb");
-
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_bot_and_its_box_are_two_parts_and_a_box_another_call_opened_is_not_opened_twice() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-bot");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_bot")
+    let pool = shared_database("requests_bot")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -2054,21 +1902,13 @@ async fn a_bot_and_its_box_are_two_parts_and_a_box_another_call_opened_is_not_op
         1,
         "the second box was rolled back with its row"
     );
-
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_mail_a_post_took_for_its_sender_is_kept_with_the_part_that_took_it() {
     use jojobot_domain::mailbox::{Acting, TakenBy};
 
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-mail");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_mail")
+    let pool = shared_database("requests_mail")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -2128,8 +1968,6 @@ async fn the_mail_a_post_took_for_its_sender_is_kept_with_the_part_that_took_it(
         serde_json::from_str(&held[0].recorded.landed).expect("the row holds JSON");
     assert_eq!(landed["ids"], serde_json::json!([waiting.id.as_str()]));
     assert_eq!(rows(&pool).await, 0, "the whole write waits for the verb");
-
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2137,13 +1975,7 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
     use jojobot_adapters::dolt::sessions::DoltSessions;
     use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
 
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-beat");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_beat")
+    let pool = shared_database("requests_beat")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -2229,8 +2061,6 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
     );
     let read = sessions.read_session(&run).await.expect("readable");
     assert_eq!(read.entries.len(), 1, "the repeated entry was rolled back");
-
-    server.stop().await;
 }
 
 /// **A restart over a store that holds old rows and ledger events imports nothing
@@ -2242,13 +2072,7 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
     use jojobot_domain::request::events::LedgerEvent;
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-reopen");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_reopen")
+    let pool = shared_database("requests_reopen")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -2322,8 +2146,6 @@ async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
         after.len() > before.len(),
         "the second process wrote a ledger event of its own"
     );
-
-    server.stop().await;
 }
 
 /// **A log that holds a kind of the ledger's own family this build does not know
@@ -2332,13 +2154,7 @@ async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
 /// refused and nothing is appended behind the unknown member.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_unknown_kind_of_the_ledgers_own_family_stops_the_first_write() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-unknown");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_unknown")
+    let pool = shared_database("requests_unknown")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -2371,8 +2187,6 @@ async fn an_unknown_kind_of_the_ledgers_own_family_stops_the_first_write() {
     .await
     .expect("the batches behind the unknown member");
     assert_eq!(behind, 0, "nothing was appended behind the unknown member");
-
-    server.stop().await;
 }
 
 /// **A restart recognises the ids spent by mail, memory and session writes from
@@ -2380,13 +2194,7 @@ async fn an_unknown_kind_of_the_ledgers_own_family_stops_the_first_write() {
 /// row of these writes, and the repeat of each is found.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_restart_recognises_spent_ids_from_the_log_alone() {
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-restart");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_restart")
+    let pool = shared_database("requests_restart")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -2425,8 +2233,6 @@ async fn a_restart_recognises_spent_ids_from_the_log_alone() {
         .expect("the id is spent after a restart");
     assert_eq!(held.digest, first.digest);
     assert!(held.landed.contains("person:milhouse#"), "{}", held.landed);
-
-    server.stop().await;
 }
 
 /// **A restart recognises the ids a memory write, a mail write and a session
@@ -2441,13 +2247,7 @@ async fn a_restart_recognises_the_ids_of_a_memory_a_mail_and_a_session_write() {
     use jojobot_adapters::dolt::sessions::DoltSessions;
     use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
 
-    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-restart-rails");
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let _scratch = Scratch(dir.clone());
-    let mut server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "requests_restart_rails")
+    let pool = shared_database("requests_restart_rails")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -2626,6 +2426,4 @@ async fn a_restart_recognises_the_ids_of_a_memory_a_mail_and_a_session_write() {
         1,
         "the second entry was rolled back"
     );
-
-    server.stop().await;
 }
