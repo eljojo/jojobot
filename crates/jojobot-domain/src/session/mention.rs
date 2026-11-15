@@ -720,6 +720,19 @@ mod tests {
             .unwrap_or_else(|| panic!("the guard must not block a fresh handle {id}"));
     }
 
+    fn new_session(bot: crate::memory::EntityId, sid: &str, focus: String) -> NewSession {
+        NewSession {
+            bot,
+            sid: super::super::Sid(sid.to_string()),
+            focus,
+            started_at: epoch(),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        }
+    }
+
     #[tokio::test]
     async fn a_renamed_things_journal_mention_follows_it() {
         let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
@@ -732,16 +745,11 @@ mod tests {
 
         let bot = crate::memory::EntityId("bot:gamma".into());
         let session = sessions
-            .begin(NewSession {
-                bot: bot.clone(),
-                sid: super::super::Sid("sd01".to_string()),
-                focus: format!("looking at @{was}"),
-                started_at: epoch(),
-                timezone: None,
-                started_on: None,
-                id: None,
-                key_hash: None,
-            })
+            .begin(new_session(
+                bot.clone(),
+                "sd01",
+                format!("looking at @{was}"),
+            ))
             .await
             .expect("begin should succeed");
         assert_eq!(session.focus, format!("looking at @{was}"));
@@ -847,16 +855,7 @@ mod tests {
         let sessions = Mentioning::new(bare.clone(), memory.clone());
 
         let before = sessions
-            .begin(NewSession {
-                bot: was.clone(),
-                sid: super::super::Sid("sd03".to_string()),
-                focus: "before the rename".into(),
-                started_at: epoch(),
-                timezone: None,
-                started_on: None,
-                id: None,
-                key_hash: None,
-            })
+            .begin(new_session(was.clone(), "sd03", "before the rename".into()))
             .await
             .expect("begin should succeed");
 
@@ -875,16 +874,7 @@ mod tests {
             .expect("the guard must not block the rename");
 
         let after = sessions
-            .begin(NewSession {
-                bot: now.clone(),
-                sid: super::super::Sid("sd04".to_string()),
-                focus: "after the rename".into(),
-                started_at: epoch(),
-                timezone: None,
-                started_on: None,
-                id: None,
-                key_hash: None,
-            })
+            .begin(new_session(now.clone(), "sd04", "after the rename".into()))
             .await
             .expect("begin should succeed");
 
@@ -944,15 +934,8 @@ mod tests {
         let now = crate::memory::EntityId("bot:sigma".into());
         add(memory.as_ref(), &was).await;
         let sessions = Mentioning::new(Arc::new(InMemorySessions::new()), memory.clone());
-        let begin = |bot: &crate::memory::EntityId, sid: &str| NewSession {
-            bot: bot.clone(),
-            sid: super::super::Sid(sid.to_string()),
-            id: None,
-            key_hash: None,
-            focus: "a run".into(),
-            started_at: epoch(),
-            timezone: None,
-            started_on: None,
+        let begin = |bot: &crate::memory::EntityId, sid: &str| {
+            new_session(bot.clone(), sid, "a run".into())
         };
         let before = sessions.begin(begin(&was, "sd05")).await.expect("begin");
         memory
@@ -998,16 +981,7 @@ mod tests {
         let never = crate::memory::EntityId("thing:contract-journal-mention-never-existed".into());
 
         let session = sessions
-            .begin(NewSession {
-                bot,
-                sid: super::super::Sid("sd02".to_string()),
-                focus: format!("about @{never}"),
-                started_at: epoch(),
-                timezone: None,
-                started_on: None,
-                id: None,
-                key_hash: None,
-            })
+            .begin(new_session(bot, "sd02", format!("about @{never}")))
             .await
             .expect("begin should succeed");
         assert_eq!(session.focus, format!("about @{never} (no such handle)"));
@@ -1027,16 +1001,7 @@ mod tests {
         let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
         let sessions = Mentioning::new(Arc::new(InMemorySessions::new()), memory);
         let bot = crate::memory::EntityId("bot:delta".into());
-        let begin = |sid: &str, focus: &str| NewSession {
-            bot: bot.clone(),
-            sid: super::super::Sid(sid.to_string()),
-            focus: focus.to_string(),
-            started_at: epoch(),
-            timezone: None,
-            started_on: None,
-            id: None,
-            key_hash: None,
-        };
+        let begin = |sid: &str, focus: &str| new_session(bot.clone(), sid, focus.to_string());
         let refused = |what: &str, outcome: Result<(), SessionError>| {
             assert!(
                 matches!(outcome, Err(SessionError::InvalidEntry(_))),
