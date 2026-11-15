@@ -128,10 +128,55 @@ async fn a_boot_over_a_snapshot_does_not_import_the_old_tables_again() {
     let probe = Writer::default();
     let before = counted(&probe).await;
 
-    // The first process opens, imports the row, and takes a snapshot that covers the import.
+    // The first process opens, imports the row, then lets every request expire (two requests far
+    // ahead of the import, the later one evicting the earlier and the imported row, and the later
+    // one expired in turn), so the ledger State is EMPTY; the snapshot that covers all of it can
+    // then only say the log held ledger events through the flag it carries.
     let first = Writer::default();
     {
+        use jojobot_domain::request::events::{Commit, LedgerEvent, Request, RequestKey};
         let log = WriterLog::open(store.clone(), first.clone()).await.unwrap();
+        let commit = |id: &str, year: i16| {
+            let written_at: jiff::Timestamp = format!("{year}-01-01T00:00:00Z").parse().unwrap();
+            let key = RequestKey {
+                actor: jojobot_domain::log::ObjectId("bot:marge".into()),
+                id: jojobot_domain::log::RequestId(id.into()),
+                generation: 1,
+            };
+            let event = LedgerEvent::RequestCommitted(Commit {
+                request: Request {
+                    key: key.clone(),
+                    verb: "capture".into(),
+                    digest: "d".into(),
+                },
+                landed: "{}".into(),
+                receipt: None,
+                written_at,
+                expires_at: written_at + jiff::SignedDuration::from_secs(10),
+            });
+            (key, event)
+        };
+        let (_, earlier) = commit("far", 2040);
+        let (later_key, later) = commit("farther", 2041);
+        for (id, event) in [
+            ("ledger:far", earlier),
+            ("ledger:farther", later),
+            (
+                "ledger:expired",
+                LedgerEvent::RequestExpired { key: later_key },
+            ),
+        ] {
+            let head = log.head().expect("the log is settled");
+            let batch = SealedBatch::seal(
+                BatchId(id.into()),
+                head,
+                jiff::Timestamp::now(),
+                1,
+                vec![crate::ledger_log::codec::encode(&event)],
+            )
+            .unwrap();
+            log.append(head, &batch).await.unwrap();
+        }
         crate::log_snapshot::take_snapshot(&log, jiff::Timestamp::now())
             .await
             .unwrap();
@@ -162,6 +207,17 @@ async fn a_boot_over_a_snapshot_does_not_import_the_old_tables_again() {
         counted(&second).await,
         imported,
         "the boot imported the old tables into a log that already holds their import"
+    );
+    // The restored ledger holds none of the requests: the imported row is evicted, so the State
+    // cannot say that the log ever held a ledger event.
+    let imported_key = jojobot_domain::request::events::RequestKey {
+        actor: jojobot_domain::log::ObjectId("bot:homer".into()),
+        id: jojobot_domain::log::RequestId("alpha".into()),
+        generation: 1,
+    };
+    assert!(
+        seam.read(|ledger| ledger.request(&imported_key).is_none()),
+        "the imported request is still held, so the ledger State is not the evicted one the case is about"
     );
     second.drain().await;
     server.stop().await;
