@@ -753,3 +753,128 @@ async fn a_bare_store_commits_an_entity_write_and_emits_nothing() {
     world.writer.drain().await;
     world.server.stop().await;
 }
+
+/// **A write made after a merge, through the verbs, leaves what the State holds of each
+/// thing what a fold of its writes makes**: a claim written under the folded handle, a
+/// claim the merge moved revised under the address it had, and a claim written on the
+/// survivor. A thing's newest change is always a moment its own writes make.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_write_after_a_merge_leaves_the_held_fields_what_a_fold_makes() {
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{FactPatch, NewFact};
+    use std::collections::BTreeMap;
+
+    let mut world = world("folded-write-newest").await;
+    let (memory, alpha, beta) = (world.memory.clone(), id("person:alpha"), id("person:beta"));
+    for handle in [&alpha, &beta] {
+        let (memory, new) = (
+            memory.clone(),
+            NewEntity::new(handle.clone(), handle.as_str(), "fixture"),
+        );
+        world
+            .job(async move { memory.add_entity(new).await })
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let mood = |handle: &EntityId, claim: &str, value: &str, day: i8| {
+        state(NewFact {
+            fields: BTreeMap::from([("mood".to_string(), value.to_string())]),
+            ..NewFact::about(handle.clone(), claim, date(2026, 9, day))
+        })
+    };
+    let check = |world: &World, after: &str| {
+        let seam = world.writer.seam().expect("the seam opened");
+        if let Err(differs) = seam.read_claims(|state| state.held_fields_are_what_a_fold_makes()) {
+            panic!("after {after}: {differs}");
+        }
+    };
+    let mut written = Vec::new();
+    for (handle, claim, value, day) in [
+        (&alpha, "alpha is calm", "calm", 1),
+        (&beta, "beta is tense", "tense", 2),
+    ] {
+        let (memory, fact) = (memory.clone(), mood(handle, claim, value, day));
+        written.push(
+            world
+                .job(async move { memory.capture(fact).await })
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked"),
+        );
+    }
+    check(&world, "the captures");
+
+    {
+        let (memory, beta, alpha) = (memory.clone(), beta.clone(), alpha.clone());
+        world
+            .job(async move {
+                memory
+                    .merge(
+                        &beta,
+                        &alpha,
+                        Some("filed twice"),
+                        date(2026, 9, 3),
+                        &EntityId(jojobot_domain::memory::ASSISTANT.into()),
+                        Some("run-a"),
+                    )
+                    .await
+            })
+            .await
+            .expect("the merge lands");
+    }
+    check(&world, "the merge");
+
+    // A claim written under the handle that was folded away.
+    let late = {
+        let (memory, fact) = (memory.clone(), mood(&beta, "beta late", "late", 4));
+        world.job(async move { memory.capture(fact).await }).await
+    };
+    assert!(
+        matches!(late, Ok(jojobot_domain::memory::Guarded::Written(_))),
+        "a write under the folded handle lands: {late:?}"
+    );
+    check(&world, "a write to the folded handle");
+
+    // The claim the merge moved, revised under the address it had before the merge.
+    let moved = written[1].address();
+    let revised = {
+        let (memory, moved) = (memory.clone(), moved.clone());
+        world
+            .job(async move {
+                memory
+                    .update_fact(
+                        &moved,
+                        FactPatch {
+                            fields: BTreeMap::from([("mood".to_string(), "cross".to_string())]),
+                            sets: ["mood".to_string()].into(),
+                            ..FactPatch::default()
+                        },
+                        &EntityId(jojobot_domain::memory::ASSISTANT.into()),
+                    )
+                    .await
+            })
+            .await
+    };
+    assert!(
+        matches!(revised, Ok(jojobot_domain::memory::Guarded::Written(_))),
+        "a revision of the moved claim under its old address lands: {revised:?}"
+    );
+    check(&world, "a revision of the moved claim");
+
+    // A claim written on the survivor.
+    {
+        let (memory, fact) = (memory.clone(), mood(&alpha, "alpha again", "steady", 5));
+        world
+            .job(async move { memory.capture(fact).await })
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked");
+    }
+    check(&world, "a write on the survivor");
+    world.writer.drain().await;
+    world.server.stop().await;
+}
