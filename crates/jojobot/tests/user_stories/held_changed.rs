@@ -34,6 +34,15 @@ async fn otto_holds_homer() -> (Story, Session, Session, String) {
     (story, otto, other, claim)
 }
 
+/// The edit most stories make to the claim on Homer: it now also likes beer.
+async fn an_edit_to_the_claim(by: &Session, claim: &str) {
+    by.call(
+        "update_fact",
+        json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
+    )
+    .await;
+}
+
 /// A read that has nothing to do with Homer.
 async fn some_other_read(otto: &Session) -> Value {
     otto.call("recall", json!({"subject": "person:lisa"}))
@@ -49,12 +58,7 @@ async fn an_edit_by_another_session_is_named_on_the_next_answer() {
     let (_story, otto, other, claim) = otto_holds_homer().await;
     assert!(some_other_read(&otto).await.get("held_changed").is_none());
 
-    other
-        .call(
-            "update_fact",
-            json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
-        )
-        .await;
+    an_edit_to_the_claim(&other, &claim).await;
 
     let searched = otto
         .call("search", json!({"query": "springfield"}))
@@ -98,12 +102,7 @@ async fn a_claim_added_by_another_session_is_named_as_new() {
 #[tokio::test]
 async fn a_change_is_told_once() {
     let (_story, otto, other, claim) = otto_holds_homer().await;
-    other
-        .call(
-            "update_fact",
-            json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
-        )
-        .await;
+    an_edit_to_the_claim(&other, &claim).await;
     assert!(some_other_read(&otto).await.get("held_changed").is_some());
 
     assert!(some_other_read(&otto).await.get("held_changed").is_none());
@@ -116,12 +115,7 @@ async fn a_change_is_told_once() {
 #[tokio::test]
 async fn an_unrelated_edit_adds_nothing() {
     let (_story, otto, other, claim) = otto_holds_homer().await;
-    other
-        .call(
-            "update_fact",
-            json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
-        )
-        .await;
+    an_edit_to_the_claim(&other, &claim).await;
     let held = some_other_read(&otto).await;
     assert_eq!(held["held_changed"][0]["handle"], "person:homer", "{held}");
 
@@ -183,13 +177,7 @@ async fn a_session_is_not_told_of_its_own_edit() {
 #[tokio::test]
 async fn a_compaction_report_clears_what_is_held() {
     let (_story, otto, other, claim) = otto_holds_homer().await;
-    other
-        .call(
-            "update_fact",
-            json!({"address": claim, "content": "likes donuts and beer",
-                   "provenance": "inference"}),
-        )
-        .await;
+    an_edit_to_the_claim(&other, &claim).await;
     let told = some_other_read(&otto).await;
     assert_eq!(told["held_changed"][0]["handle"], "person:homer", "{told}");
 
@@ -216,12 +204,7 @@ async fn a_compaction_report_clears_what_is_held() {
 #[tokio::test]
 async fn a_repeat_of_a_write_carries_no_notice() {
     let (_story, otto, other, claim) = otto_holds_homer().await;
-    other
-        .call(
-            "update_fact",
-            json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
-        )
-        .await;
+    an_edit_to_the_claim(&other, &claim).await;
     let write = json!({"subject": "person:lisa", "content": "plays the clarinet",
                        "request_id": "lisa-clarinet"});
 
@@ -238,13 +221,7 @@ async fn a_repeat_of_a_write_carries_no_notice() {
 #[tokio::test]
 async fn a_thing_served_again_is_not_named_beside_itself() {
     let (_story, otto, other, claim) = otto_holds_homer().await;
-    other
-        .call(
-            "update_fact",
-            json!({"address": claim, "content": "likes donuts and beer",
-                   "provenance": "inference"}),
-        )
-        .await;
+    an_edit_to_the_claim(&other, &claim).await;
 
     let again = otto
         .call("recall", json!({"subject": "person:homer", "facts": true}))
@@ -498,12 +475,7 @@ async fn a_thing_the_session_holds_unchanged_comes_back_as_its_handle() {
     assert!(whole.to_string().contains("likes donuts"), "{whole}");
     assert!(whole.get("held_collapsed").is_none(), "{whole}");
 
-    other
-        .call(
-            "update_fact",
-            json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
-        )
-        .await;
+    an_edit_to_the_claim(&other, &claim).await;
     let changed = otto.call("recall", ask).await.json();
     assert_eq!(changed["objects"][0]["name"], "Homer", "{changed}");
     assert!(
@@ -613,12 +585,7 @@ async fn a_listing_the_session_holds_unchanged_collapses_and_reship_lists_it_who
 #[tokio::test]
 async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
     let (_story, otto, other, claim) = otto_holds_homer().await;
-    other
-        .call(
-            "update_fact",
-            json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
-        )
-        .await;
+    an_edit_to_the_claim(&other, &claim).await;
     let notice = some_other_read(&otto).await;
     assert_eq!(
         notice["held_changed"][0]["handle"], "person:homer",
