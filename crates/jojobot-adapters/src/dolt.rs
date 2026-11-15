@@ -186,19 +186,50 @@ impl StderrTail {
     /// Start reading `stderr` in the background. The returned value stays
     /// live and current for as long as the caller holds it; nothing needs to
     /// be polled or awaited to keep it filling.
+    #[cfg(test)]
     fn capture(stderr: tokio::process::ChildStderr) -> Self {
+        Self::capture_streams(stderr, None::<tokio::process::ChildStdout>)
+    }
+
+    /// **The same, over a server's standard output as well.** The server names a
+    /// port it cannot take on its standard output and leaves its standard error
+    /// empty, so the words that say why a start failed sit in either stream. Both
+    /// go into the one tail, and it has ended when both have.
+    fn capture_streams<E, O>(stderr: E, stdout: Option<O>) -> Self
+    where
+        E: tokio::io::AsyncRead + Unpin + Send + 'static,
+        O: tokio::io::AsyncRead + Unpin + Send + 'static,
+    {
         let lines = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
-        let sink = lines.clone();
         let (ended_tx, ended) = tokio::sync::watch::channel(false);
-        tokio::spawn(async move {
-            use tokio::io::AsyncBufReadExt;
-            let mut read = tokio::io::BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = read.next_line().await {
-                let mut kept = sink.lock().expect("stderr tail lock");
-                if kept.len() == STDERR_TAIL_LINES {
-                    kept.pop_front();
+        let (done_tx, mut done) = tokio::sync::mpsc::unbounded_channel::<()>();
+        let mut streams = 1;
+        fn read_into<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
+            stream: R,
+            sink: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+            done: tokio::sync::mpsc::UnboundedSender<()>,
+        ) {
+            tokio::spawn(async move {
+                use tokio::io::AsyncBufReadExt;
+                let mut read = tokio::io::BufReader::new(stream).lines();
+                while let Ok(Some(line)) = read.next_line().await {
+                    let mut kept = sink.lock().expect("stderr tail lock");
+                    if kept.len() == STDERR_TAIL_LINES {
+                        kept.pop_front();
+                    }
+                    kept.push_back(line);
                 }
-                kept.push_back(line);
+                let _ = done.send(());
+            });
+        }
+        read_into(stderr, lines.clone(), done_tx.clone());
+        if let Some(stdout) = stdout {
+            streams += 1;
+            read_into(stdout, lines.clone(), done_tx);
+        }
+        tokio::spawn(async move {
+            for _ in 0..streams {
+                done.recv().await;
             }
             let _ = ended_tx.send(true);
         });
@@ -338,7 +369,7 @@ impl Dolt {
             .arg("127.0.0.1")
             .arg("--port")
             .arg(port.to_string())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         die_with_this_process(&mut spawning);
@@ -349,8 +380,12 @@ impl Dolt {
         // **Read as it runs, not after.** `kill_on_drop` means a failed start
         // is a killed process by the time anything could read its stderr the
         // ordinary way; capturing has to start now, beside the spawn, to have
-        // anything left to report.
-        let stderr = StderrTail::capture(child.stderr.take().expect("stderr was piped"));
+        // anything left to report. **Standard output is read too**: the server
+        // says a port is taken there and writes nothing to standard error.
+        let stderr = StderrTail::capture_streams(
+            child.stderr.take().expect("stderr was piped"),
+            child.stdout.take(),
+        );
 
         // **`root`, and there is no choice about it.** The server's own
         // `--user` flag is gone from this toolchain: it initializes a root
@@ -2005,8 +2040,11 @@ pub(crate) mod tests {
             .expect_err("a server cannot take a port something else holds");
 
         match err {
-            StartError::Exited { status, .. } => {
+            StartError::Exited { status, stderr } => {
                 assert!(!status.success(), "the child failed to bind: {status}");
+                // The server says why on its standard output, and its standard error is
+                // empty, so the words have to be read from both.
+                assert!(stderr.contains("already"), "the server's words: {stderr:?}");
             }
             other => panic!("expected the child's exit, got {other:?}"),
         }
