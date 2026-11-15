@@ -6,7 +6,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 mod support;
@@ -68,12 +67,9 @@ fn bar(dir: &Path, level: &str, red_job: &str) -> Ran {
 fn bar_with_jobs(dir: &Path, level: &str, red_job: &str, jobs: &str) -> Ran {
     let began = Instant::now();
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(dir)
             .arg(level)
-            .current_dir(dir)
-            .env("TMPDIR", dir)
             .env("CARGO", write_cargo(dir))
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env("BAR_JOBS", jobs)
             .env("RED_JOB", red_job)
             .env("SLOW", "8"),

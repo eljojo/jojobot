@@ -123,12 +123,9 @@ fn run_bar_after(args: &[&str], env: &[(&str, &str)], before: impl FnOnce(&Path)
     let cargo = write_cargo(&dir);
     before(&dir);
     let out = output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(&dir)
             .args(args)
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
             .env("CARGO", &cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             // The caller's own limit must not decide what a case measures.
             .env_remove("BAR_JOBS")
             .env_remove("BAR_SLOT_CORES")
@@ -544,12 +541,9 @@ fn the_jobs_of_a_run_work_in_a_directory_of_its_own_that_is_gone_when_it_ends() 
     support::git_init(&dir);
     let cargo = write_cargo(&dir);
     let out = output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(&dir)
             .arg("check")
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
             .env("CARGO", &cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env_remove("BAR_JOBS"),
     )
     .expect("run bar");

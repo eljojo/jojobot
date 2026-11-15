@@ -85,12 +85,9 @@ exit 0
         fs::create_dir_all(log.parent().unwrap()).unwrap();
         fs::write(&log, "test result: ok. 99 passed; 0 failed;\n").unwrap();
         let ran = support::output_fenced(
-            Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-                .current_dir(&root)
+            support::bar_in(&root)
                 .args(["narrow", "--crate", "jojobot-bar", "--filter", "alpha"])
                 .env("CARGO", &cargo)
-                .env("TMPDIR", &root)
-                .env("BAR_HISTORY_DIR", root.join("history"))
                 .env("STOP_AT", stop_at),
         )
         .unwrap();

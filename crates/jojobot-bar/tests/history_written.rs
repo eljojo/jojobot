@@ -293,6 +293,7 @@ fn every_case_that_starts_the_bar_names_a_history_directory() {
         if text.contains("CARGO_BIN_EXE_jojobot-bar")
             && !narrow_only
             && !text.contains("BAR_HISTORY_DIR")
+            && !text.contains("support::bar_")
         {
             unnamed.push(
                 path.file_name()

@@ -273,11 +273,9 @@ fn ci_crate_mcp_change_keeps_workspace_scanners() {
     let selected = crate_selection(&dir, &base);
     assert_eq!(selected["full"], false, "{selected}");
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_at(&dir)
             .arg("report")
-            .current_dir(&dir)
             .env("CARGO", dir.join("cargo"))
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env("BAR_JOBS", "1")
             .env("BAR_SELECT_BY_CRATE", "1")
             .env("BAR_SELECT_BASE", &base),
@@ -430,11 +428,9 @@ fn ci_crate_report_executes_only_selected_jobs_but_boundary_runs_everything() {
     for (lane, enabled) in [("report", true), ("check", true), ("report", false)] {
         let (dir, base) = selection_fixture();
         let out = support::output_fenced(
-            Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            support::bar_at(&dir)
                 .arg(lane)
-                .current_dir(&dir)
                 .env("CARGO", dir.join("cargo"))
-                .env("BAR_HISTORY_DIR", dir.join("history"))
                 .env("BAR_SELECT_BY_CRATE", if enabled { "1" } else { "0" })
                 .env("BAR_SELECT_BASE", &base)
                 .env("BAR_PUSH_BASE", &base)
@@ -549,11 +545,9 @@ fn a_report_run_builds_the_workspace_once_and_then_the_harness_binary_once() {
     git(&dir, &["add", "flake.lock"]);
     git(&dir, &["commit", "-q", "-m", "behaviour changed"]);
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_at(&dir)
             .arg("report")
-            .current_dir(&dir)
             .env("CARGO", dir.join("cargo"))
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env("BAR_SELECT_BY_CRATE", "1")
             .env("BAR_SELECT_BASE", &base)
             .env("BAR_JOBS", "1"),
@@ -596,11 +590,9 @@ fn ci_crate_a_forced_full_run_builds_the_harness_feature() {
     git(&dir, &["add", "flake.lock"]);
     git(&dir, &["commit", "-q", "-m", "behaviour changed"]);
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_at(&dir)
             .arg("report")
-            .current_dir(&dir)
             .env("CARGO", dir.join("cargo"))
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env("BAR_SELECT_BY_CRATE", "1")
             .env("BAR_SELECT_BASE", &base)
             .env("BAR_JOBS", "1"),
@@ -651,12 +643,9 @@ fn the_touched_crates_library_cases_run_before_the_workspace_is_built() {
     let first = repository(&dir);
     write_red_cargo(&dir);
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(&dir)
             .arg("report")
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
             .env("CARGO", dir.join("cargo"))
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env("BAR_JOBS", "1")
             .env("BAR_PUSH_BASE", &first),
     )
@@ -718,12 +707,9 @@ fn the_library_cases_that_spawn_the_binary_run_after_the_build() {
             .replace("deps/pb-2", "deps/jojobot_exercise-2"),
     );
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(&dir)
             .arg("report")
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
             .env("CARGO", dir.join("cargo"))
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env("BAR_JOBS", "1")
             .env("BAR_PUSH_BASE", &first),
     )
@@ -824,12 +810,9 @@ fn a_report_run_that_fails_after_the_fast_phase_finishes_its_history() {
             write_cargo_failing_after_the_fast_cases(&dir, step);
         }
         let out = support::output_fenced(
-            Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            support::bar_in(&dir)
                 .arg("report")
-                .current_dir(&dir)
-                .env("TMPDIR", &dir)
                 .env("CARGO", dir.join("cargo"))
-                .env("BAR_HISTORY_DIR", dir.join("history"))
                 .env("BAR_JOBS", "1")
                 .env("BAR_PUSH_BASE", &first),
         )

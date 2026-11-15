@@ -100,6 +100,22 @@ pub fn status_fenced(cmd: &mut Command) -> std::io::Result<ExitStatus> {
     fenced_spawn(cmd)?.wait()
 }
 
+/// **The bar under test, run in `dir` with its history kept there.** The caller adds the
+/// arguments and what is particular to its case, and runs it through [`output_fenced`].
+pub fn bar_at(dir: &Path) -> Command {
+    let mut bar = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
+    bar.current_dir(dir)
+        .env("BAR_HISTORY_DIR", dir.join("history"));
+    bar
+}
+
+/// [`bar_at`], with the bar's temporary files kept in `dir` too.
+pub fn bar_in(dir: &Path) -> Command {
+    let mut bar = bar_at(dir);
+    bar.env("TMPDIR", dir);
+    bar
+}
+
 /// **Make a scratch directory a git repository of its own.** The bar's size
 /// phase lists the tracked files of the repository it runs in, and a directory
 /// that is no repository is a measurement it cannot make, which fails the run.

@@ -912,14 +912,12 @@ exec "$BAR_CASE_GIT" "$@"
     let path =
         std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&old_path))).unwrap();
     let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_at(&dir)
             .args(["narrow", "--crate", "jojobot-bar"])
-            .current_dir(&dir)
             .env("CARGO", cargo)
             .env("SIZE_BASE", base)
             .env("PATH", path)
-            .env("BAR_CASE_GIT", real_git)
-            .env("BAR_HISTORY_DIR", dir.join("history")),
+            .env("BAR_CASE_GIT", real_git),
     )
     .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);

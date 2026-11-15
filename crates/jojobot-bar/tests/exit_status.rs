@@ -5,7 +5,6 @@
 //! A stub `cargo` drives the real `bar` binary end to end to prove that.
 
 use std::fs;
-use std::process::Command;
 
 mod support;
 
@@ -21,17 +20,11 @@ if [ "$1" = test ]; then cat "$BAR_CASE_FAILURES"; exit 101; fi
 "#,
     );
     let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .arg("check")
-            .current_dir(&dir)
-            .env("CARGO", cargo)
-            .env("TMPDIR", &dir)
-            .env("BAR_HISTORY_DIR", dir.join("history"))
-            .env(
-                "BAR_CASE_FAILURES",
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/timed-failures.txt"),
-            ),
+        support::bar_in(&dir).arg("check").env("CARGO", cargo).env(
+            "BAR_CASE_FAILURES",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/timed-failures.txt"),
+        ),
     )
     .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -74,17 +67,11 @@ if [ "$1" = test ]; then cat "$BAR_CASE_FAILURES"; exit 101; fi
 "#,
     );
     let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .arg("check")
-            .current_dir(&dir)
-            .env("CARGO", cargo)
-            .env("TMPDIR", &dir)
-            .env("BAR_HISTORY_DIR", dir.join("history"))
-            .env(
-                "BAR_CASE_FAILURES",
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/timed-failures.txt"),
-            ),
+        support::bar_in(&dir).arg("check").env("CARGO", cargo).env(
+            "BAR_CASE_FAILURES",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/timed-failures.txt"),
+        ),
     )
     .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -114,18 +101,12 @@ fn check_verdict_file(tag: &str, script: &str, stdout_of_test: &str) -> (String,
     let cargo = dir.join("cargo");
     support::write_executable(&cargo, &format!("#!/bin/sh\n{script}\n"));
     let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .arg("check")
-            .current_dir(&dir)
-            .env("CARGO", cargo)
-            .env("TMPDIR", &dir)
-            .env("BAR_HISTORY_DIR", dir.join("history"))
-            .env(
-                "BAR_CASE_FAILURES",
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures")
-                    .join(stdout_of_test),
-            ),
+        support::bar_in(&dir).arg("check").env("CARGO", cargo).env(
+            "BAR_CASE_FAILURES",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(stdout_of_test),
+        ),
     )
     .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -234,15 +215,9 @@ fn a_crashed_sibling_suite_reds_the_whole_check_run() {
     let dir = scratch_dir("check");
     let fake_cargo = write_fake_cargo(&dir);
 
-    let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .arg("check")
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
-            .env("CARGO", &fake_cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history")),
-    )
-    .expect("run bar check");
+    let output =
+        support::output_fenced(support::bar_in(&dir).arg("check").env("CARGO", &fake_cargo))
+            .expect("run bar check");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -271,12 +246,9 @@ fn a_crashed_sibling_suite_reds_the_whole_narrow_run() {
     let fake_cargo = write_fake_cargo(&dir);
 
     let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(&dir)
             .args(["narrow", "--crate", "jojobot-bar"])
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
-            .env("CARGO", &fake_cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history")),
+            .env("CARGO", &fake_cargo),
     )
     .expect("run bar narrow");
 

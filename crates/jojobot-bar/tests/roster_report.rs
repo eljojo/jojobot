@@ -85,15 +85,9 @@ fn repo_with(tag: &str, cast: &[&str], ordinary: &[&str], base_file: &str) -> st
 
 fn run_check(dir: &std::path::Path) -> (bool, String) {
     let fake_cargo = write_fake_cargo_always_green(dir);
-    let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .arg("check")
-            .current_dir(dir)
-            .env("TMPDIR", dir)
-            .env("CARGO", &fake_cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history")),
-    )
-    .expect("run bar check");
+    let output =
+        support::output_fenced(support::bar_in(dir).arg("check").env("CARGO", &fake_cargo))
+            .expect("run bar check");
     (
         output.status.success(),
         String::from_utf8_lossy(&output.stdout).into_owned(),

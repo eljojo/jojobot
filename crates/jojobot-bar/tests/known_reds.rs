@@ -4,7 +4,7 @@
 //! to each of the three verdicts, and a library call proves none of that wiring.
 
 use std::fs;
-use std::process::{Command, Output};
+use std::process::Output;
 
 mod support;
 
@@ -81,12 +81,9 @@ fn bar_saying(tag: &str, args: &[&str], known_reds: Option<&str>, items: &str) -
         fs::write(dir.join("known-reds.toml"), text).expect("write the list");
     }
     let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(&dir)
             .args(args)
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
             .env("CARGO", &fake_cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env("FAKE_ITEMS", items),
     )
     .expect("run bar");

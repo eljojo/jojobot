@@ -9,7 +9,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 mod support;
@@ -67,12 +66,9 @@ fn run(level: &str) -> (String, Duration) {
     let cargo = write_fake_cargo(&dir);
     let started = Instant::now();
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(&dir)
             .arg(level)
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
             .env("CARGO", &cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env_remove("BAR_JOBS"),
     )
     .expect("run bar");

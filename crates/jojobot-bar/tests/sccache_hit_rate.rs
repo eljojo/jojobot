@@ -300,12 +300,9 @@ fn sccache_a_server_the_job_already_names_is_used_as_named() {
     let cargo = dir.join("cargo");
     support::write_executable(&cargo, FAKE_CARGO);
     let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(&dir)
             .arg("check")
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
             .env("CARGO", &cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env("JOJOBOT_SCCACHE", &sccache)
             .env("SCCACHE_SERVER_UDS", &named),
     )

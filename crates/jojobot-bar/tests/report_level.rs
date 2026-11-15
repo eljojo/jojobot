@@ -5,7 +5,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use jojobot_bar::{JobRecord, Run, RunHeader};
 
@@ -95,12 +94,9 @@ struct Ran {
 
 fn bar(dir: &Path, args: &[&str]) -> Ran {
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(dir)
             .args(args)
-            .current_dir(dir)
-            .env("TMPDIR", dir)
             .env("CARGO", write_cargo(dir))
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env_remove("BAR_JOBS"),
     )
     .expect("run bar");
@@ -144,12 +140,9 @@ fn the_selected_job_plan_is_announced_before_those_jobs_run() {
         let stdout = dir.join("stdout");
         let plan = dir.join("plan-before-tests");
         let output = support::fenced_spawn(
-            Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            support::bar_in(&dir)
                 .arg(target)
-                .current_dir(&dir)
-                .env("TMPDIR", &dir)
                 .env("CARGO", cargo)
-                .env("BAR_HISTORY_DIR", dir.join("history"))
                 .env("BAR_CASE_STDOUT", &stdout)
                 .env("BAR_CASE_PLAN", &plan)
                 .env_remove("BAR_JOBS")
@@ -202,11 +195,9 @@ JSON
 "#,
     );
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_at(&dir)
             .args(["plan", "report"])
-            .current_dir(&dir)
-            .env("CARGO", cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history")),
+            .env("CARGO", cargo),
     )
     .expect("run the plan");
     let text = String::from_utf8_lossy(&out.stdout);

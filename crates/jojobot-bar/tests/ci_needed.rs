@@ -122,13 +122,11 @@ fn change(dir: &Path, paths: &[&str]) {
 
 fn bar(dir: &Path, base: &str, lane: &str) -> Output {
     support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_at(dir)
             .arg(lane)
-            .current_dir(dir)
             .env("BAR_CI_BASE", base)
             .env("SIZE_BASE", base)
             .env("CARGO", dir.join("cargo"))
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env_remove("BAR_JOBS"),
     )
     .unwrap()

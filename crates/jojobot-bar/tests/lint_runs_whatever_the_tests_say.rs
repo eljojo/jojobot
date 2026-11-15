@@ -8,7 +8,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 mod support;
 
@@ -66,12 +65,9 @@ fn bar(tag: &str, args: &[&str], env: &[(&str, &str)]) -> Ran {
     let dir = scratch_dir(tag);
     let cargo = write_fake_cargo(&dir);
     let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        support::bar_in(&dir)
             .args(args)
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
             .env("CARGO", &cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history"))
             .env_remove("BAR_JOBS")
             .envs(env.iter().copied()),
     )

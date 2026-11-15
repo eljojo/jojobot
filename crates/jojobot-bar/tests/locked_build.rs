@@ -5,7 +5,6 @@
 //! the bar actually spawned and no real cargo runs.
 
 use std::fs;
-use std::process::Command;
 
 mod support;
 
@@ -55,15 +54,8 @@ fn calls_of(tag: &str, args: &[&str], verb: &str) -> Vec<String> {
     let dir = scratch_dir(tag);
     let fake_cargo = write_recording_cargo(&dir);
 
-    let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .args(args)
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
-            .env("CARGO", &fake_cargo)
-            .env("BAR_HISTORY_DIR", dir.join("history")),
-    )
-    .expect("run bar");
+    let output = support::output_fenced(support::bar_in(&dir).args(args).env("CARGO", &fake_cargo))
+        .expect("run bar");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let recorded = fs::read_to_string(dir.join("argv.log")).expect("the bar called cargo");
