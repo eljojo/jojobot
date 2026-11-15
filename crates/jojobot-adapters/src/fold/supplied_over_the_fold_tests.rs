@@ -498,19 +498,12 @@ async fn the_mention_stack() -> (
 /// reads exactly one names read, and still no listing.
 #[tokio::test]
 async fn a_text_that_names_nothing_asks_the_store_nothing_about_names() {
+    use jojobot_domain::memory::NewFact;
     use jojobot_domain::memory::testing::contract::state;
-    use jojobot_domain::memory::{NewEntity, NewFact};
 
     let (layer, counted, _) = the_mention_stack().await;
     let (about, named) = (spelled_thing(1), spelled_thing(2));
-    for id in [&about, &named] {
-        layer
-            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
-            .await
-            .expect("add")
-            .written()
-            .expect("not blocked");
-    }
+    add_things(&layer, &[&about, &named]).await;
     let claim = |words: String| {
         let mut fact = state(NewFact::about(
             about.clone(),
@@ -567,21 +560,16 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
     use jojobot_domain::memory::mention::{
         known_among, render_roster, rendered, resolved, roster_for, roster_for_whole,
     };
-    use jojobot_domain::memory::testing::contract::state;
-    use jojobot_domain::memory::{EntityPatch, NewEntity, NewFact};
 
     let (layer, _, provisioned) = the_mention_stack().await;
     let make = |n: usize| EntityId(format!("{}:{}", "person", spelled_slug(n)));
     let (renamed, merged_a, merged_b, merged_c, archived, plain) =
         (make(1), make(2), make(3), make(4), make(5), make(6));
-    for id in [&renamed, &merged_a, &merged_b, &merged_c, &archived, &plain] {
-        layer
-            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
-            .await
-            .expect("add")
-            .written()
-            .expect("not blocked");
-    }
+    add_things(
+        &layer,
+        &[&renamed, &merged_a, &merged_b, &merged_c, &archived, &plain],
+    )
+    .await;
     let new_name = EntityId(format!("{}:{}", "person", spelled_slug(7)));
     layer
         .rename_entity(
@@ -611,64 +599,13 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
         .archive_entity(&archived, "done", None)
         .await
         .expect("archived");
-    let _ = EntityPatch::default();
     // A numbered collection and its members.
     let collection = EntityId(format!("{}:{}", "topic", spelled_slug(8)));
-    layer
-        .add_entity(NewEntity::new(
-            collection.clone(),
-            &collection.0,
-            "fold-image",
-        ))
-        .await
-        .expect("add")
-        .written()
-        .expect("not blocked");
-    let mut numbering = state(NewFact::about(
-        collection.clone(),
-        "numbers its members",
-        jiff::civil::date(2026, 9, 2),
-    ));
-    numbering.session = Some("fold-image".into());
-    numbering.fields.insert(
-        jojobot_domain::memory::numbered::NUMBERS_BY.into(),
-        "number".into(),
+    let (first, second) = (
+        EntityId(format!("{}:{}", "topic", spelled_slug(9))),
+        EntityId(format!("{}:{}", "topic", spelled_slug(10))),
     );
-    numbering
-        .sets
-        .insert(jojobot_domain::memory::numbered::NUMBERS_BY.into());
-    layer
-        .capture(numbering)
-        .await
-        .expect("captured")
-        .written()
-        .expect("not blocked");
-    for (n, number) in [(9, "1"), (10, "2")] {
-        let member = EntityId(format!("{}:{}", "topic", spelled_slug(n)));
-        layer
-            .add_entity(NewEntity {
-                parent: Some(collection.clone()),
-                ..NewEntity::new(member.clone(), &member.0, "fold-image")
-            })
-            .await
-            .expect("add")
-            .written()
-            .expect("not blocked");
-        let mut fact = state(NewFact::about(
-            member.clone(),
-            "is a member",
-            jiff::civil::date(2026, 9, 2),
-        ));
-        fact.session = Some("fold-image".into());
-        fact.fields.insert("number".into(), number.into());
-        fact.sets.insert("number".into());
-        layer
-            .capture(fact)
-            .await
-            .expect("captured")
-            .written()
-            .expect("not blocked");
-    }
+    numbered_collection(&layer, &collection, &[(&first, "1"), (&second, "2")]).await;
 
     // The texts: every kind of name, typed and as a stored mark.
     let whole = render_roster(&*provisioned).await.expect("the roster");
@@ -758,21 +695,13 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
 /// a chain longer than any fixed limit still ends at the survivor.
 #[tokio::test]
 async fn a_mark_followed_through_a_long_chain_of_merges_reaches_the_survivor() {
-    use jojobot_domain::memory::NewEntity;
     use jojobot_domain::memory::mention::{known_among, render_roster, rendered};
 
     let (layer, _, provisioned) = the_mention_stack().await;
     let chain: Vec<EntityId> = (1..=70)
         .map(|n| EntityId(format!("{}:{}", "person", spelled_slug(n))))
         .collect();
-    for id in &chain {
-        layer
-            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
-            .await
-            .expect("add")
-            .written()
-            .expect("not blocked");
-    }
+    add_things(&layer, &chain.iter().collect::<Vec<_>>()).await;
     for pair in chain.windows(2) {
         layer
             .merge(
@@ -853,80 +782,164 @@ fn spelled_slug(n: usize) -> String {
         .to_string()
 }
 
+/// Each thing, added under its own handle.
+async fn add_things(layer: &impl jojobot_domain::memory::Memory, ids: &[&EntityId]) {
+    for id in ids {
+        layer
+            .add_entity(jojobot_domain::memory::NewEntity::new(
+                (*id).clone(),
+                &id.0,
+                "fold-image",
+            ))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+}
+
+/// A collection that numbers its members, and each member added under it holding its number.
+async fn numbered_collection(
+    layer: &impl jojobot_domain::memory::Memory,
+    collection: &EntityId,
+    members: &[(&EntityId, &str)],
+) {
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{NewEntity, NewFact};
+
+    add_things(layer, &[collection]).await;
+    let key = jojobot_domain::memory::numbered::NUMBERS_BY;
+    let mut claims = vec![(collection, "numbers its members", key, "number")];
+    for (member, number) in members {
+        layer
+            .add_entity(NewEntity {
+                parent: Some(collection.clone()),
+                ..NewEntity::new((*member).clone(), &member.0, "fold-image")
+            })
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+        claims.push((member, "is a member", "number", number));
+    }
+    for (subject, words, field, value) in claims {
+        let mut fact = state(NewFact::about(
+            subject.clone(),
+            words,
+            jiff::civil::date(2026, 9, 2),
+        ));
+        fact.session = Some("fold-image".into());
+        fact.fields.insert(field.into(), value.into());
+        fact.sets = std::collections::BTreeSet::from([field.to_string()]);
+        layer
+            .capture(fact)
+            .await
+            .expect("captured")
+            .written()
+            .expect("not blocked");
+    }
+}
+
+/// **The instance the mention-write cases share**: a thing the claims are about, a thing
+/// they name, and a collection that numbers its members with member 2 held.
+struct World {
+    layer: jojobot_domain::memory::mention::Mentioning,
+    about: EntityId,
+    named: EntityId,
+    collection: EntityId,
+}
+
+impl World {
+    async fn new() -> World {
+        let (layer, _, _) = the_mention_stack().await;
+        let (about, named, collection, member) = (
+            spelled_thing(1),
+            spelled_thing(2),
+            spelled_thing(3),
+            spelled_thing(4),
+        );
+        add_things(&layer, &[&about, &named]).await;
+        numbered_collection(&layer, &collection, &[(&member, "2")]).await;
+        World {
+            layer,
+            about,
+            named,
+            collection,
+        }
+    }
+
+    /// A claim about the thing; `what` names the write when it is refused.
+    async fn capture(
+        &self,
+        content: &str,
+        details: Option<String>,
+        what: &str,
+    ) -> jojobot_domain::memory::Fact {
+        use jojobot_domain::memory::testing::contract::state;
+        let mut fact = state(jojobot_domain::memory::NewFact::about(
+            self.about.clone(),
+            content,
+            jiff::civil::date(2026, 9, 2),
+        ));
+        fact.session = Some("fold-image".into());
+        fact.details = details;
+        let captured = self.layer.capture(fact).await.expect("captured");
+        captured.written().unwrap_or_else(|| panic!("{what}"))
+    }
+
+    async fn edit(
+        &self,
+        fact: &jojobot_domain::memory::Fact,
+        patch: jojobot_domain::memory::FactPatch,
+        what: &str,
+    ) -> jojobot_domain::memory::Fact {
+        let edited = self
+            .layer
+            .update_fact(&fact.address(), patch, &EntityId("bot:sigma".into()))
+            .await
+            .expect("edited");
+        edited.written().unwrap_or_else(|| panic!("{what}"))
+    }
+}
+
 /// **A write hands back the claim as a reader is served it**, and a claim the write did
 /// not re-word still holds the marks it was stored with. An edit of fields alone sends no
 /// text, so no name is asked for by the text sent; the claim it returns, and the claim a
 /// retraction returns, name their own marks and render them as a recall does.
 #[tokio::test]
 async fn a_claim_a_write_returns_renders_the_marks_it_was_stored_with() {
+    use jojobot_domain::memory::FactPatch;
     use jojobot_domain::memory::testing::contract::state;
-    use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
 
-    let (layer, _, _) = the_mention_stack().await;
-    let (about, named) = (spelled_thing(1), spelled_thing(2));
-    for id in [&about, &named] {
-        layer
-            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
-            .await
-            .expect("add")
-            .written()
-            .expect("not blocked");
-    }
-    let capture = |words: String| {
-        let mut fact = state(NewFact::about(
-            about.clone(),
-            words,
-            jiff::civil::date(2026, 9, 2),
-        ));
-        fact.session = Some("fold-image".into());
-        fact
-    };
-    let stored = layer
-        .capture(capture(format!("saw @{}", named.0)))
-        .await
-        .expect("captured")
-        .written()
-        .expect("not blocked");
-    let expected = format!("saw @{}", named.0);
+    let world = World::new().await;
+    let expected = format!("saw @{}", world.named.0);
+    let caller = EntityId("bot:sigma".into());
+    let day = jiff::civil::date(2026, 9, 3);
+    let stored = world.capture(&expected, None, "captured").await;
     assert_eq!(stored.content, expected);
 
     let mut patch = FactPatch::default();
     patch.fields.insert("note".into(), "kept".into());
-    let edited = layer
-        .update_fact(&stored.address(), patch, &EntityId("bot:sigma".into()))
-        .await
-        .expect("edited")
-        .written()
-        .expect("not blocked");
+    let edited = world.edit(&stored, patch, "not blocked").await;
     assert_eq!(edited.content, expected, "a fields-only edit");
 
-    let retraction = layer
-        .retract(
-            &stored.address(),
-            None,
-            jiff::civil::date(2026, 9, 3),
-            &EntityId("bot:sigma".into()),
-            None,
-        )
+    let retraction = world
+        .layer
+        .retract(&stored.address(), None, day, &caller, None)
         .await
         .expect("retracted");
     assert_eq!(retraction.retracted.content, expected, "a retraction");
 
-    let second = layer
-        .capture(capture(format!("saw @{}", named.0)))
-        .await
-        .expect("captured")
-        .written()
-        .expect("not blocked");
-    let (retraction, _) = layer
-        .retract_with_claim(
-            &second.address(),
-            None,
-            jiff::civil::date(2026, 9, 3),
-            &EntityId("bot:sigma".into()),
-            None,
-            capture("a note that names nothing".into()),
-        )
+    let second = world.capture(&expected, None, "captured").await;
+    let mut claim = state(jojobot_domain::memory::NewFact::about(
+        world.about.clone(),
+        "a note that names nothing",
+        day,
+    ));
+    claim.session = Some("fold-image".into());
+    let (retraction, _) = world
+        .layer
+        .retract_with_claim(&second.address(), None, day, &caller, None, claim)
         .await
         .expect("retracted")
         .written()
@@ -937,204 +950,78 @@ async fn a_claim_a_write_returns_renders_the_marks_it_was_stored_with() {
     );
 }
 
-/// **A handle is gathered where the claim's words put it outside code**, and the words
-/// are read as content and details together. A fence that opens on the content closes in
-/// the details, so a handle after it is outside code in the pair and inside code in the
-/// details read alone. A gather over each text alone finds no name, and a write of a
-/// handle that exists is refused as one that names nothing.
+/// **A handle is gathered where the claim's words put it outside code.** The words are
+/// read as content and details together, so a fence that opens on the content closes in
+/// the details and a handle after it is outside code in the pair and inside code in the
+/// details alone. A gather over each text alone names nothing, and a write of a handle
+/// that exists is refused as one that names nothing. Each write path reads the pair:
+/// a capture, an edit that sends the details alone beside the stored content, a find and
+/// replace whose replacement lands beside the stored content, and the whole-roster
+/// fallback a miss takes, which must still find the held numbered member.
 #[tokio::test]
 async fn a_handle_outside_code_only_when_content_and_details_are_read_together_is_named() {
-    use jojobot_domain::memory::testing::contract::state;
-    use jojobot_domain::memory::{NewEntity, NewFact};
+    use jojobot_domain::memory::FactPatch;
+    use jojobot_domain::memory::text_edit::{TextEdit, TextField};
 
-    let (layer, _, _) = the_mention_stack().await;
-    let (about, named) = (spelled_thing(1), spelled_thing(2));
-    for id in [&about, &named] {
-        layer
-            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
-            .await
-            .expect("add")
-            .written()
-            .expect("not blocked");
-    }
+    let world = World::new().await;
     let fence = "`".repeat(3);
-    let mut fact = state(NewFact::about(
-        about.clone(),
-        format!("{fence}text"),
-        jiff::civil::date(2026, 9, 2),
-    ));
-    fact.session = Some("fold-image".into());
-    fact.details = Some(format!("{fence}\n@{}\n{fence}\n{fence}\n{fence}", named.0));
-    let written = layer
-        .capture(fact)
-        .await
-        .expect("captured")
-        .written()
-        .expect("the handle is outside code in the pair, and it exists");
-    let served = layer.recall(&about).await.expect("recalled");
+    let opening = format!("{fence}text");
+    // The details that close the fence the content opened, then hold the handle.
+    let closing = |handle: &str| format!("{fence}\n@{handle}\n{fence}\n{fence}\n{fence}");
+    let named = world.named.0.clone();
+
+    let written = world
+        .capture(&opening, Some(closing(&named)), "a capture of the pair")
+        .await;
+    let served = world.layer.recall(&world.about).await.expect("recalled");
     assert_eq!(served.len(), 1);
-    assert_eq!(served[0].content, format!("{fence}text"));
+    assert_eq!(served[0].content, opening);
     assert_eq!(
-        served[0].details.as_deref(),
-        written.details.as_deref(),
-        "a recall serves what the write handed back"
+        served[0].details, written.details,
+        "a recall serves the write"
     );
     assert!(
         served[0]
             .details
             .as_deref()
-            .is_some_and(|details| details.contains(&format!("@{}", named.0))),
+            .is_some_and(|details| details.contains(&format!("@{named}"))),
         "{:?}",
         served[0].details
     );
 
-    // An edit that sends the details alone reads them beside the content as stored.
-    let mut plain = state(NewFact::about(
-        about.clone(),
-        format!("{fence}text"),
-        jiff::civil::date(2026, 9, 2),
-    ));
-    plain.session = Some("fold-image".into());
-    plain.details = Some("nothing here".into());
-    let stored = layer
-        .capture(plain)
-        .await
-        .expect("captured")
-        .written()
-        .expect("not blocked");
-    let patch = jojobot_domain::memory::FactPatch {
-        details: Some(format!("{fence}\n@{}\n{fence}\n{fence}\n{fence}", named.0)),
+    let plain = world
+        .capture(&opening, Some("nothing here".into()), "a plain capture")
+        .await;
+    let patch = FactPatch {
+        details: Some(closing(&named)),
         ..Default::default()
     };
-    layer
-        .update_fact(&stored.address(), patch, &EntityId("bot:sigma".into()))
-        .await
-        .expect("edited")
-        .written()
-        .expect("the details alone are read beside the stored content");
-}
+    world
+        .edit(&plain, patch, "an edit of the details alone")
+        .await;
 
-/// **A find and replace reads its replacement where it will sit**: beside the other
-/// field as stored. The replacement is outside code there and inside code when read
-/// alone, so a gather over the replacement alone leaves a handle that exists unnamed,
-/// and the edit is refused as naming nothing.
-#[tokio::test]
-async fn a_replacement_outside_code_only_beside_the_stored_content_is_named() {
-    use jojobot_domain::memory::testing::contract::state;
-    use jojobot_domain::memory::text_edit::{TextEdit, TextField};
-    use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
-
-    let (layer, _, _) = the_mention_stack().await;
-    let (about, named) = (spelled_thing(1), spelled_thing(2));
-    for id in [&about, &named] {
-        layer
-            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
-            .await
-            .expect("add")
-            .written()
-            .expect("not blocked");
-    }
-    let fence = "`".repeat(3);
-    let mut fact = state(NewFact::about(
-        about.clone(),
-        format!("{fence}text"),
-        jiff::civil::date(2026, 9, 2),
-    ));
-    fact.session = Some("fold-image".into());
-    fact.details = Some("nothing here".into());
-    let stored = layer
-        .capture(fact)
-        .await
-        .expect("captured")
-        .written()
-        .expect("not blocked");
+    let plain = world
+        .capture(&opening, Some("nothing here".into()), "a plain capture")
+        .await;
     let patch = FactPatch {
         text_edit: Some(TextEdit {
             field: TextField::Details,
             find: "nothing here".into(),
-            replace: format!("{fence}\n@{}\n{fence}\n{fence}\n{fence}", named.0),
+            replace: closing(&named),
         }),
         ..Default::default()
     };
-    layer
-        .update_fact(&stored.address(), patch, &EntityId("bot:sigma".into()))
-        .await
-        .expect("edited")
-        .written()
-        .expect("the replacement is outside code beside the stored content");
-}
+    world.edit(&plain, patch, "a find and replace").await;
 
-/// **A numbered address only the joined words expose is found by the fallback too.**
-/// The words read together expose `/2` outside code, and read apart the details expose a
-/// `/01`, which names nothing and sends the write to the whole roster. That path finds
-/// its numbered addresses from the same pairs, so the held member is still a member.
-#[tokio::test]
-async fn a_numbered_address_outside_code_only_in_the_pair_survives_the_whole_roster() {
-    use jojobot_domain::memory::testing::contract::state;
-    use jojobot_domain::memory::{NewEntity, NewFact};
-
-    let (layer, _, _) = the_mention_stack().await;
-    let (about, collection, member) = (spelled_thing(1), spelled_thing(2), spelled_thing(3));
-    for (id, parent) in [
-        (&about, None),
-        (&collection, None),
-        (&member, Some(collection.clone())),
-    ] {
-        layer
-            .add_entity(NewEntity {
-                parent,
-                ..NewEntity::new(id.clone(), &id.0, "fold-image")
-            })
-            .await
-            .expect("add")
-            .written()
-            .expect("not blocked");
-    }
-    let mut numbering = state(NewFact::about(
-        collection.clone(),
-        "numbers its members",
-        jiff::civil::date(2026, 9, 2),
-    ));
-    numbering.session = Some("fold-image".into());
-    numbering.fields.insert(
-        jojobot_domain::memory::numbered::NUMBERS_BY.into(),
-        "number".into(),
-    );
-    numbering
-        .sets
-        .insert(jojobot_domain::memory::numbered::NUMBERS_BY.into());
-    let mut numbered = state(NewFact::about(
-        member.clone(),
-        "is a member",
-        jiff::civil::date(2026, 9, 2),
-    ));
-    numbered.session = Some("fold-image".into());
-    numbered.fields.insert("number".into(), "2".into());
-    numbered.sets.insert("number".into());
-    for fact in [numbering, numbered] {
-        layer
-            .capture(fact)
-            .await
-            .expect("captured")
-            .written()
-            .expect("not blocked");
-    }
-
-    let fence = "`".repeat(3);
-    let mut fact = state(NewFact::about(
-        about.clone(),
-        format!("{fence}text"),
-        jiff::civil::date(2026, 9, 2),
-    ));
-    fact.session = Some("fold-image".into());
-    fact.details = Some(format!(
-        "{fence}\n@{c}/2\n{fence}\n@{c}/01\n{fence}\n{fence}",
-        c = collection.0
-    ));
-    layer
-        .capture(fact)
-        .await
-        .expect("captured")
-        .written()
-        .expect("the held member is outside code in the pair");
+    // The pair exposes `/2` outside code and the details alone expose a `/01`, which names
+    // nothing and sends the write to the whole roster.
+    let c = &world.collection.0;
+    let numbered = format!("{fence}\n@{c}/2\n{fence}\n@{c}/01\n{fence}\n{fence}");
+    world
+        .capture(
+            &opening,
+            Some(numbered),
+            "the held member, through the fallback",
+        )
+        .await;
 }
