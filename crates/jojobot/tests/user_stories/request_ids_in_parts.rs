@@ -452,14 +452,7 @@ async fn a_post_whose_delivery_failed_is_finished_by_sending_it_again_with_the_s
 #[tokio::test]
 async fn a_first_post_to_the_operator_whose_box_failed_to_open_is_sent_again_and_opens_it_once() {
     let (story, s) = Story::begin_with_session("bot:otto").await;
-    s.add("person:lisa", "Lisa").await;
-    s.event_with(
-        "topic:instance",
-        "who the operator is",
-        json!({"operator": "person:lisa"}),
-        &[],
-    )
-    .await;
+    s.names_lisa_the_operator().await;
     let args = json!({
         "to": "person:lisa", "subject": "the figure", "body": "a figure for the operator",
         "request_id": "post-2",

@@ -20,14 +20,7 @@ const WORDS: &str = "wants the harbor mural painted in cobalt";
 /// An instance with an operator, a writer, and one testimony claim to quote.
 async fn with_an_operator() -> (Story, Session, String) {
     let (story, s) = Story::begin_with_session("bot:otto").await;
-    s.add("person:lisa", "Lisa").await;
-    s.event_with(
-        "topic:instance",
-        "who the operator is",
-        json!({"operator": "person:lisa"}),
-        &[],
-    )
-    .await;
+    s.names_lisa_the_operator().await;
     // On the instance's record and not on the operator's own page, which would
     // show the claim whether or not a message quoted it.
     let said = s.fact("topic:instance", WORDS).await;

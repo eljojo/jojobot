@@ -351,14 +351,7 @@ async fn a_push_that_never_goes_out_is_logged_naming_the_message_and_the_message
 async fn an_instance_with_no_push_service_pushes_nothing_and_logs_nothing_about_it() {
     let (logged, _guard) = capture_logs();
     let (story, s) = Story::begin_with_session("bot:otto").await;
-    s.add("person:lisa", "Lisa").await;
-    s.event_with(
-        "topic:instance",
-        "who the operator is",
-        json!({"operator": "person:lisa"}),
-        &[],
-    )
-    .await;
+    s.names_lisa_the_operator().await;
 
     s.call(
         "post_message",

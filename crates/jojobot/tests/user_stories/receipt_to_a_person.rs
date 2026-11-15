@@ -11,14 +11,7 @@ use super::dsl::Story;
 #[tokio::test]
 async fn the_writer_of_a_message_to_the_operator_reads_its_receipt_and_another_bot_does_not() {
     let (story, s) = Story::begin_with_session("bot:otto").await;
-    s.add("person:lisa", "Lisa").await;
-    s.event_with(
-        "topic:instance",
-        "who the operator is",
-        json!({"operator": "person:lisa"}),
-        &[],
-    )
-    .await;
+    s.names_lisa_the_operator().await;
     s.add("bot:sigma", "Sigma").await;
     s.add("bot:marge", "Marge").await;
     let sigma = story.as_bot("bot:sigma").await;

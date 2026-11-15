@@ -355,14 +355,7 @@ async fn a_bot_cannot_rename_merge_or_archive_a_voucher_nor_rename_into_one() {
 /// An instance whose operator is named, with the colleagues a story needs. The
 /// bot that sets it up is `otto`, who is never a party to a code.
 pub(super) async fn an_instance_with_an_operator(s: &super::dsl::Session) {
-    s.add("person:lisa", "Lisa").await;
-    s.event_with(
-        "topic:instance",
-        "who the operator is",
-        json!({"operator": "person:lisa"}),
-        &[],
-    )
-    .await;
+    s.names_lisa_the_operator().await;
     for bot in ["marge", "patty", "nelson"] {
         s.add(&format!("bot:{bot}"), bot).await;
     }
@@ -774,14 +767,7 @@ async fn no_code_is_made_without_an_operator_or_a_bot_and_no_bot_writes_a_challe
     s.list("challenge").await.number("/count", 0);
 
     // ── the operator is named; a bot that is nobody still gets no code ──────
-    s.add("person:lisa", "Lisa").await;
-    s.event_with(
-        "topic:instance",
-        "who the operator is",
-        json!({"operator": "person:lisa"}),
-        &[],
-    )
-    .await;
+    s.names_lisa_the_operator().await;
     story
         .refused_at_the_door("start_here", json!({"bot": "krusty", "ask_for_code": true}))
         .await

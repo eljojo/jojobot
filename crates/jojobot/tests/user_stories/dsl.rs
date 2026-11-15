@@ -2765,6 +2765,19 @@ impl Session {
         address_of(&body)
     }
 
+    /// **Name Lisa the operator of the instance**: her page, and the record on the
+    /// instance that says who the operator is.
+    pub async fn names_lisa_the_operator(&self) {
+        self.add("person:lisa", "Lisa").await;
+        self.event_with(
+            "topic:instance",
+            "who the operator is",
+            json!({"operator": "person:lisa"}),
+            &[],
+        )
+        .await;
+    }
+
     /// Leave work in another bot's box. The shape of a request: it writes
     /// without reading, so it takes no delivery and obliges nobody.
     pub async fn post(&self, mailbox: &str, subject: &str, body: &str) -> String {
