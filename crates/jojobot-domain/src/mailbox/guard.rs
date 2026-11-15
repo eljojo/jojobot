@@ -193,17 +193,34 @@ mod tests {
         MailboxName(n.to_string())
     }
 
-    /// **The golden case.** A typo must never mint a second box: `inbx` arriving
-    /// beside `inbox` comes back with the box the caller meant, and nothing is
-    /// written.
+    /// **What the guard says of a name, by the boxes already there.** A typo of an
+    /// existing box blocks with the box it meant, and a typo must never mint a second
+    /// box. The exact name blocks on the strongest reason. One name inside another is
+    /// flagged both ways round. A fragment below the floor says nothing, and a name
+    /// nothing resembles proceeds, even on an empty board.
     #[test]
-    fn a_typo_of_an_existing_box_is_blocked_with_the_box_it_meant() {
-        let existing = boxes(&["inbox", "errands"]);
-        let Decision::Block(candidates) = decide_create(&name("inbx"), &existing, None) else {
-            panic!("a near-miss name must block");
-        };
-        assert_eq!(candidates[0].name.as_str(), "inbox");
-        assert_eq!(candidates[0].reason, MatchReason::Near);
+    fn a_name_is_judged_against_the_boxes_already_there() {
+        // The name, the boxes already there (apart by commas), and the first
+        // candidate with its reason, or proceed.
+        let rows = [
+            ("inbx", "inbox,errands", "inbox near"),
+            ("inbox", "inbox", "inbox exact"),
+            ("work-inbox", "inbox", "inbox contains"),
+            ("inbox", "work-inbox", "work-inbox contains"),
+            ("ab", "ab-reports", "proceed"),
+            ("shipments", "inbox,errands", "proceed"),
+            ("inbox", "", "proceed"),
+        ];
+        for (incoming, there, wanted) in rows {
+            let there: Vec<&str> = there.split(',').filter(|n| !n.is_empty()).collect();
+            let got = match decide_create(&name(incoming), &boxes(&there), None) {
+                Decision::Proceed => "proceed".to_string(),
+                Decision::Block(found) => {
+                    format!("{} {:?}", found[0].name.as_str(), found[0].reason).to_lowercase()
+                }
+            };
+            assert_eq!(got, wanted, "{incoming} among {there:?}");
+        }
     }
 
     /// Creating a box that already exists is blocked on the strongest reason
@@ -215,7 +232,6 @@ mod tests {
         let Decision::Block(candidates) = decide_create(&name("inbox"), &existing, None) else {
             panic!("an existing name must block");
         };
-        assert_eq!(candidates[0].reason, MatchReason::Exact);
 
         let minted = override_token(&name("inbox"), &candidates);
         let Decision::Block(again) = decide_create(&name("inbox"), &existing, Some(&minted)) else {
@@ -310,48 +326,6 @@ mod tests {
             panic!("an exact name stays blocked: that box already exists");
         };
         assert_eq!(candidates[0].reason, MatchReason::Exact);
-    }
-
-    /// One name inside another is the other confusion: `inbox` and `work-inbox`
-    /// are not a typo apart, and a poster who means one routinely types the
-    /// other.
-    #[test]
-    fn a_name_that_contains_an_existing_one_is_flagged() {
-        let Decision::Block(candidates) =
-            decide_create(&name("work-inbox"), &boxes(&["inbox"]), None)
-        else {
-            panic!("a containing name must block");
-        };
-        assert_eq!(candidates[0].name.as_str(), "inbox");
-        assert_eq!(candidates[0].reason, MatchReason::Contains);
-
-        // …and read the other way round, which is the same confusion.
-        let Decision::Block(candidates) =
-            decide_create(&name("inbox"), &boxes(&["work-inbox"]), None)
-        else {
-            panic!("a contained name must block");
-        };
-        assert_eq!(candidates[0].reason, MatchReason::Contains);
-    }
-
-    /// Containment below the floor is noise, not signal — otherwise every short
-    /// name collides with half the board.
-    #[test]
-    fn containment_needs_enough_name_to_be_evidence() {
-        assert_eq!(
-            decide_create(&name("ab"), &boxes(&["ab-reports"]), None),
-            Decision::Proceed,
-            "a two-letter fragment inside a longer name says nothing"
-        );
-    }
-
-    #[test]
-    fn an_unrelated_name_proceeds() {
-        assert_eq!(
-            decide_create(&name("shipments"), &boxes(&["inbox", "errands"]), None),
-            Decision::Proceed
-        );
-        assert_eq!(decide_create(&name("inbox"), &[], None), Decision::Proceed);
     }
 
     /// A handle a write only NAMES must already exist. The exact box is the box
