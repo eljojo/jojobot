@@ -8,7 +8,7 @@
 
 use serde_json::{Value, json};
 
-use super::dsl::{Session, Story};
+use super::dsl::{Session, Story, type_steps};
 
 /// Greek letters, so no two handles are near-misses of one another.
 const LETTERS: [&str; 8] = [
@@ -25,28 +25,6 @@ async fn chore(s: &Session, n: usize, sets: Value) -> Value {
     )
     .await
     .json()
-}
-
-/// The type steps a receipt carries, as `(type, keys to add)`.
-fn type_steps(receipt: &Value) -> Vec<(String, Vec<String>)> {
-    receipt["unlocks"]["steps"]
-        .as_array()
-        .map(|steps| {
-            steps
-                .iter()
-                .filter_map(|step| {
-                    Some((
-                        step["type"].as_str()?.to_string(),
-                        step["add"]
-                            .as_array()?
-                            .iter()
-                            .filter_map(|key| key.as_str().map(str::to_string))
-                            .collect(),
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 async fn declare_the_type(s: &Session) {

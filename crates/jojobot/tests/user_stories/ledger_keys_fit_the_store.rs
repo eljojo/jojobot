@@ -9,29 +9,7 @@
 
 use serde_json::{Value, json};
 
-use super::dsl::{Session, Story};
-
-/// The type steps a receipt carries, as `(type, keys to add)`.
-fn type_steps(receipt: &Value) -> Vec<(String, Vec<String>)> {
-    receipt["unlocks"]["steps"]
-        .as_array()
-        .map(|steps| {
-            steps
-                .iter()
-                .filter_map(|step| {
-                    Some((
-                        step["type"].as_str()?.to_string(),
-                        step["add"]
-                            .as_array()?
-                            .iter()
-                            .filter_map(|key| key.as_str().map(str::to_string))
-                            .collect(),
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
+use super::dsl::{Session, Story, type_steps};
 
 /// A visit, made with only the keys named, so it lacks the rest of the type.
 async fn visit(s: &Session, handle: &str, name: &str, with: &[(&str, &str)]) -> Value {

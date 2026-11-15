@@ -3264,6 +3264,28 @@ fn argument_names(node: &Value, found: &mut Vec<String>) {
 }
 
 /// The address a write handed back, which is how a claim is edited later.
+/// The type steps a receipt carries, as `(type, keys to add)`.
+pub fn type_steps(receipt: &Value) -> Vec<(String, Vec<String>)> {
+    receipt["unlocks"]["steps"]
+        .as_array()
+        .map(|steps| {
+            steps
+                .iter()
+                .filter_map(|step| {
+                    Some((
+                        step["type"].as_str()?.to_string(),
+                        step["add"]
+                            .as_array()?
+                            .iter()
+                            .filter_map(|key| key.as_str().map(str::to_string))
+                            .collect(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn address_of(body: &Value) -> String {
     body["address"]
         .as_str()
