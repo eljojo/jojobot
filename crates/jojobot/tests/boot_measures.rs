@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::log_snapshot::take_snapshot;
-use jojobot_adapters::testing::{Scratch, free_port};
+use jojobot_adapters::testing::{Scratch, free_port, split_sql_statements};
 use jojobot_adapters::writer::Writer;
 use jojobot_adapters::writer_log::WriterLog;
 use jojobot_domain::log::{BatchId, LogStore, Position, SealedBatch};
@@ -437,37 +437,6 @@ impl Running {
             .unwrap_or_else(|| panic!("no event log boot line:\n{}", self.seen.join("\n")))
             .clone()
     }
-}
-
-/// **The statements of a dump, split at the semicolons that end one.** A
-/// semicolon inside a quoted value ends nothing. The same reader as the upgrade
-/// gate's.
-fn split_sql_statements(dump: &str) -> Vec<String> {
-    let mut statements = Vec::new();
-    let mut current = String::new();
-    let mut in_value = false;
-    let mut chars = dump.chars().peekable();
-    while let Some(c) = chars.next() {
-        current.push(c);
-        if in_value {
-            match c {
-                '\\' => current.extend(chars.next()),
-                '\'' if chars.peek() == Some(&'\'') => current.extend(chars.next()),
-                '\'' => in_value = false,
-                _ => {}
-            }
-        } else if c == '\'' {
-            in_value = true;
-        } else if c == ';' {
-            statements.push(std::mem::take(&mut current).trim().to_string());
-        }
-    }
-    let rest = current.trim();
-    if !rest.is_empty() {
-        statements.push(format!("{rest};"));
-    }
-    statements.retain(|statement| statement != ";");
-    statements
 }
 
 /// **A recorded store** replayed into a store of this case's own and then booted

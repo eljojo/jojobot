@@ -2,7 +2,7 @@
 //! No SQL dump is committed; a cache miss records the deployed tag again.
 #![cfg(not(jojobot_sandbox))]
 use jojobot_adapters::dolt::Dolt;
-use jojobot_adapters::testing::{Scratch, free_port};
+use jojobot_adapters::testing::{Scratch, free_port, split_sql_statements};
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
 use std::process::Stdio;
@@ -2608,38 +2608,6 @@ async fn a_held_value_the_oracle_cannot_join_fails_the_gate() {
         .await
         .expect("one thing loses its badge");
     assert_every_held_row_joined(store.pool(), &git_ref).await;
-}
-
-/// **The statements of a dump, split at the semicolons that end one.** A `CREATE
-/// TABLE` spans many lines, so the dump is read as a stream rather than by line.
-/// A semicolon inside a single-quoted value ends nothing: the reader follows the
-/// quotes, a backslash that escapes the next character and a doubled quote.
-fn split_sql_statements(dump: &str) -> Vec<String> {
-    let mut statements = Vec::new();
-    let mut current = String::new();
-    let mut in_value = false;
-    let mut chars = dump.chars().peekable();
-    while let Some(c) = chars.next() {
-        current.push(c);
-        if in_value {
-            match c {
-                '\\' => current.extend(chars.next()),
-                '\'' if chars.peek() == Some(&'\'') => current.extend(chars.next()),
-                '\'' => in_value = false,
-                _ => {}
-            }
-        } else if c == '\'' {
-            in_value = true;
-        } else if c == ';' {
-            statements.push(std::mem::take(&mut current).trim().to_string());
-        }
-    }
-    let rest = current.trim();
-    if !rest.is_empty() {
-        statements.push(format!("{rest};"));
-    }
-    statements.retain(|statement| statement != ";");
-    statements
 }
 
 /// **The splitter keeps a semicolon that sits inside a value.** A document's

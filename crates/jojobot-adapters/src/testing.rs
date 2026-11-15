@@ -724,6 +724,38 @@ pub async fn drop_receipt_fills(pool: &sqlx::MySqlPool) -> u64 {
     dropped
 }
 
+/// **The statements of a dump, split at the semicolons that end one.** A `CREATE
+/// TABLE` spans many lines, so the dump is read as a stream rather than by line.
+/// A semicolon inside a single-quoted value ends nothing: the reader follows the
+/// quotes, a backslash that escapes the next character and a doubled quote.
+pub fn split_sql_statements(dump: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut in_value = false;
+    let mut chars = dump.chars().peekable();
+    while let Some(c) = chars.next() {
+        current.push(c);
+        if in_value {
+            match c {
+                '\\' => current.extend(chars.next()),
+                '\'' if chars.peek() == Some(&'\'') => current.extend(chars.next()),
+                '\'' => in_value = false,
+                _ => {}
+            }
+        } else if c == '\'' {
+            in_value = true;
+        } else if c == ';' {
+            statements.push(std::mem::take(&mut current).trim().to_string());
+        }
+    }
+    let rest = current.trim();
+    if !rest.is_empty() {
+        statements.push(format!("{rest};"));
+    }
+    statements.retain(|statement| statement != ";");
+    statements
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
