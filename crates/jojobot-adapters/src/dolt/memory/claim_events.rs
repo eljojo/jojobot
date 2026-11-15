@@ -341,7 +341,7 @@ impl DoltMemory {
     }
 
     /// The thing a key was folded into, through every merge, or the key itself.
-    async fn final_survivor(
+    pub(super) async fn final_survivor(
         tx: &mut Transaction<'_, MySql>,
         key: &str,
     ) -> Result<String, MemoryError> {
@@ -428,7 +428,7 @@ impl DoltMemory {
 
     /// **Where a stored claim is served now**: the thing and the id a merge gave
     /// it, followed through every merge that moved it on.
-    async fn served_address(
+    pub(super) async fn served_address(
         tx: &mut Transaction<'_, MySql>,
         home: &str,
         local: &str,

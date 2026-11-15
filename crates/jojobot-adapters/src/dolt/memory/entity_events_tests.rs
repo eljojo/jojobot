@@ -1045,11 +1045,42 @@ async fn a_claim_revised_after_sixty_five_merges_lands_under_the_last_survivor()
             })
             .await
     };
-    assert!(
-        matches!(revised, Ok(Guarded::Written(_))),
-        "the revision lands: {revised:?}"
+    let Ok(Guarded::Written(revised)) = revised else {
+        panic!("the revision lands: {revised:?}");
+    };
+    // **The claim the State holds is served from the last survivor, under the label the
+    // revision names**: the walk of where a claim is served follows the chain of merges to its
+    // end, and the revision's claim body carries what it found. A walk that stopped early
+    // names a thing that was itself folded away.
+    let badge_of = |handle: EntityId| {
+        let store = world.store.clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT badge FROM entity WHERE id = ?")
+                .bind(handle.as_str())
+                .fetch_one(&store)
+                .await
+                .expect("the thing wears a badge")
+        }
+    };
+    let (first_key, last_key) = (
+        badge_of(things[0].clone()).await,
+        badge_of(things[MERGES].clone()).await,
     );
     let seam = world.writer.seam().expect("the seam opened");
+    let held_claim = seam.read_claims(|state| {
+        let record = state.record_at_origin(&jojobot_domain::log::ObjectId(first_key), "f1")?;
+        state
+            .record(&record)
+            .map(|held| (held.claim.home.clone(), held.claim.label.clone()))
+    });
+    assert_eq!(
+        held_claim,
+        Some((
+            jojobot_domain::log::ObjectId(last_key),
+            revised.id.as_str().to_string()
+        )),
+        "the revised claim is served from the last survivor under the label it names"
+    );
     if let Err(differs) = seam.read_claims(|state| state.held_fields_are_what_a_fold_makes()) {
         panic!("after a revision past {MERGES} merges: {differs}");
     }
@@ -1065,6 +1096,209 @@ async fn a_claim_revised_after_sixty_five_merges_lands_under_the_last_survivor()
         mood.as_deref(),
         Some("cross"),
         "the survivor holds the revised mood"
+    );
+    world.writer.drain().await;
+    world.server.stop().await;
+}
+
+/// **A loop among the merges is refused, and nothing is committed.** The walks that find the last
+/// survivor of a thing and where a claim is served follow the chain of merges to its end, whatever
+/// its length, so a chain that comes back on itself has no end: the write is refused with a
+/// storage error before it commits, whether the loop is a thing folded into itself, two things
+/// folded into each other, or a claim served from itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_loop_among_the_merges_refuses_the_write_and_commits_nothing() {
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{FactPatch, NewFact};
+    use std::collections::BTreeMap;
+
+    let mut world = world("merge-loop").await;
+    let memory = world.memory.clone();
+    let (alpha, beta) = (id("person:alpha"), id("thing:omega"));
+    for (handle, name) in [(&alpha, "Alpha"), (&beta, "Omega")] {
+        let (memory, new) = (
+            memory.clone(),
+            NewEntity::new(handle.clone(), name, "fixture"),
+        );
+        world
+            .job(async move { memory.add_entity(new).await })
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let held = {
+        let (memory, fact) = (
+            memory.clone(),
+            state(NewFact::about(alpha.clone(), "one claim", date(2026, 9, 1))),
+        );
+        world
+            .job(async move { memory.capture(fact).await })
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked")
+            .address()
+    };
+    let key_of = |handle: &EntityId| {
+        let (store, handle) = (world.store.clone(), handle.clone());
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT badge FROM entity WHERE id = ?")
+                .bind(handle.as_str())
+                .fetch_one(&store)
+                .await
+                .expect("the thing wears a badge")
+        }
+    };
+    let (alpha_key, beta_key) = (key_of(&alpha).await, key_of(&beta).await);
+    let rows = |store: sqlx::MySqlPool| async move {
+        let facts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact")
+            .fetch_one(&store)
+            .await
+            .expect("count");
+        let writes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_write")
+            .fetch_one(&store)
+            .await
+            .expect("count");
+        (facts, writes)
+    };
+    let loop_row = |store: sqlx::MySqlPool,
+                    merge_no: i64,
+                    ordinal: i64,
+                    folded: String,
+                    survivor: String,
+                    folded_id: String,
+                    survivor_id: String| async move {
+        sqlx::query(
+            "INSERT INTO merge_event \
+             (merge_no, ordinal, folded, survivor, merged_at, session, folded_id, survivor_id) \
+             VALUES (?, ?, ?, ?, '2026-09-03T00:00:00Z', NULL, ?, ?)",
+        )
+        .bind(merge_no)
+        .bind(ordinal)
+        .bind(folded)
+        .bind(survivor)
+        .bind(folded_id)
+        .bind(survivor_id)
+        .execute(&store)
+        .await
+        .expect("the loop is stored");
+    };
+    let write_on_alpha = |memory: DoltMemory, handle: EntityId| {
+        let fact = state(NewFact {
+            fields: BTreeMap::from([("mood".to_string(), "calm".to_string())]),
+            ..NewFact::about(handle, "a write the loop refuses", date(2026, 9, 4))
+        });
+        async move { memory.capture(fact).await }
+    };
+
+    // A thing folded into itself, and two things folded into each other.
+    for (name, pairs) in [
+        ("a self-loop", vec![(alpha_key.clone(), alpha_key.clone())]),
+        (
+            "a loop of two",
+            vec![
+                (alpha_key.clone(), beta_key.clone()),
+                (beta_key.clone(), alpha_key.clone()),
+            ],
+        ),
+    ] {
+        sqlx::query("DELETE FROM merge_event")
+            .execute(&world.store)
+            .await
+            .expect("the merges are cleared");
+        for (n, (folded, survivor)) in pairs.into_iter().enumerate() {
+            loop_row(
+                world.store.clone(),
+                900 + n as i64,
+                0,
+                folded,
+                survivor,
+                String::new(),
+                String::new(),
+            )
+            .await;
+        }
+        let before = rows(world.store.clone()).await;
+        let refused = {
+            let (memory, alpha) = (memory.clone(), alpha.clone());
+            world.job(write_on_alpha(memory, alpha)).await
+        };
+        assert!(
+            matches!(
+                &refused,
+                Err(jojobot_domain::memory::MemoryError::StoredDamage { .. }
+                    | jojobot_domain::memory::MemoryError::Store(_))
+            ),
+            "{name} refuses the write: {refused:?}"
+        );
+        // **The walk refuses on its own**, whatever answers first: it follows no loop.
+        let mut tx = world.store.begin().await.expect("a transaction");
+        let walked = DoltMemory::final_survivor(&mut tx, &alpha_key).await;
+        assert!(
+            matches!(&walked, Err(jojobot_domain::memory::MemoryError::Store(why)) if why.contains("loop")),
+            "{name}: the walk of the last survivor refuses: {walked:?}"
+        );
+        let _ = tx.rollback().await;
+        assert_eq!(
+            rows(world.store.clone()).await,
+            before,
+            "{name} committed nothing"
+        );
+    }
+
+    // A claim served from itself.
+    sqlx::query("DELETE FROM merge_event")
+        .execute(&world.store)
+        .await
+        .expect("the merges are cleared");
+    loop_row(
+        world.store.clone(),
+        950,
+        1,
+        alpha_key.clone(),
+        alpha_key.clone(),
+        held.local.as_str().to_string(),
+        held.local.as_str().to_string(),
+    )
+    .await;
+    let before = rows(world.store.clone()).await;
+    let refused = {
+        let (memory, held) = (memory.clone(), held.clone());
+        world
+            .job(async move {
+                memory
+                    .update_fact(
+                        &held,
+                        FactPatch {
+                            content: Some("a revision the loop refuses".into()),
+                            ..FactPatch::default()
+                        },
+                        &EntityId(jojobot_domain::memory::ASSISTANT.into()),
+                    )
+                    .await
+            })
+            .await
+    };
+    assert!(
+        matches!(
+            &refused,
+            Err(jojobot_domain::memory::MemoryError::StoredDamage { .. }
+                | jojobot_domain::memory::MemoryError::Store(_))
+        ),
+        "a claim served from itself refuses the revision: {refused:?}"
+    );
+    let mut tx = world.store.begin().await.expect("a transaction");
+    let walked = DoltMemory::served_address(&mut tx, &alpha_key, held.local.as_str()).await;
+    assert!(
+        matches!(&walked, Err(jojobot_domain::memory::MemoryError::Store(why)) if why.contains("loop")),
+        "the walk of the address refuses: {walked:?}"
+    );
+    let _ = tx.rollback().await;
+    assert_eq!(
+        rows(world.store.clone()).await,
+        before,
+        "the revision committed nothing"
     );
     world.writer.drain().await;
     world.server.stop().await;
