@@ -12,7 +12,7 @@
 
 use serde_json::json;
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
 
 /// The handles an answer lists, in order.
 fn listed(answer: &super::dsl::Answer) -> Vec<String> {
@@ -36,10 +36,9 @@ fn work_under(slug: &str, name: &str, parent: &str, sets: serde_json::Value) -> 
            "source": "user-named", "sets": sets})
 }
 
-#[tokio::test]
-async fn what_can_be_started_and_what_stops_the_rest() {
-    let (_story, s) = Story::begin_with_session("bot:gamma").await;
-
+/// The first three pieces of work: the slab is done, the lumber is being ordered, and
+/// the walls wait on the slab.
+async fn the_slab_the_lumber_and_the_walls(s: &Session) {
     s.call(
         "add_entity",
         work("pour-the-slab", "Pour the slab", json!({"status": "done"})),
@@ -63,6 +62,13 @@ async fn what_can_be_started_and_what_stops_the_rest() {
         ),
     )
     .await;
+}
+
+#[tokio::test]
+async fn what_can_be_started_and_what_stops_the_rest() {
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
+
+    the_slab_the_lumber_and_the_walls(&s).await;
     s.call(
         "add_entity",
         work(
@@ -208,29 +214,7 @@ async fn the_whole_plan_and_what_stops_each_piece_come_in_one_call() {
 #[tokio::test]
 async fn the_ready_answer_says_where_narrows_it_and_an_ordinary_read_does_not() {
     let (_story, s) = Story::begin_with_session("bot:gamma").await;
-    s.call(
-        "add_entity",
-        work("pour-the-slab", "Pour the slab", json!({"status": "done"})),
-    )
-    .await;
-    s.call(
-        "add_entity",
-        work(
-            "order-the-lumber",
-            "Order the lumber",
-            json!({"status": "now"}),
-        ),
-    )
-    .await;
-    s.call(
-        "add_entity",
-        work(
-            "frame-the-walls",
-            "Frame the walls",
-            json!({"status": "next", "depends_on": "work:pour-the-slab"}),
-        ),
-    )
-    .await;
+    the_slab_the_lumber_and_the_walls(&s).await;
 
     // The positive: the ready answer carries the line, and the work in progress
     // is in the list it sits beside.
