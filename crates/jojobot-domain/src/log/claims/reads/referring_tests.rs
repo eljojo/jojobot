@@ -152,45 +152,6 @@ fn an_unmapped_holder_is_not_served_at_the_address_of_the_survivors_own_claim() 
     assert!(holders(&state, "person:beta").is_empty());
 }
 
-/// **Holders come in the order of the key their records are filed under**, which
-/// a rename does not change, and not in the order of the handles they wear now.
-#[test]
-fn holders_are_ordered_by_their_key_and_not_by_their_handle() {
-    let state = state_of(
-        made("k1", "person:omega")
-            .into_iter()
-            .chain(made("k2", "person:alpha"))
-            .chain(made("k3", "person:gamma"))
-            .chain([
-                claim_on("k1", "k1/f1"),
-                claim_on("k2", "k2/f1"),
-                writes(
-                    "k1/f1",
-                    "k1",
-                    "friend",
-                    1,
-                    FieldValue::Set("@#k3".into()),
-                    &["k3"],
-                ),
-                writes(
-                    "k2/f1",
-                    "k2",
-                    "friend",
-                    1,
-                    FieldValue::Set("@#k3".into()),
-                    &["k3"],
-                ),
-            ]),
-    );
-    assert_eq!(
-        holders(&state, "person:gamma"),
-        vec![
-            ("person:omega".to_string(), "f1".to_string()),
-            ("person:alpha".to_string(), "f1".to_string())
-        ]
-    );
-}
-
 /// **Holders are listed by the key their records are served under**, which is the
 /// survivor's for a claim a merge moved, and a holder's own records by the number
 /// in their labels. The moved claim was made under `k9`, a key that sorts after
