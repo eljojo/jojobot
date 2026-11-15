@@ -16,10 +16,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── the emergency reserve, on Gamma's room ───────────────────────────────
-    let s = story.session().await;
 
     s.add("bot:gamma", "Gamma").await;
     // Gamma cannot set this on itself — otto is asking, about a different

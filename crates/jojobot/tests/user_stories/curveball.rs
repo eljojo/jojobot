@@ -22,10 +22,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_curveball_collides_with_the_week() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · the week as it stands ───────────────────────────────────
-    let s = story.session().await;
 
     s.add("event:krusty-fest", "Krusty Fest").await;
     let krusty_fest = s

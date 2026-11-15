@@ -160,10 +160,9 @@ async fn the_history_of_a_runs_key_says_it_changed_and_never_what_it_changed_to(
 /// shows the moment it did.
 #[tokio::test]
 async fn a_run_never_handed_its_charter_says_never_told_and_one_that_read_it_says_when() {
-    let story = Story::begin("bot:otto").await;
+    let (story, earlier) = Story::begin_with_session("bot:otto").await;
     // A boot that has no run to offer back ships the charter. One that answers
     // the offer with `new` ships none, so this run is handed it by no call.
-    let earlier = story.session().await;
     earlier
         .journal("a run left open, so the next boot is offered it")
         .await;

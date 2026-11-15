@@ -21,10 +21,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn reading_the_thing_says_who_holds_what_gets_them_in() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── months earlier · somebody says what they hold, and it is written ────
-    let s = story.session().await;
     s.add("event:krusty-fest", "The Krusty Fest").await;
     s.add("person:milhouse", "Milhouse").await;
     s.add("person:bart", "Bart").await;

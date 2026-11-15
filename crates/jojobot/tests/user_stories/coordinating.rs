@@ -11,10 +11,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_coordinator_runs_the_build_and_is_asked_why() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · the board the work happens on ───────────────────────────
-    let s = story.session().await;
 
     s.add("project:jojobot-server", "The Server Build").await;
     // The implementer is a bot like any other, and its box opens with it —

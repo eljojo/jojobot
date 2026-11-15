@@ -24,10 +24,8 @@ const LOST: &str = "sk-zzzzzzzzzzzzzzzzzzzzzzzzzz";
 
 #[tokio::test]
 async fn a_write_on_a_handle_the_server_no_longer_holds_is_told_where_to_get_another() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── friday · a session doing ordinary work ──────────────────────────────
-    let s = story.session().await;
     s.add("person:milhouse", "Milhouse").await;
     s.fact("person:milhouse", "allergic to shellfish").await;
 

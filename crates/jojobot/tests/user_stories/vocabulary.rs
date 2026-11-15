@@ -440,10 +440,8 @@ async fn the_first_empty_read_of_a_shipped_type_says_to_capture_under_its_keys_a
     // whether to write what it just worked out. The note rides that one answer,
     // once, and never on an answer that held something or a type the caller
     // declared.
-    let story = Story::begin("bot:gamma").await;
-
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     // ── a session that reads before it writes ───────────────────────────────
-    let s = story.session().await;
     let first = s
         .call("recall", json!({ "answers_type": "trip" }))
         .await
@@ -545,10 +543,8 @@ async fn an_empty_search_for_a_shipped_type_names_its_keys_and_shares_the_teachi
     // **The same gap on the other front door.** A session that searched twice
     // for a trip and found nothing wrote its own start and end keys, because the
     // empty search named none of the shipped ones.
-    let story = Story::begin("bot:gamma").await;
-
+    let (story, a) = Story::begin_with_session("bot:gamma").await;
     // ── search first: the answer names the keys and carries the note ────────
-    let a = story.session().await;
     let searched = a
         .call("search", json!({ "answers_type": "trip" }))
         .await
@@ -659,10 +655,8 @@ async fn an_empty_read_narrowed_a_second_way_names_the_keys_but_teaches_nothing_
     // The keys are still true and still ride. The teaching claims no record
     // answers the type, so it waits for a read that asks nothing else, and the
     // narrowed read leaves its ledger row for that one.
-    let story = Story::begin("bot:gamma").await;
-
+    let (story, a) = Story::begin_with_session("bot:gamma").await;
     // ── recall ──────────────────────────────────────────────────────────────
-    let a = story.session().await;
     let narrowed = a
         .call(
             "recall",

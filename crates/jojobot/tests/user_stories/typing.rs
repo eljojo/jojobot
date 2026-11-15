@@ -30,10 +30,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_type_declared_today_finds_records_written_before_it() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── over the months · services recorded, with no type in mind ───────────
-    let s = story.session().await;
     s.add("thing:gravel-bike", "The Gravel Bike").await;
     s.add("thing:road-bike", "The Road Bike").await;
     s.add("thing:floor-pump", "The Floor Pump").await;

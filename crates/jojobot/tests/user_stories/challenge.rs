@@ -15,10 +15,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn where_did_you_get_that() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · research, and a claim nobody actually said ──────────────
-    let s = story.session().await;
 
     s.add("place:moes", "Moe's").await;
 

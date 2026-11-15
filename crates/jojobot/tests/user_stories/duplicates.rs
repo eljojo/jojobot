@@ -15,10 +15,8 @@ use serde_json::json;
 
 #[tokio::test]
 async fn one_thing_filed_twice_can_be_put_back_together() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · the same person, filed twice ────────────────────────────
-    let s = story.session().await;
 
     s.add("person:nelson", "Nelson").await;
     s.fact("person:nelson", "plays the bass").await;

@@ -26,10 +26,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_claim_is_settled_by_reading_it_at_its_address() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── the rule is written as a dated claim on the bot, by the operator ────
-    let s = story.session().await;
     let rule = s
         .fact(
             "bot:otto",

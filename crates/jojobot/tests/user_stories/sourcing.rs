@@ -19,10 +19,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_claim_names_where_it_came_from() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · a claim from a source ───────────────────────────────────
-    let s = story.session().await;
 
     s.add("place:daredevil-gorge", "Daredevil Gorge").await;
 

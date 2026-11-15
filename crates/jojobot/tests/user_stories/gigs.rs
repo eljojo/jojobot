@@ -25,10 +25,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_schema_that_is_not_a_kind_finds_the_gigs_among_the_events() {
-    let story = Story::begin("bot:otto").await;
-
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     // ── over the months · things happen, and get written down as events ─────
-    let s = story.session().await;
     s.add("event:moe-open-mic", "Open Mic Night at Moe's").await;
     s.add("event:lisa-quartet-night", "The Quartet at the School Hall")
         .await;

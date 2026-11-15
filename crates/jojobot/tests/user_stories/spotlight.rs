@@ -15,10 +15,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_bot_finds_its_own_past_work_and_not_another_bots() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── last week · a run that wrote something down ─────────────────────────
-    let s = story.session().await;
     s.add("thing:gravel-bike", "The Gravel Bike").await;
     // The colleague, stood up from inside a session: the door mints no
     // identity, so somebody has to create one before it can be booted.

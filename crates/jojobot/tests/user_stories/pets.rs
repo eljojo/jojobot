@@ -31,10 +31,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
-    let story = Story::begin("bot:otto").await;
-
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     // ── the records, written with nobody's type in mind ─────────────────────
-    let s = story.session().await;
     s.add("person:bart", "Bart").await;
     s.add("pet:santas-little-helper", "Santa's Little Helper")
         .await;

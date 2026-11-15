@@ -13,10 +13,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── earlier · something true before this machine ever existed ───────────
-    let s = story.session().await;
     s.add("person:ned-flanders", "Ned").await;
     s.fact("person:ned-flanders", "left-handed").await;
     s.wrap("recorded, then the session ended").await;

@@ -20,10 +20,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn nothing_on_the_surface_goes_unexercised() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── an entity carrying the fields nobody's story needed ─────────────────
-    let s = story.session().await;
 
     // `crm` cross-links the entity to wherever the task layer addresses it, and
     // `boot` marks it as part of the core an assistant loads every session

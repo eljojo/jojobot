@@ -20,10 +20,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_session_that_closed_properly_is_what_the_next_one_is_handed() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     // ── ① a sitting that does its work and closes properly ──────────────────
-    let first = story.session().await;
     first.add("person:milhouse", "Milhouse").await;
     first
         .fact("person:milhouse", "keeps the council's spare barriers")

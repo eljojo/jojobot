@@ -15,10 +15,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn an_investigation_keeps_what_it_ruled_out() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · the fleet, and what an earlier run believed ─────────────
-    let s = story.session().await;
 
     // **A machine is a kind of its own**, so the four are the same sort of
     // object rather than four possessions filed beside the bike pump. The kind

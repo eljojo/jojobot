@@ -12,10 +12,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_sitting_checks_its_own_history_before_starting_something_new() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     // ── ① a first piece of work, wrapped ─────────────────────────────────────
-    let first = story.session().await;
     first
         .call(
             "journal",

@@ -20,10 +20,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn an_unsourced_candidate_is_visibly_unsourced() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · the ask, and the procedure that covers it ───────────────
-    let s = story.session().await;
 
     // The method ships with the binary. A recommendation the operator will act
     // on is what the `recommend` skill is for, and it is fetched by name

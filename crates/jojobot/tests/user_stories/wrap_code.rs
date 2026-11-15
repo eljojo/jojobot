@@ -314,9 +314,8 @@ async fn using_the_code_abandons_no_other_run_of_the_bot() {
 
 #[tokio::test]
 async fn answering_new_to_the_offer_starts_a_newer_run_and_ends_the_window() {
-    let story = Story::begin("bot:otto").await;
+    let (story, left_open) = Story::begin_with_session("bot:otto").await;
     // A run left open on purpose, so every later boot is handed the offer.
-    let left_open = story.session().await;
     working_on(&left_open, "the run left open", "left open on purpose").await;
 
     // A second run wraps and is handed a code.
@@ -444,10 +443,8 @@ async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
 /// the positive: a wrap that nobody reopened hands over its story.
 #[tokio::test]
 async fn the_handover_after_a_reopened_run_is_the_closing_story() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, plain) = Story::begin_with_session("bot:otto").await;
     // A wrap nobody reopens: the handover is its story.
-    let plain = story.session().await;
     working_on(&plain, "a run nobody reopens", "set out").await;
     plain
         .call("wrap_session", json!({"story": "plain story: all done"}))

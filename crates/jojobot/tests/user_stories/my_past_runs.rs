@@ -40,10 +40,8 @@ fn runs_found(answered: &Value) -> &Vec<Value> {
 
 #[tokio::test]
 async fn a_bot_finds_its_own_past_work_and_is_told_a_colleagues_exists() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     // ── ① otto does some work ───────────────────────────────────────────────
-    let otto = story.session().await;
     otto.add("bot:epsilon", "Epsilon").await;
     otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;

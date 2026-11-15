@@ -20,10 +20,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · the two places ──────────────────────────────────────────
-    let s = story.session().await;
 
     s.add("place:leftorium", "The Leftorium Diner").await;
     s.add("place:moes", "Moe's").await;
@@ -240,10 +238,8 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
 /// inference afterwards: the label is what makes the next reader careful.
 #[tokio::test]
 async fn an_inference_settles_only_with_a_receipt_and_stays_an_inference() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · a guess about a place ───────────────────────────────────
-    let s = story.session().await;
     s.add("place:moes", "Moe's").await;
     let guess = s.guess("place:moes", "has two back doors").await;
     s.wrap("recorded the guess as a guess").await;

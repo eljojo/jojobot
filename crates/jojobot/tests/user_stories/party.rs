@@ -14,10 +14,8 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn throwing_a_birthday_party() {
-    let story = Story::begin("bot:otto").await;
-
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     // ── session 1 · the idea ────────────────────────────────────────────────
-    let s = story.session().await;
 
     s.add("person:krusty", "Krusty").await;
     s.add("event:birthday-party", "Krusty's Birthday").await;
