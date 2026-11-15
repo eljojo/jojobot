@@ -2821,13 +2821,25 @@ impl Answer {
             .unwrap_or_else(|e| panic!("the {} is not json: {e}: {}", self.what, self.body))
     }
 
-    /// **The ids of the objects a read listed, in the order it listed them.**
+    /// **The ids of the objects a read listed, in the order it listed them.** An object
+    /// with no id that is text fails the story: a list that skipped it would satisfy an
+    /// empty list over malformed objects, and an exact list beside an extra one.
     pub fn ids(&self) -> Vec<String> {
         self.json()["objects"]
             .as_array()
             .unwrap_or_else(|| panic!("a recall answers with objects: {}", self.raw()))
             .iter()
-            .filter_map(|object| object["id"].as_str().map(str::to_string))
+            .map(|object| {
+                object["id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "an object of the answer has no id: {object}: {}",
+                            self.raw()
+                        )
+                    })
+            })
             .collect()
     }
 
@@ -3116,6 +3128,31 @@ fn a_count_matched_as_text_is_satisfied_by_a_bigger_count() {
         Some(30),
         "the structural read sees thirty where the needle saw three",
     );
+}
+
+/// **`ids` lists every object of the answer, in order and with repeats, and refuses one
+/// whose id it cannot read.** A list assertion over a read that skipped such an object
+/// would pass over a malformed answer: an empty list over objects with no id, an exact
+/// list beside one extra object.
+#[test]
+fn ids_lists_each_object_in_order_and_refuses_an_object_without_a_readable_id() {
+    let answer = |body: &str| Answer {
+        what: "answer".into(),
+        body: body.into(),
+    };
+    assert_eq!(
+        answer("{\"objects\":[{\"id\":\"b\"},{\"id\":\"a\"},{\"id\":\"b\"}]}").ids(),
+        ["b", "a", "b"]
+    );
+    assert!(answer("{\"objects\":[]}").ids().is_empty());
+    for malformed in [
+        "{\"objects\":[{\"id\":\"a\"},{\"name\":\"no id\"}]}",
+        "{\"objects\":[{\"id\":\"a\"},{\"id\":7}]}",
+        "{\"objects\":[{\"id\":\"a\"},{\"id\":null}]}",
+    ] {
+        let refused = std::panic::catch_unwind(|| answer(malformed).ids());
+        assert!(refused.is_err(), "{malformed} was read as a list of ids");
+    }
 }
 
 /// How long a story waits for one verb before it fails the case.
