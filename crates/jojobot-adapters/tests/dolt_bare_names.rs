@@ -2,10 +2,9 @@
 //! store: no link row is written for it, on a capture or on an edit.
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::types::{DeclaredType, Field};
@@ -35,11 +34,7 @@ async fn link_rows(pool: &sqlx::MySqlPool) -> Vec<(String, String, i64, String)>
 
 #[tokio::test]
 async fn a_bare_line_name_is_refused_without_a_dangling_link() {
-    let scratch = Scratch::new("bare-line-name");
-    let mut store = Dolt::start(&scratch.0, free_port()).await.expect("store");
-    let pool = migrated_database(&store, "bare_line_name")
-        .await
-        .expect("database");
+    let pool = shared_database("bare_line_name").await.expect("database");
     migrate::run(&pool).await.expect("schema");
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
@@ -111,16 +106,11 @@ async fn a_bare_line_name_is_refused_without_a_dangling_link() {
         link_rows(&pool).await,
         vec![(badge, "line".into(), 1, bot_badge)]
     );
-    store.stop().await;
 }
 
 #[tokio::test]
 async fn a_bare_line_name_is_refused_on_update_without_a_dangling_link() {
-    let scratch = Scratch::new("bare-line-update");
-    let mut store = Dolt::start(&scratch.0, free_port()).await.expect("store");
-    let pool = migrated_database(&store, "bare_line_update")
-        .await
-        .expect("database");
+    let pool = shared_database("bare_line_update").await.expect("database");
     migrate::run(&pool).await.expect("schema");
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
@@ -226,5 +216,4 @@ async fn a_bare_line_name_is_refused_on_update_without_a_dangling_link() {
             (badge, "line".into(), 2, next_badge)
         ]
     );
-    store.stop().await;
 }
