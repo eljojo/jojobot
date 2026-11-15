@@ -76,6 +76,48 @@ macro_rules! scenario {
                 }
             }
 
+            /// Answers the one method it writes; a call to any other is the test's own bug
+            /// and panics with the method's name.
+            pub struct Names;
+
+            #[jojobot_forward::forward($callback, unimplemented = "this double only names", required_only)]
+            impl Port for Names {
+                async fn name(&self) -> String {
+                    "the names double's own".into()
+                }
+            }
+
+            /// The text a panic carried, from the task that made it.
+            async fn the_panic_of<T: Send + 'static>(
+                call: impl std::future::Future<Output = T> + Send + 'static,
+            ) -> String {
+                let error = tokio::spawn(call).await.err().expect("the call panics");
+                let payload = error.into_panic();
+                match payload.downcast::<String>() {
+                    Ok(text) => *text,
+                    Err(payload) => payload
+                        .downcast::<&str>()
+                        .map(|text| text.to_string())
+                        .expect("a text"),
+                }
+            }
+
+            #[tokio::test]
+            async fn an_unimplemented_double_answers_what_it_writes_and_panics_naming_the_rest() {
+                assert_eq!(Names.name().await, "the names double's own");
+                let said = the_panic_of(async { Names.count(1).await }).await;
+                assert!(said.contains("this double only names"), "{said}");
+                assert!(said.contains("count"), "the method is named: {said}");
+                assert_eq!(Names.label(), "the default", "a defaulted method keeps its default");
+                $(
+                    let said = the_panic_of(async { Names.$extra().await }).await;
+                    assert!(
+                        said.contains(stringify!($extra)),
+                        "a method the port gained panics naming it, with no edit to the double: {said}"
+                    );
+                )?
+            }
+
             #[tokio::test]
             async fn a_double_changes_what_it_states_and_forwards_the_rest() {
                 let loud = Loud { inner: Arc::new(Real) };

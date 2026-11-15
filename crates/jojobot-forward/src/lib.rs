@@ -19,6 +19,9 @@
 //!   method is async. The double wraps a store and changes some methods.
 //! - `down = <expr>`: `Err(<expr>)`, for each method that returns a `Result`. The
 //!   double answers nothing, and says with one error how it fails.
+//! - `unimplemented = "<why>"`: `unimplemented!` naming the method and the reason, for
+//!   each method. The double answers only what it writes, and a call to any other is
+//!   the test's own bug.
 //!
 //! `required_only` leaves each method that has a default body to that body, and
 //! `also(<method>, ...)` names the defaulted methods that are added anyway. A
@@ -140,6 +143,8 @@ enum Mode {
     Via(Member),
     /// `Err(<expr>)` for each method that returns a `Result`.
     Down(Expr),
+    /// `unimplemented!` for each method, naming it: a call to one is the test's own bug.
+    Unimplemented(LitStr),
 }
 
 /// **Hand a double's impl to a port's forwarding macro.** Written on the impl:
@@ -167,6 +172,9 @@ pub fn forward(args: TokenStream, item: TokenStream) -> TokenStream {
                 } else if option == "down" {
                     input.parse::<Token![=]>()?;
                     mode = Some(Mode::Down(input.parse()?));
+                } else if option == "unimplemented" {
+                    input.parse::<Token![=]>()?;
+                    mode = Some(Mode::Unimplemented(input.parse()?));
                 } else if option == "required_only" {
                     required_only = true;
                 } else if option == "also" {
@@ -179,13 +187,15 @@ pub fn forward(args: TokenStream, item: TokenStream) -> TokenStream {
                 } else {
                     return Err(syn::Error::new(
                         option.span(),
-                        "expected `via`, `down`, `required_only` or `also(<method>, ...)`",
+                        "expected `via`, `down`, `unimplemented`, `required_only` or `also(<method>, ...)`",
                     ));
                 }
             }
             Ok(Self {
                 callback,
-                mode: mode.ok_or_else(|| input.error("`via = <field>` or `down = <error>`"))?,
+                mode: mode.ok_or_else(|| {
+                    input.error("`via = <field>`, `down = <error>` or `unimplemented = \"<why>\"`")
+                })?,
                 required_only,
                 also,
             })
@@ -201,6 +211,7 @@ pub fn forward(args: TokenStream, item: TokenStream) -> TokenStream {
     let mode = match mode {
         Mode::Via(field) => quote! { via #field },
         Mode::Down(error) => quote! { down ( #error ) },
+        Mode::Unimplemented(why) => quote! { unimplemented ( #why ) },
     };
     quote! {
         #callback ! {
@@ -305,6 +316,10 @@ impl Parse for Finish {
         let how: Ident = input.parse()?;
         let mode = if how == "via" {
             Mode::Via(input.parse()?)
+        } else if how == "unimplemented" {
+            let why;
+            syn::parenthesized!(why in input);
+            Mode::Unimplemented(why.parse()?)
         } else {
             let error;
             syn::parenthesized!(error in input);
@@ -449,6 +464,15 @@ pub fn __finish(input: TokenStream) -> TokenStream {
                     }
                 }
                 quote! { { Err(#error) } }
+            }
+            Mode::Unimplemented(why) => {
+                for input in sig.inputs.iter_mut() {
+                    if let FnArg::Typed(typed) = input {
+                        *typed.pat = syn::parse_quote!(_);
+                    }
+                }
+                let said = format!("{}: `{name}` is not written by this double", why.value());
+                quote! { { unimplemented!(#said) } }
             }
         };
         let forwarded: ImplItemFn = syn::parse_quote! { #sig #body };
