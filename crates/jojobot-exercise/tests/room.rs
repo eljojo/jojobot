@@ -457,3 +457,44 @@ async fn a_room_with_no_binary_is_refused_rather_than_retried() {
          makes the same answer slower: {refused}",
     );
 }
+
+/// **A room that states a day stamps on that day, whatever day the real clock is
+/// on.** Every room opens over a copy of one template store, and the server
+/// continues its stated clock after the newest stamp the store holds from the
+/// stated day on. A template stamped on the real clock holds a stamp from after
+/// every day that has passed, so a stated clock that continued after it would
+/// stamp on the real day: the stamp a needle can meet. The day here is long past,
+/// so the case fails on every real day and not only in some hours of it.
+#[tokio::test]
+async fn a_room_stating_a_past_day_stamps_what_it_writes_on_that_day() {
+    let (_room, surface) = Room::open_with_client_stating(
+        &server_binary().expect("a jojobot binary to run"),
+        "2020-01-01",
+    )
+    .await
+    .expect("a room");
+    let booted = starting_identity(&surface)
+        .await
+        .expect("the shipped identity boots");
+    let sid = booted["session"]["sid"]
+        .as_str()
+        .expect("a session handle")
+        .to_string();
+    surface
+        .must(
+            "add_entity",
+            serde_json::json!({"kind": "thing", "handle": "floor-pump", "name": "The Floor Pump",
+                   "source": "user-named", "sid": sid}),
+        )
+        .await
+        .expect("the thing is made");
+    let answer = surface
+        .call("recall", serde_json::json!({"subject": "thing:floor-pump"}))
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&answer).unwrap_or_else(|e| panic!("a recall answers JSON: {e}"));
+    assert_eq!(
+        parsed["objects"][0]["as_of"], "2020-01-01",
+        "the room stamped on another day than the one it states: {answer}"
+    );
+}

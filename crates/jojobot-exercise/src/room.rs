@@ -752,6 +752,13 @@ async fn copy_from(
     Ok((acquired, copying.elapsed()))
 }
 
+/// **The day the template store is stamped on: the first day there is.** A room
+/// that states a day continues its clock after the newest stamp its store holds
+/// from that day on, so a template stamped on the real clock would pull every
+/// stated clock up to the real moment. A stamp from before a room's day leaves
+/// that room's clock where it states it, and no room states a day before this one.
+const TEMPLATE_DAY: &str = "1970-01-01";
+
 /// **The one spawn that migrates for real.** A bare room, on an empty
 /// directory, exactly what every room used to be before templates existed
 /// — brought up, waited on until it answers (which is the schema, the
@@ -763,7 +770,7 @@ async fn build_template(binary: &Path) -> Result<PathBuf> {
     let room = Room::spawn_bare(
         binary,
         &DeathSignal::Skip,
-        None,
+        Some(TEMPLATE_DAY),
         dir,
         crate::room_timing::Opening::begun(),
     )
