@@ -717,7 +717,10 @@ fn a_probe_run_where_no_test_ran_is_not_called_blind() {
     let marker = std::env::temp_dir().join("sabotage-case-probe-empty-marker");
     let _ = fs::remove_file(&marker);
     let script = "if [ -e \"$1\" ]; then cat \"$3\"; else touch \"$1\"; cat \"$2\"; fi";
-    let (said, code) = sabotage(
+    // A state directory of its own: the records of the cases that run beside this one are
+    // not this run's to read.
+    let (said, code) = sabotage_with_state(
+        &private_state("probe-empty"),
         &path,
         "41",
         "42",
@@ -750,6 +753,48 @@ fn a_probe_run_where_no_test_ran_is_not_called_blind() {
         held,
         "the file did not come back after the probe",
     );
+}
+
+/// 🚨 **A record that vanishes while the tool reads the others is a run that ended.**
+///
+/// Every run keeps a record of itself in the state directory and removes it when it
+/// ends, and a second run lists the directory and then reads each record. A record
+/// listed and gone by the time it is read belongs to a run that finished in between;
+/// the tool refused as though the record were damaged, so two sabotages that overlapped
+/// refused each other at random (the dangling link stands for the vanished file).
+/// **A record that is there and cannot be read is still refused**: whose line it holds
+/// is unknown, and that mutation may be outstanding.
+#[test]
+fn a_record_that_vanished_between_the_listing_and_the_read_is_not_a_refusal() {
+    let held = "the answer is 41\nand a second line\n";
+    let state = private_state("vanished-record");
+    fs::create_dir_all(&state).expect("the case makes the state directory");
+    std::os::unix::fs::symlink(
+        state.join("a-record-that-is-gone"),
+        state.join("run-sabotage-vanished"),
+    )
+    .expect("the case lists a record that is gone");
+    let path = a_file("vanished-record", held);
+    let (said, code) = sabotage_with_state(&state, &path, "41", "42", &["true"]);
+    assert_eq!(code, Some(0), "a vanished record refused the run: {said}");
+    assert!(
+        said.contains("VERDICT GREEN") && !said.contains("REFUSED"),
+        "{said}"
+    );
+    assert_eq!(fs::read_to_string(&path).expect("the file is there"), held);
+
+    // The control: a record that is there and is not one of the tool's is still refused.
+    let state = private_state("unreadable-record");
+    fs::create_dir_all(&state).expect("the case makes the state directory");
+    fs::write(state.join("run-sabotage-damaged"), "not a record").expect("the case writes one");
+    let path = a_file("unreadable-record", held);
+    let (said, code) = sabotage_with_state(&state, &path, "41", "42", &["true"]);
+    assert_eq!(code, Some(2), "a damaged record was not refused: {said}");
+    assert!(
+        said.contains("cannot be read, so whose line it holds is unknown"),
+        "{said}"
+    );
+    assert_eq!(fs::read_to_string(&path).expect("the file is there"), held);
 }
 
 /// **A checkout of its own, holding a copy of the tool.** The tool names the

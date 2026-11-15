@@ -140,6 +140,11 @@ def _records():
             checkout, pid, target, kept, *later = fields
             old, start = map(json.loads, later) if later else (None, None)
             found.append((record, checkout, int(pid), target, kept, old, start))
+        except FileNotFoundError:
+            # **Listed and gone by the time it is read**: its run ended in between and
+            # removed its own record, so there is no mutation left to name. Two runs that
+            # overlapped refused each other at random when this counted as damage.
+            continue
         except (OSError, ValueError):
             if fields[0] != CHECKOUT and os.path.isabs(fields[0]):
                 continue
