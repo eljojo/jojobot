@@ -324,6 +324,19 @@ async fn a_warm_boot_loads_the_claims_from_the_snapshot_and_replays_only_the_tai
     seeding.drain().await;
     drop(seeding);
 
+    // **The State an independent replay of the whole log builds**, positions included, taken
+    // before the booting writer opens: the log admits one writer at a time.
+    let independent = {
+        let reading = Writer::default();
+        let log = WriterLog::open(store.clone(), reading.clone())
+            .await
+            .unwrap();
+        let state = crate::claims_log::replayed_from(&log).await;
+        drop(log);
+        reading.drain().await;
+        state
+    };
+
     let writer = Writer::default();
     let pool = crate::writer::sql::Pool::from(store.clone());
     let seam = {
@@ -363,6 +376,14 @@ async fn a_warm_boot_loads_the_claims_from_the_snapshot_and_replays_only_the_tai
         }),
         (Some(homer()), Some(ObjectId("k2".into()))),
         "the claim the snapshot held and the claim the tail added both resolve"
+    );
+    // **The booted State is the State a full replay builds**, the position every entry keeps of
+    // its event included: a boot replay that gave an event no place would hold the snapshot's
+    // part at the default.
+    assert_eq!(
+        seam.read_claims(Clone::clone),
+        independent,
+        "the State booted from the snapshot and its tail differs from a replay of the whole log"
     );
     writer.drain().await;
     server.stop().await;

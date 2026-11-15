@@ -275,14 +275,18 @@ fn apply(boot: &mut Boot, batch: &SealedBatch) -> Result<(), LogError> {
     }
     let mut claims = Vec::new();
     let mut unreadable_claim = None;
-    for bytes in batch.members() {
+    for (index, bytes) in batch.members().iter().enumerate() {
         let member = if let Some(event) = teaching::decode_own(bytes).map_err(unreadable)? {
             Member::Teaching(event)
         } else if let Some(event) = ledger::decode_own(bytes).map_err(unreadable)? {
             Member::Ledger(event)
         } else {
             match crate::claims_log::codec::decode_own(bytes) {
-                Ok(Some(claim)) => claims.push(claim),
+                // **A claims event sits at its batch's first position plus its place in the
+                // batch**, the position every entry of the State that keeps one is given.
+                Ok(Some(claim)) => {
+                    claims.push((Position(batch.range().first.0 + index as u64), claim))
+                }
                 Ok(None) => {}
                 Err(error) => {
                     unreadable_claim.get_or_insert_with(|| error.to_string());
@@ -295,8 +299,8 @@ fn apply(boot: &mut Boot, batch: &SealedBatch) -> Result<(), LogError> {
     if boot.claims_unreadable.is_none() {
         match unreadable_claim {
             None => {
-                for claim in &claims {
-                    crate::claims_log::apply(&mut boot.state.claims, claim);
+                for (position, claim) in &claims {
+                    crate::claims_log::apply(&mut boot.state.claims, claim, *position);
                 }
                 boot.claims_applied = batch.range().last;
             }
