@@ -7,7 +7,7 @@
 
 use serde_json::{Value, json};
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
 
 const COLLECTION: &str = "topic:contract-ordinances-story";
 const CURFEW: &str = "decision:contract-ordinance-story-curfew";
@@ -25,9 +25,8 @@ fn the_object<'a>(answer: &'a Value, handle: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("{handle} is in the answer: {answer}"))
 }
 
-#[tokio::test]
-async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
-    let (_story, s) = Story::begin_with_session("bot:otto").await;
+/// A container that numbers its members by `number`.
+async fn a_numbering_collection(s: &Session) {
     s.add(COLLECTION, "Town ordinances").await;
     s.call(
         "capture",
@@ -35,13 +34,11 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
                "provenance": "testimony", "sets": {"numbers_by": "number"}}),
     )
     .await;
-    // Members arrive with their number in the call that makes them.
-    for (handle, name, number) in [
-        (CURFEW, "Curfew", "1"),
-        (PARKING, "Parking", "2"),
-        (LEAVES, "Leaf burning", "3"),
-        (FIREWORKS, "Fireworks", "4"),
-    ] {
+}
+
+/// Members that arrive with their number in the call that makes them.
+async fn numbered_members(s: &Session, members: &[(&str, &str, &str)]) {
+    for (handle, name, number) in members {
         let (kind, slug) = handle.split_once(':').expect("a handle");
         s.call(
             "add_entity",
@@ -50,6 +47,23 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
         )
         .await;
     }
+}
+
+#[tokio::test]
+async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
+    a_numbering_collection(&s).await;
+    // Members arrive with their number in the call that makes them.
+    numbered_members(
+        &s,
+        &[
+            (CURFEW, "Curfew", "1"),
+            (PARKING, "Parking", "2"),
+            (LEAVES, "Leaf burning", "3"),
+            (FIREWORKS, "Fireworks", "4"),
+        ],
+    )
+    .await;
     s.call(
         "archive_entity",
         json!({"handle": LEAVES, "reason": "repealed"}),
@@ -147,22 +161,8 @@ async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retracti
     const OUTSIDER: &str = "decision:contract-ordinance-story-outsider";
     let story = Story::begin("bot:otto").await;
     let s = story.session().await.asking_whole();
-    s.add(COLLECTION, "Town ordinances").await;
-    s.call(
-        "capture",
-        json!({"subject": COLLECTION, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
-    for (handle, name, number) in [(CURFEW, "Curfew", "1"), (PARKING, "Parking", "2")] {
-        let (kind, slug) = handle.split_once(':').expect("a handle");
-        s.call(
-            "add_entity",
-            json!({"kind": kind, "handle": slug, "name": name, "source": "user-named",
-                   "parent": COLLECTION, "sets": {"number": number}}),
-        )
-        .await;
-    }
+    a_numbering_collection(&s).await;
+    numbered_members(&s, &[(CURFEW, "Curfew", "1"), (PARKING, "Parking", "2")]).await;
     let (kind, slug) = SIGNS.split_once(':').expect("a handle");
     s.call(
         "add_entity",
@@ -264,27 +264,17 @@ async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retracti
 async fn a_merge_refused_for_a_number_is_told_the_two_ways_that_work_and_each_works() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await.asking_whole();
-    s.add(COLLECTION, "Town ordinances").await;
-    s.call(
-        "capture",
-        json!({"subject": COLLECTION, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    a_numbering_collection(&s).await;
+    numbered_members(
+        &s,
+        &[
+            (CURFEW, "Curfew", "1"),
+            (PARKING, "Parking", "2"),
+            (SIGNS, "Sign height", "3"),
+            (FIREWORKS, "Noise hours", "4"),
+        ],
     )
     .await;
-    for (handle, name, number) in [
-        (CURFEW, "Curfew", "1"),
-        (PARKING, "Parking", "2"),
-        (SIGNS, "Sign height", "3"),
-        (FIREWORKS, "Noise hours", "4"),
-    ] {
-        let (kind, slug) = handle.split_once(':').expect("a handle");
-        s.call(
-            "add_entity",
-            json!({"kind": kind, "handle": slug, "name": name, "source": "user-named",
-                   "parent": COLLECTION, "sets": {"number": number}}),
-        )
-        .await;
-    }
 
     // ── the edit that frees a number: sent back to the number it holds ──────
     let edit = s
@@ -351,22 +341,8 @@ async fn a_merge_refused_for_a_number_is_told_the_two_ways_that_work_and_each_wo
 async fn a_move_refused_for_a_number_is_told_to_leave_it_or_archive_it_and_each_works() {
     const OUTSIDER: &str = "decision:contract-ordinance-story-outsider";
     let (_story, s) = Story::begin_with_session("bot:otto").await;
-    s.add(COLLECTION, "Town ordinances").await;
-    s.call(
-        "capture",
-        json!({"subject": COLLECTION, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
-    for (handle, name, number) in [(CURFEW, "Curfew", "1"), (PARKING, "Parking", "2")] {
-        let (kind, slug) = handle.split_once(':').expect("a handle");
-        s.call(
-            "add_entity",
-            json!({"kind": kind, "handle": slug, "name": name, "source": "user-named",
-                   "parent": COLLECTION, "sets": {"number": number}}),
-        )
-        .await;
-    }
+    a_numbering_collection(&s).await;
+    numbered_members(&s, &[(CURFEW, "Curfew", "1"), (PARKING, "Parking", "2")]).await;
     s.add(OUTSIDER, "Someone elsewhere").await;
 
     // ── the move: told to leave the member where it is, or to archive it ────
@@ -427,13 +403,7 @@ async fn a_move_refused_for_a_number_is_told_to_leave_it_or_archive_it_and_each_
 #[tokio::test]
 async fn a_mention_written_as_a_members_number_links_the_member_or_is_refused() {
     let (_story, s) = Story::begin_with_session("bot:otto").await;
-    s.add(COLLECTION, "Town ordinances").await;
-    s.call(
-        "capture",
-        json!({"subject": COLLECTION, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
+    a_numbering_collection(&s).await;
     let (kind, slug) = PARKING.split_once(':').expect("a handle");
     s.call(
         "add_entity",
@@ -486,13 +456,7 @@ const INNER_MEMBER: &str = "work:zeta";
 #[tokio::test]
 async fn a_mention_of_a_number_held_below_a_numbering_collection_links_the_member() {
     let (_story, s) = Story::begin_with_session("bot:otto").await;
-    s.add(COLLECTION, "Town ordinances").await;
-    s.call(
-        "capture",
-        json!({"subject": COLLECTION, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
+    a_numbering_collection(&s).await;
     let (inner_kind, inner_slug) = INNER.split_once(':').expect("a handle");
     s.call(
         "add_entity",
