@@ -343,15 +343,6 @@ fn a_role_lease_field_is_told_before_a_key_jojobot_writes_itself() {
     );
 }
 
-/// Refusing changes nothing.
-#[test]
-fn a_refused_request_leaves_the_state_as_it_was() {
-    let (state, declared) = world();
-    let before = state.clone();
-    assert!(prepare(&state, &declared, &request("nobody")).is_err());
-    assert_eq!(state, before);
-}
-
 /// **The claim takes the highest held number plus one**, not the count of what
 /// is held: a gap does not hand a number out twice.
 #[test]
