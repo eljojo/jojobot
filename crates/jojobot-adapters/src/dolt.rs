@@ -182,6 +182,11 @@ struct StderrTail {
 /// without limit.
 const STDERR_TAIL_LINES: usize = 40;
 
+/// How many bytes of one line [`StderrTail`] keeps; the rest of a longer line is
+/// read and dropped. Bounds the tail at lines times bytes, not at the longest line
+/// a server writes.
+const STDERR_LINE_BYTES: usize = 1024;
+
 impl StderrTail {
     /// Start reading `stderr` in the background. The returned value stays
     /// live and current for as long as the caller holds it; nothing needs to
@@ -209,15 +214,44 @@ impl StderrTail {
             sink: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
             done: tokio::sync::mpsc::UnboundedSender<()>,
         ) {
+            fn keep(
+                sink: &std::sync::Mutex<std::collections::VecDeque<String>>,
+                line: &mut Vec<u8>,
+            ) {
+                let mut kept = sink.lock().expect("stderr tail lock");
+                if kept.len() == STDERR_TAIL_LINES {
+                    kept.pop_front();
+                }
+                kept.push_back(
+                    String::from_utf8_lossy(line)
+                        .trim_end_matches('\r')
+                        .to_string(),
+                );
+                line.clear();
+            }
             tokio::spawn(async move {
                 use tokio::io::AsyncBufReadExt;
-                let mut read = tokio::io::BufReader::new(stream).lines();
-                while let Ok(Some(line)) = read.next_line().await {
-                    let mut kept = sink.lock().expect("stderr tail lock");
-                    if kept.len() == STDERR_TAIL_LINES {
-                        kept.pop_front();
+                // **A line is bounded as it is read**, so a stream that never ends a
+                // line holds at most STDERR_LINE_BYTES of it, however long the store runs.
+                let mut read = tokio::io::BufReader::new(stream);
+                let mut line: Vec<u8> = Vec::new();
+                while let Ok(chunk) = read.fill_buf().await {
+                    if chunk.is_empty() {
+                        break;
                     }
-                    kept.push_back(line);
+                    let (used, ended) = match chunk.iter().position(|byte| *byte == b'\n') {
+                        Some(at) => (at + 1, true),
+                        None => (chunk.len(), false),
+                    };
+                    let room = STDERR_LINE_BYTES.saturating_sub(line.len());
+                    line.extend_from_slice(&chunk[..room.min(used - usize::from(ended))]);
+                    read.consume(used);
+                    if ended {
+                        keep(&sink, &mut line);
+                    }
+                }
+                if !line.is_empty() {
+                    keep(&sink, &mut line);
                 }
                 let _ = done.send(());
             });
@@ -2049,6 +2083,23 @@ pub(crate) mod tests {
             other => panic!("expected the child's exit, got {other:?}"),
         }
         drop(held);
+    }
+
+    /// **A line the server never ends cannot grow the tail without bound.** The tail
+    /// keeps a number of lines, and a line is read whole before it counts, so a
+    /// stream with no newline at all used to be held entire in memory, for as long as
+    /// the store ran.
+    #[tokio::test]
+    async fn a_line_that_never_ends_is_kept_to_a_bounded_length() {
+        use tokio::io::AsyncReadExt;
+        let endless = tokio::io::repeat(b'x').take(8 * 1024 * 1024);
+        let tail = StderrTail::capture_streams(endless, None::<tokio::io::Empty>);
+        let kept = tail.drained().await.snapshot();
+        assert!(
+            !kept.is_empty() && kept.len() < 64 * 1024,
+            "the tail holds {} bytes",
+            kept.len()
+        );
     }
 
     /// **A boot whose boundary cannot be marked still serves.**
