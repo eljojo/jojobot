@@ -13,8 +13,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_refusal_says_whether_a_person_is_needed_before_anything_is_retried() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:sigma", "Sigma").await;
     let sigma = story.as_bot("bot:sigma").await;
 

@@ -60,8 +60,7 @@ async fn homers_chores(s: &Session, setting: &str) -> Vec<String> {
 /// positive is `undone` on an entry that is done, which lands and opens it.
 #[tokio::test]
 async fn undone_on_an_open_entry_is_refused_and_writes_nothing() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let at = homers_chores(&s, "sink").await;
 
     let refused = s
@@ -181,8 +180,7 @@ async fn a_batch_with_a_tick_that_changes_nothing_is_refused_whole_and_one_in_or
 /// sentence once, not twice, and joins the parts with a single full stop.
 #[tokio::test]
 async fn a_refused_batch_item_states_its_reason_once() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let at = homers_chores(&s, "sink").await;
     s.call("capture", ticking("list:homer-chores", &at[0], "done"))
         .await;
@@ -214,8 +212,7 @@ async fn a_refused_batch_item_states_its_reason_once() {
 /// which land on the same verbs.
 #[tokio::test]
 async fn an_unknown_tick_setting_is_refused_on_every_write_that_sets_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "homer-chores", json!({"tick": "sink"})).await;
 
     let mut claim = String::new();

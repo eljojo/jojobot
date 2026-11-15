@@ -46,8 +46,7 @@ fn claim_args() -> serde_json::Value {
 /// changed.
 #[tokio::test]
 async fn a_new_boot_is_refused_while_its_own_earlier_run_holds_the_role() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
 

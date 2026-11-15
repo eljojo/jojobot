@@ -315,8 +315,7 @@ async fn the_newest_retired_keys_are_the_ones_a_restart_keeps() {
     use jojobot_domain::session::{KeyTrail, RetiredBy, RetiredKey, hash_key, mint_key};
 
     const RUNS: usize = 1030;
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("topic:widgets", "Widgets").await;
     let began = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48);

@@ -63,8 +63,7 @@ async fn a_step_naming_one_card_reads_back_with_the_cards_state() {
 /// writer can send the one; an object the writer sent wins over the words.**
 #[tokio::test]
 async fn a_step_naming_two_cards_draws_none_and_an_object_wins() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.past_first_contact().await;
     a_list_on_the_trip(&s, "checklist", json!({"tick": "sink"})).await;
     work(&s, "pour-the-slab", "now").await;
@@ -104,8 +103,7 @@ async fn a_step_naming_two_cards_draws_none_and_an_object_wins() {
 /// step that earns only the several-things hint, which still gets it.
 #[tokio::test]
 async fn a_second_hint_keeps_the_first() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.past_first_contact().await;
     a_list_on_the_trip(&s, "checklist", json!({"tick": "sink"})).await;
     work(&s, "pour-the-slab", "now").await;

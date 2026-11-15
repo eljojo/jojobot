@@ -16,8 +16,7 @@ const LOOSE_CARD: &str = "work:upsilon";
 
 #[tokio::test]
 async fn the_roots_are_the_things_under_nothing_standing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(BOARD, "Roots story board").await;
     s.add(LOOSE_CARD, "Roots story loose card").await;
     for (handle, parent) in [(CARD, BOARD), (CHILD_CARD, CARD)] {

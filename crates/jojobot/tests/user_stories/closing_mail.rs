@@ -6,8 +6,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn closing_a_batch_refuses_a_blank_id_before_closing_any_message() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:otto", "Otto").await;
     let otto = story.as_bot("bot:otto").await;
     let first = otto
@@ -78,8 +77,7 @@ async fn closing_a_batch_refuses_a_blank_id_before_closing_any_message() {
 
 #[tokio::test]
 async fn a_read_mail_pile_teaches_batch_close_and_names_the_manager_once_until_compaction() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:otto", "Otto").await;
     let otto = story.as_bot("bot:otto").await;
     story

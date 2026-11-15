@@ -14,8 +14,7 @@ use super::dsl::Story;
 /// **A rule's marks are the rule's, not the bot's.**
 #[tokio::test]
 async fn a_rules_marks_belong_to_the_rule_and_not_to_the_bot() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
     let rule = s
         .call(
@@ -90,8 +89,7 @@ async fn a_rules_marks_belong_to_the_rule_and_not_to_the_bot() {
 /// read returns it, and it says so only when a mark was asked for.
 #[tokio::test]
 async fn asking_for_a_mark_by_keys_is_told_the_mark_is_on_the_claim() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
     s.call(
         "capture",
@@ -154,8 +152,7 @@ async fn asking_for_a_mark_by_keys_is_told_the_mark_is_on_the_claim() {
 /// **A check-in's source is the check-in's, and the loop still advances.**
 #[tokio::test]
 async fn a_check_ins_source_does_not_fold_onto_its_loop_and_the_loop_still_advances() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add_under("bot:otto", "rhythm:weekly-review", "Weekly review")
         .await;
     s.event_with(

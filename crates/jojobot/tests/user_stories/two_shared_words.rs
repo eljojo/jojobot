@@ -37,8 +37,7 @@ fn with(mut call: serde_json::Value, extra: serde_json::Value) -> serde_json::Va
 
 #[tokio::test]
 async fn two_shared_words_are_refused_and_land_with_a_reason_and_the_reason_is_kept() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(
         "place:springfield-nuclear-plant",
         "Springfield Nuclear Plant",
@@ -115,8 +114,7 @@ async fn two_shared_words_are_refused_and_land_with_a_reason_and_the_reason_is_k
 
 #[tokio::test]
 async fn one_shared_word_another_kind_a_stop_word_and_a_typo_are_each_read_apart() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(
         "place:springfield-nuclear-plant",
         "Springfield Nuclear Plant",

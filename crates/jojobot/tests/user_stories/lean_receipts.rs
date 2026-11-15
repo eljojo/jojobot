@@ -9,8 +9,7 @@ use serde_json::json;
 
 #[tokio::test]
 async fn brief_progress_receipts_still_lead_to_the_record_and_normal_answers() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     let setting = story.session().await;
     a_piece_of_work(&s).await;
     setting

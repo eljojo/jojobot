@@ -22,8 +22,7 @@ async fn capture(who: &Session, content: &str) -> super::dsl::Answer {
 
 #[tokio::test]
 async fn a_run_that_reports_compaction_is_taught_again_and_keeps_its_key() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:lisa", "Lisa").await;
     s.add("bot:gamma", "Gamma").await;
 
@@ -121,8 +120,7 @@ async fn a_run_that_reports_compaction_is_taught_again_and_keeps_its_key() {
 /// there and still carries the mail entry.
 #[tokio::test]
 async fn an_ordinary_answer_carries_no_line_about_compaction() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:lisa", "Lisa").await;
     s.add("bot:gamma", "Gamma").await;
     let gamma = story.as_bot("bot:gamma").await;
@@ -144,8 +142,7 @@ async fn an_ordinary_answer_carries_no_line_about_compaction() {
 /// runs is refused, naming both runs by name, and neither forgets anything.
 #[tokio::test]
 async fn a_compaction_report_by_bot_name_alone_reaches_its_one_live_run() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:lisa", "Lisa").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
@@ -213,8 +210,7 @@ async fn a_compaction_report_by_bot_name_alone_reaches_its_one_live_run() {
 /// addresses nothing leaves no run to forget for.
 #[tokio::test]
 async fn a_compaction_report_that_opens_no_run_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
     let gamma = story.as_bot("bot:gamma").await;
@@ -245,8 +241,7 @@ async fn a_compaction_report_that_opens_no_run_is_refused() {
 /// ordinary read does grow it.
 #[tokio::test]
 async fn a_compaction_report_restarts_the_running_total() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let gamma = story.as_bot("bot:gamma").await;
     // The total only exists on a run with a card, which its first write opens.
@@ -283,8 +278,7 @@ async fn a_compaction_report_restarts_the_running_total() {
 /// was shown; the other run still is.
 #[tokio::test]
 async fn a_compaction_report_forgets_what_the_run_was_shown() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("place:wonder-wharf", "Wonder Wharf").await;
     s.add("bot:gamma", "Gamma").await;
     // The question a creation is asked, named by the verb it offers.

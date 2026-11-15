@@ -19,8 +19,7 @@ const THREAD: &str = "thread:milhouse-moves";
 /// claims, by their words, not found by searching the whole answer.
 #[tokio::test]
 async fn a_cap_set_on_a_person_binds_the_connection_claim_a_bot_writes_there() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("thing:battery", "The Battery").await;
@@ -124,8 +123,7 @@ async fn a_claim_another_bot_writes_on_a_bot_makes_no_writer_of_the_thread_it_po
 /// decides from the caller's bot, the input the write used.
 #[tokio::test]
 async fn a_claim_another_bot_writes_on_an_over_full_room_is_not_told_it_used_the_reserve() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:alpha", "Alpha").await;
     s.add("bot:beta", "Beta").await;
     for (handle, name) in [
@@ -178,8 +176,7 @@ async fn a_claim_another_bot_writes_on_an_over_full_room_is_not_told_it_used_the
 /// one fills the room.
 #[tokio::test]
 async fn a_starred_connection_claim_another_bot_writes_is_neither_the_bots_rule_nor_its_thought() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("bot:milhouse", "Milhouse"),
         ("bot:lisa", "Lisa"),

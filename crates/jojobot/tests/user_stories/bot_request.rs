@@ -488,8 +488,7 @@ async fn clearing_an_older_desired_claim_keeps_the_generation() {
 /// is the third verb that writes the keys.
 #[tokio::test]
 async fn updating_the_entity_raises_the_generation_of_a_request() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (_story, marge) = Story::begin_with_session("bot:marge").await;
     marge
         .call(
             "add_entity",
@@ -526,8 +525,7 @@ async fn updating_the_entity_raises_the_generation_of_a_request() {
 /// folds.
 #[tokio::test]
 async fn a_request_is_not_merged_away_and_the_refusal_names_it() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (story, marge) = Story::begin_with_session("bot:marge").await;
     marge
         .call(
             "add_entity",
@@ -582,8 +580,7 @@ async fn a_request_is_not_merged_away_and_the_refusal_names_it() {
 #[tokio::test]
 async fn an_ordinary_thing_merged_into_a_request_is_told_to_archive_the_claim_that_sets_its_status_key()
  {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (_story, marge) = Story::begin_with_session("bot:marge").await;
     marge
         .call(
             "add_entity",
@@ -654,8 +651,7 @@ async fn an_ordinary_thing_merged_into_a_request_is_told_to_archive_the_claim_th
 /// bot nobody above her authorised. Bart manages lisa and makes the same write.
 #[tokio::test]
 async fn naming_a_manager_beside_the_target_does_not_change_who_judges_it() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (story, marge) = Story::begin_with_session("bot:marge").await;
     marge.add("bot:bart", "Bart").await;
     marge.add("machine:theta", "Theta").await;
     let bart = story.as_bot("bot:bart").await;
@@ -689,8 +685,7 @@ async fn naming_a_manager_beside_the_target_does_not_change_who_judges_it() {
 /// changes no key.
 #[tokio::test]
 async fn taking_back_an_older_partial_spec_carries_the_next_generation() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (_story, marge) = Story::begin_with_session("bot:marge").await;
     marge
         .call(
             "add_entity",
@@ -771,8 +766,7 @@ async fn taking_back_an_older_partial_spec_carries_the_next_generation() {
 /// named, so the number goes up to 5 and never falls back to an older one.
 #[tokio::test]
 async fn archiving_a_claim_of_a_request_carries_the_next_generation() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (_story, marge) = Story::begin_with_session("bot:marge").await;
     marge
         .call(
             "add_entity",
@@ -848,8 +842,7 @@ async fn archiving_a_claim_of_a_request_carries_the_next_generation() {
 /// spec key leaves the spec as it was and carries none.
 #[tokio::test]
 async fn merging_a_spec_onto_a_request_carries_the_next_generation() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (_story, marge) = Story::begin_with_session("bot:marge").await;
     marge
         .call(
             "add_entity",
@@ -920,8 +913,7 @@ async fn merging_a_spec_onto_a_request_carries_the_next_generation() {
 /// such a carrier does the same.
 #[tokio::test]
 async fn taking_back_a_covered_carrier_carries_the_next_generation() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (_story, marge) = Story::begin_with_session("bot:marge").await;
     marge
         .call(
             "add_entity",

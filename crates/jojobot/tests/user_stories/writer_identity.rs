@@ -14,8 +14,7 @@ const THREAD: &str = "thread:milhouse-moves";
 
 #[tokio::test]
 async fn a_thought_a_bot_kept_holds_its_seat_in_the_bots_room_after_the_bot_is_renamed_twice() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:alpha", "Alpha").await;
     s.add(THREAD, "Milhouse moves").await;
     // The room holds one thought. A bot does not set its own room, so the

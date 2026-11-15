@@ -27,8 +27,7 @@ fn the_object<'a>(answer: &'a Value, handle: &str) -> &'a Value {
 
 #[tokio::test]
 async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(COLLECTION, "Town ordinances").await;
     s.call(
         "capture",
@@ -351,8 +350,7 @@ async fn a_merge_refused_for_a_number_is_told_the_two_ways_that_work_and_each_wo
 #[tokio::test]
 async fn a_move_refused_for_a_number_is_told_to_leave_it_or_archive_it_and_each_works() {
     const OUTSIDER: &str = "decision:contract-ordinance-story-outsider";
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(COLLECTION, "Town ordinances").await;
     s.call(
         "capture",
@@ -428,8 +426,7 @@ async fn a_move_refused_for_a_number_is_told_to_leave_it_or_archive_it_and_each_
 /// as words.
 #[tokio::test]
 async fn a_mention_written_as_a_members_number_links_the_member_or_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(COLLECTION, "Town ordinances").await;
     s.call(
         "capture",
@@ -488,8 +485,7 @@ const INNER_MEMBER: &str = "work:zeta";
 /// marker of the guard collection that stands in the way.
 #[tokio::test]
 async fn a_mention_of_a_number_held_below_a_numbering_collection_links_the_member() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(COLLECTION, "Town ordinances").await;
     s.call(
         "capture",

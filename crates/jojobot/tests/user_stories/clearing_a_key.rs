@@ -20,8 +20,7 @@ fn names(text: &str, word: &str) -> bool {
 /// and the key comes off the thing.
 #[tokio::test]
 async fn a_key_that_keeps_its_newest_write_is_cleared_by_following_the_sentence() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
 
     s.call(
@@ -87,8 +86,7 @@ async fn a_key_that_keeps_its_newest_write_is_cleared_by_following_the_sentence(
 /// history of the key, which lists every record that wrote it.
 #[tokio::test]
 async fn a_counter_key_is_cleared_by_following_the_sentence() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
 
     s.call(
@@ -179,8 +177,7 @@ async fn a_counter_key_is_cleared_by_following_the_sentence() {
 #[tokio::test]
 async fn a_clear_sent_to_an_older_record_leaves_the_value_and_one_sent_to_the_backing_record_takes_the_key_off()
  {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
 
     let older = s
@@ -261,8 +258,7 @@ async fn owed(s: &super::dsl::Session) -> Vec<String> {
 /// claim takes:** it takes the date off the desk and the desk stops being owed.
 #[tokio::test]
 async fn clearing_an_older_expiry_claim_keeps_the_date_and_the_desk_owed() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(DESK, "Standing desk").await;
     let mut addresses = Vec::new();
     for (words, recorded, runs_out) in [

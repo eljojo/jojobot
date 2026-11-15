@@ -20,8 +20,7 @@ use super::dsl::Story;
 /// reads again and lands against 2.
 #[tokio::test]
 async fn the_second_of_two_runs_editing_from_the_same_read_is_refused() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("person:kenny", "Kenny").await;
     let claim = first
         .call(

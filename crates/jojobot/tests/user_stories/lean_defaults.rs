@@ -40,8 +40,7 @@ async fn a_topic_with_two_paragraphs(s: &Session) {
 
 #[tokio::test]
 async fn a_records_read_leads_with_each_claim_and_says_how_many_details_it_left_out() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_topic_with_two_paragraphs(&s).await;
 
     // ── the standard read: claims, addresses, provenance and standing ────────
@@ -171,8 +170,7 @@ async fn reading_records_by_address_and_searching_follow_the_same_default() {
 
 #[tokio::test]
 async fn a_page_shows_the_claim_and_puts_its_details_behind_a_marker() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add(TOPIC, "Milhouse moves").await;
     s.call(
         "capture",
@@ -207,8 +205,7 @@ async fn a_page_shows_the_claim_and_puts_its_details_behind_a_marker() {
 /// fires after a default read of it.
 #[tokio::test]
 async fn a_default_read_still_shows_what_a_creation_is_asked_about() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("place:contract-wonder-wharf", "Wonder Wharf").await;
     s.call(
         "capture",

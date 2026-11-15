@@ -20,8 +20,7 @@ fn listed(answer: &super::dsl::Answer) -> Vec<String> {
 
 #[tokio::test]
 async fn a_fresh_instance_boots_defrag_and_its_queue_is_the_unreviewed_read() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     dev.add("person:homer", "Homer").await;
     let defrag = story.as_bot("bot:defrag").await;
 
@@ -60,8 +59,7 @@ async fn a_fresh_instance_boots_defrag_and_its_queue_is_the_unreviewed_read() {
 
 #[tokio::test]
 async fn defrag_arrives_with_the_charter_and_the_one_liner_the_build_ships() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (_story, dev) = Story::begin_with_session("bot:otto").await;
 
     let charter = dev
         .call("recall", json!({"subject": "bot:defrag", "charter": true}))
@@ -86,8 +84,7 @@ async fn defrag_arrives_with_the_charter_and_the_one_liner_the_build_ships() {
 
 #[tokio::test]
 async fn defrag_reports_to_the_assistant_on_a_fresh_instance() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (_story, dev) = Story::begin_with_session("bot:otto").await;
 
     let held = dev
         .call("recall", json!({"subject": "bot:defrag"}))

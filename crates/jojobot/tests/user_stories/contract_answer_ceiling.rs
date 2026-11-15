@@ -1097,8 +1097,7 @@ async fn a_page_of_long_pantry_notes_stays_under_the_ceiling_and_the_walk_return
     const NOTE_DETAIL: usize = 13_385;
     const NOTES: usize = 6;
 
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:shelf", "The Shelf").await;
     let mut written: Vec<String> = Vec::new();
     for i in 0..NOTES {

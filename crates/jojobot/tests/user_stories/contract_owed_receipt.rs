@@ -11,8 +11,7 @@ use super::owed_receipt::a_piece_of_work;
 /// **A capture that sets the day says the thing now falls due on it.**
 #[tokio::test]
 async fn a_capture_that_sets_a_day_says_the_thing_falls_due_on_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_piece_of_work(&s).await;
 
     let set = s
@@ -73,8 +72,7 @@ async fn a_capture_that_sets_a_day_says_the_thing_falls_due_on_it() {
 /// edit that finishes the work says nothing about the due moment.
 #[tokio::test]
 async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_piece_of_work(&s).await;
     let claim = s
         .call(
@@ -142,8 +140,7 @@ async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
 /// day did not move.
 #[tokio::test]
 async fn a_creation_that_sets_a_day_says_the_thing_falls_due_on_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
 
     let made = s
@@ -188,8 +185,7 @@ async fn a_creation_that_sets_a_day_says_the_thing_falls_due_on_it() {
 /// setting something else says nothing.**
 #[tokio::test]
 async fn setting_a_day_on_a_thing_says_it_falls_due_on_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_piece_of_work(&s).await;
 
     let set = s

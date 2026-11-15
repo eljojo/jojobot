@@ -15,8 +15,7 @@ use super::dsl::{Session, Story};
 /// Otto holds Homer: he was recalled with his claims. Returns the story, Otto,
 /// the other bot's session and the address of the claim on Homer.
 async fn otto_holds_homer() -> (Story, Session, Session, String) {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("person:homer", "Homer").await;
     otto.add("person:lisa", "Lisa").await;
     let claim = otto
@@ -290,8 +289,7 @@ async fn a_rename_and_an_archive_by_another_session_are_named() {
 /// processed itself is not.**
 #[tokio::test]
 async fn a_message_another_run_processed_is_named_and_one_this_run_processed_is_not() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     let second = story.as_bot("bot:otto").await;
     let sender = story.as_bot("bot:assistant").await;
     let mut ids = Vec::new();
@@ -342,8 +340,7 @@ async fn a_message_another_run_processed_is_named_and_one_this_run_processed_is_
 /// again, which changes nothing for the first run.
 #[tokio::test]
 async fn a_message_another_run_quarantined_is_named_once_without_its_words() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     let second = story.as_bot("bot:otto").await;
     let sender = story.as_bot("bot:assistant").await;
     let mut ids = Vec::new();
@@ -414,8 +411,7 @@ async fn a_message_another_run_quarantined_is_named_once_without_its_words() {
 /// version Otto held. The paired negative is the same read when only Otto wrote after it.
 #[tokio::test]
 async fn a_claim_another_session_wrote_before_this_one_did_is_named() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     // The other session makes Homer and the claim, so Otto is never served
     // Homer himself and holds the claim alone.
     let other = story.as_bot("bot:assistant").await;
@@ -536,8 +532,7 @@ async fn a_thing_the_session_holds_unchanged_comes_back_as_its_handle() {
 /// runs. Nobody counts the assertions below as watched.
 #[tokio::test]
 async fn a_second_merge_into_a_held_thing_comes_back_whole_without_a_new_part() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     let other = story.as_bot("bot:assistant").await;
     other.add("person:bart", "Bart").await;
     other.add("person:maggie", "Maggie").await;
@@ -587,8 +582,7 @@ async fn a_second_merge_into_a_held_thing_comes_back_whole_without_a_new_part() 
 /// many it left out. The same call with `reship: true` lists him in full.
 #[tokio::test]
 async fn a_listing_the_session_holds_unchanged_collapses_and_reship_lists_it_whole() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("person:homer", "Homer").await;
     // **No `reship` key, as a default session sends it.**
     let ask = json!({"kind": "person"});

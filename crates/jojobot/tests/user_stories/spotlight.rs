@@ -71,8 +71,7 @@ async fn a_bot_finds_its_own_past_work_and_not_another_bots() {
 
 #[tokio::test]
 async fn a_run_never_outranks_what_the_operator_wrote() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     // The operator's own record, and a run that talks about it far more.
     s.add("thing:gravel-bike", "The Gravel Bike").await;

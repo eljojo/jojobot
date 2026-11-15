@@ -120,8 +120,7 @@ pub(super) async fn finish(s: &Session, handle: &str) {
 
 #[tokio::test]
 async fn a_bundle_reads_how_far_along_it_is_from_the_work_its_entries_link() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let at = a_shed_with_five_parts(&s).await;
 
     // ── nothing is done yet ─────────────────────────────────────────────────
@@ -208,8 +207,7 @@ async fn a_bundle_reads_how_far_along_it_is_from_the_work_its_entries_link() {
 
 #[tokio::test]
 async fn a_plain_entry_or_a_link_to_a_person_is_not_counted_and_is_not_an_error() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:springfield-camping", "Springfield camping")
         .await;
     s.call(
@@ -238,8 +236,7 @@ async fn a_plain_entry_or_a_link_to_a_person_is_not_counted_and_is_not_an_error(
 
 #[tokio::test]
 async fn work_whose_status_word_means_done_on_this_instance_counts_as_done() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     // The instance maps its own word to done, as the ready view reads it.
     s.call(
         "capture",
@@ -270,8 +267,7 @@ async fn work_whose_status_word_means_done_on_this_instance_counts_as_done() {
 /// not, and restoring the archived one puts it back in `of`.
 #[tokio::test]
 async fn an_archived_piece_that_never_finished_leaves_the_bundle_and_a_finished_one_stays() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:the-move", "The move").await;
     s.call(
         "add_entity",
@@ -334,8 +330,7 @@ async fn the_bundle(s: &Session, keys: Option<Value>) -> Value {
 
 #[tokio::test]
 async fn the_read_of_a_bundle_says_how_far_along_each_list_under_it_is() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_shed_with_five_parts(&s).await;
 
     let none = the_bundle(&s, None).await;
@@ -361,8 +356,7 @@ async fn the_read_of_a_bundle_says_how_far_along_each_list_under_it_is() {
 /// session the old count.
 #[tokio::test]
 async fn a_bundle_read_again_after_its_linked_work_moved_serves_the_new_progress() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_shed_with_five_parts(&s).await;
 
     let before = the_bundle(&s, None).await;
@@ -384,8 +378,7 @@ async fn a_bundle_read_again_after_its_linked_work_moved_serves_the_new_progress
 /// list is no part of the bundle.
 #[tokio::test]
 async fn only_the_one_subject_read_of_a_piece_of_work_carries_the_rows() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_shed_with_five_parts(&s).await;
     s.call(
         "add_entity",

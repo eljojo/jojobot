@@ -83,8 +83,7 @@ async fn fresh_thing(otto: &Session, i: usize) -> String {
 /// limit itself is accepted and recalled in one answer.
 #[tokio::test]
 async fn a_capture_too_big_to_be_read_back_whole_is_refused_and_the_largest_that_lands_is_not() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     let probes = std::cell::Cell::new(0usize);
     let capturing = |len: usize| {
         let otto = &otto;
@@ -200,8 +199,7 @@ async fn capture_limit(otto: &Session) -> usize {
 async fn the_limit_for_a_claim_is_where_a_read_of_it_stops_fitting() {
     use jojobot_domain::memory::{EntityId, EntityKind, Guarded, NewEntity, NewFact};
 
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     let limit = capture_limit(&otto).await;
 
     // A record of `len` details characters written under the guard, then read.
@@ -256,8 +254,7 @@ async fn the_limit_for_a_claim_is_where_a_read_of_it_stops_fitting() {
 /// record stays as it was, and the largest edit that lands is read back whole.**
 #[tokio::test]
 async fn an_edit_that_makes_a_claim_too_big_to_read_is_refused_and_leaves_it_as_it_was() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     let subject = fresh_thing(&otto, 20_000).await;
     let address = otto.fact(&subject, "a note").await;
     let over = first_refused(100, ANSWER_CEILING + 5_000, |len| {
@@ -317,8 +314,7 @@ async fn an_edit_that_makes_a_claim_too_big_to_read_is_refused_and_leaves_it_as_
 /// behind.
 #[tokio::test]
 async fn a_creation_whose_first_claim_is_too_big_to_read_back_makes_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     let probes = std::cell::Cell::new(30_000usize);
     let creating = |len: usize| {
         let (otto, probes) = (&otto, &probes);
@@ -761,8 +757,7 @@ async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
 /// refused, and nothing moves.
 #[tokio::test]
 async fn a_merge_account_that_fits_beside_the_survivor_but_not_beside_the_merged_one_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     let aliased = |seed: usize, count: usize, name: &str| {
         let (otto, name) = (&otto, name.to_string());
         async move {
@@ -978,8 +973,7 @@ async fn a_merge_into_a_thing_whose_aliases_are_past_one_answer_is_refused_whole
 /// and a note set in the same call is one of the keys.
 #[tokio::test]
 async fn aliases_and_a_note_that_land_alone_are_refused_together() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     // Aliases of about 190 characters, the longest an alias may be.
     let long_aliases = |seed: usize, count: usize| -> Vec<String> {
         (0..count)

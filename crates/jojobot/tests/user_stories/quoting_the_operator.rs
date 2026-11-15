@@ -19,8 +19,7 @@ const WORDS: &str = "wants the harbor mural painted in cobalt";
 
 /// An instance with an operator, a writer, and one testimony claim to quote.
 async fn with_an_operator() -> (Story, Session, String) {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:lisa", "Lisa").await;
     s.event_with(
         "topic:instance",

@@ -17,8 +17,7 @@ use super::lists::a_list_on_the_trip;
 /// Two errands that name a known person: the note is on the receipt, once.
 #[tokio::test]
 async fn a_batch_carries_the_possible_subject_note_its_items_earned_once() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     s.add("person:homer", "Homer").await;
 
@@ -64,8 +63,7 @@ async fn a_batch_carries_the_possible_subject_note_its_items_earned_once() {
 /// Items that each earn a different teaching: every teaching rides, once.
 #[tokio::test]
 async fn a_batch_carries_every_teaching_its_items_earned_once() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     s.add("thing:kettle", "The Kettle").await;
 
@@ -107,8 +105,7 @@ async fn a_batch_carries_every_teaching_its_items_earned_once() {
 /// call sent again delivers the note the first item earned.
 #[tokio::test]
 async fn a_cut_batch_resent_delivers_the_note_its_first_item_earned() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     s.add("person:homer", "Homer").await;
     let call = json!({"subject": "list:packing", "provenance": "testimony",
@@ -145,8 +142,7 @@ async fn a_cut_batch_resent_delivers_the_note_its_first_item_earned() {
 /// The step was never shown, so the next capture on the list still offers it.
 #[tokio::test]
 async fn a_batch_serves_one_suggestion_and_the_dropped_one_is_not_spent() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     s.add("person:homer", "Homer").await;
     s.call(
@@ -198,8 +194,7 @@ async fn a_batch_serves_one_suggestion_and_the_dropped_one_is_not_spent() {
 /// single capture naming the person still ships the note.
 #[tokio::test]
 async fn a_batch_too_big_for_the_budget_names_its_dropped_note_and_spends_nothing() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     s.add("person:homer", "Homer").await;
     s.past_first_contact().await;

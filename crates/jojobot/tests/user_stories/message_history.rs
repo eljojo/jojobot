@@ -20,8 +20,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_reader_can_see_each_change_of_a_message_and_the_run_that_made_it() {
-    let story = Story::begin("bot:otto").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:otto").await;
     setup.add("bot:gamma", "Gamma").await;
     setup.wrap("stood gamma up").await;
 
@@ -104,8 +103,7 @@ async fn a_reader_can_see_each_change_of_a_message_and_the_run_that_made_it() {
 
 #[tokio::test]
 async fn reading_a_history_takes_no_delivery_and_a_plain_read_still_does() {
-    let story = Story::begin("bot:otto").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:otto").await;
     setup.add("bot:gamma", "Gamma").await;
     setup.wrap("stood gamma up").await;
     let sender = story.session().await;

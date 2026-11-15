@@ -168,8 +168,7 @@ async fn a_retired_key_and_a_closed_run_list_what_is_in_flight_and_resume_nothin
 /// code is never printed.** What the wrap left is the door's handover.
 #[tokio::test]
 async fn a_wrapped_runs_refusal_offers_its_handover_and_never_its_code() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
     let wrapping = story.as_bot("bot:gamma").await;
@@ -209,8 +208,7 @@ async fn a_wrapped_runs_refusal_offers_its_handover_and_never_its_code() {
 /// **A key jojobot does not hold names no bot, so nothing is listed.**
 #[tokio::test]
 async fn a_key_jojobot_does_not_hold_lists_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let gamma = story.as_bot("bot:gamma").await;
     gamma.call("journal", json!({"entry": "working"})).await;

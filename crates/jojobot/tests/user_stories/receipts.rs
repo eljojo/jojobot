@@ -22,8 +22,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("person:barney-gumble", "Barney Gumble").await;
 
@@ -207,8 +206,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
 /// apart from the keys that stayed, each in its own place.
 #[tokio::test]
 async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to_the_thing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
 
     let both = s
@@ -287,8 +285,7 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
 /// does not have to read the thing before and after to learn what it cost.
 #[tokio::test]
 async fn taking_a_record_back_says_which_keys_the_thing_lost() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:the-fern", "The fern").await;
     let set = |content: &str, sets: serde_json::Value| {
         let call = json!({
@@ -332,8 +329,7 @@ async fn taking_a_record_back_says_which_keys_the_thing_lost() {
 /// ordinary edit with `sets`, whose key reaches the thing and is named there.
 #[tokio::test]
 async fn an_archive_with_keys_beside_it_reaches_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thread:milhouse-moves", "Milhouse moves").await;
     s.add("person:homer", "Homer").await;
     s.add("person:lisa", "Lisa").await;

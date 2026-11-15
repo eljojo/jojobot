@@ -131,8 +131,7 @@ async fn a_bot_finds_its_own_past_work_and_is_told_a_colleagues_exists() {
 #[tokio::test]
 async fn nothing_of_mine_reads_differently_from_nothing_at_all() {
     // ── ① a bot that has done nothing, beside a run that is not its own ─────
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     let answered = my_past_runs(&otto).await;
     assert!(
         runs_found(&answered).is_empty(),
@@ -162,8 +161,7 @@ async fn nothing_of_mine_reads_differently_from_nothing_at_all() {
 #[tokio::test]
 async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
     // ── ① an instance with a run on it, asked by a caller carrying no sid ───
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
     // What an identified caller sees: its own run shown, the rest counted.
@@ -227,8 +225,7 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
 #[tokio::test]
 async fn a_colleagues_run_is_never_named_slugged_or_attributed_to_another_bot() {
     const FOCUS: &str = "pricing the replacement wheels";
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("bot:epsilon", "Epsilon").await;
     let epsilon = story.as_bot("bot:epsilon").await;
     epsilon
@@ -300,8 +297,7 @@ async fn a_colleagues_run_is_never_named_slugged_or_attributed_to_another_bot() 
 /// positive it depends on, in the same read.
 #[tokio::test]
 async fn a_wrapped_run_is_read_by_the_next_run_of_its_bot_and_not_by_another_bots() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     first.add("bot:epsilon", "Epsilon").await;
     first
         .journal("otto inspected the east gorge and found the bridge closed")
@@ -348,8 +344,7 @@ async fn a_wrapped_run_is_read_by_the_next_run_of_its_bot_and_not_by_another_bot
 /// another bot is still counted and not shown.
 #[tokio::test]
 async fn a_runs_owner_follows_its_bot_through_a_rename() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     first.add("bot:epsilon", "Epsilon").await;
     first
         .journal("otto inspected the east gorge and found the bridge closed")
@@ -401,8 +396,7 @@ async fn a_runs_owner_follows_its_bot_through_a_rename() {
 /// that left none of mine out carries no such count.
 #[tokio::test]
 async fn a_filter_that_leaves_out_my_own_runs_says_how_many_apart_from_those_withheld() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
 
@@ -443,8 +437,7 @@ async fn a_filter_that_leaves_out_my_own_runs_says_how_many_apart_from_those_wit
 /// nothing and is never shown the value.
 #[tokio::test]
 async fn a_runs_name_is_a_field_its_owner_can_filter_on_read_back_and_resume() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("bot:epsilon", "Epsilon").await;
     otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
@@ -515,8 +508,7 @@ async fn a_runs_name_is_a_field_its_owner_can_filter_on_read_back_and_resume() {
 /// `near` finds it inside the window and not outside it.
 #[tokio::test]
 async fn near_places_a_run_on_the_day_it_started() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     otto.journal("otto inspected the east gorge and found the bridge closed")
         .await;
     let today = jiff::Timestamp::now()
@@ -621,8 +613,7 @@ async fn a_run_that_stated_its_day_is_placed_on_that_day_and_one_that_stated_non
 /// credential in text, and the call is refused naming the run.
 #[tokio::test]
 async fn a_run_is_found_by_its_name_as_a_session_handle_and_never_by_its_key() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     otto.journal("otto inspected the east gorge").await;
 
     // The positive: the name is the record's id.

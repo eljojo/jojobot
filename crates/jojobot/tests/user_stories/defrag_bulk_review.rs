@@ -52,8 +52,7 @@ async fn three_waiting(dev: &Session) -> [&'static str; 3] {
 /// bulk mark rewrites each thing's one mark rather than adding one.
 #[tokio::test]
 async fn defrag_marks_several_things_reviewed_in_one_call() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     let people = three_waiting(&dev).await;
     let defrag = story.as_bot("bot:defrag").await;
     let waiting = queue(&defrag).await;
@@ -110,8 +109,7 @@ async fn defrag_marks_several_things_reviewed_in_one_call() {
 /// is. The paired positive is defrag's own bulk mark, above.
 #[tokio::test]
 async fn a_bulk_mark_by_another_bot_is_refused_and_marks_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     let people = three_waiting(&dev).await;
     let defrag = story.as_bot("bot:defrag").await;
 
@@ -135,8 +133,7 @@ async fn a_bulk_mark_by_another_bot_is_refused_and_marks_nothing() {
 /// edits are made to one thing.
 #[tokio::test]
 async fn a_bulk_mark_with_a_missing_handle_or_another_edit_marks_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     let people = three_waiting(&dev).await;
     let defrag = story.as_bot("bot:defrag").await;
 
@@ -168,8 +165,7 @@ async fn a_bulk_mark_with_a_missing_handle_or_another_edit_marks_nothing() {
 /// things.
 #[tokio::test]
 async fn the_queue_beside_a_parent_lists_only_that_containers_things() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     dev.add("thing:springfield-camping", "Camping box").await;
     dev.add("thing:springfield-hall", "Hall box").await;
     for (handle, parent) in [
@@ -233,8 +229,7 @@ async fn the_queue_beside_a_parent_lists_only_that_containers_things() {
 /// mark. The paired positive is the first call, which is no repeat.
 #[tokio::test]
 async fn a_bulk_mark_sent_again_under_its_request_id_is_a_repeat() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     let people = three_waiting(&dev).await;
     let defrag = story.as_bot("bot:defrag").await;
     let call = json!({"handle": people.join(","), "reviewed": true,

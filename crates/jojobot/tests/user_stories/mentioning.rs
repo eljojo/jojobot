@@ -74,8 +74,7 @@ async fn a_session_writes_handles_into_a_sentence_and_reads_them_all_back() {
 /// with an `@` in it would satisfy the first half and serve nobody.
 #[tokio::test]
 async fn a_sentence_naming_something_that_is_not_there_is_refused() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("person:milhouse", "Milhouse").await;
 
@@ -126,8 +125,7 @@ async fn a_sentence_naming_something_that_is_not_there_is_refused() {
 /// build that stopped reading mentions altogether passes neither half.
 #[tokio::test]
 async fn sample_code_naming_nothing_is_kept_as_written_and_the_same_handle_outside_it_is_refused() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("person:milhouse", "Milhouse").await;
 
@@ -199,8 +197,7 @@ async fn sample_code_naming_nothing_is_kept_as_written_and_the_same_handle_outsi
 #[tokio::test]
 async fn a_real_handle_inside_code_stays_as_written_through_a_rename_and_the_same_handle_outside_follows()
  {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:milhouse", "Milhouse").await;
@@ -241,8 +238,7 @@ async fn a_real_handle_inside_code_stays_as_written_through_a_rename_and_the_sam
 /// is unchanged since served.
 #[tokio::test]
 async fn a_claim_that_mentions_a_renamed_thing_is_served_again_under_the_new_name() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:milhouse", "Milhouse").await;
@@ -419,8 +415,7 @@ async fn a_rename_reaches_months_of_mentions_written_under_the_old_name() {
 /// never touches, so a beat rewritten wholesale cannot pass this by accident.
 #[tokio::test]
 async fn a_journal_beat_written_before_a_rename_renders_it_on_the_way_out() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("thing:handcart", "The Handcart").await;
@@ -454,8 +449,7 @@ async fn a_journal_beat_written_before_a_rename_renders_it_on_the_way_out() {
 /// back — through `search`, the one door onto anybody's mail.
 #[tokio::test]
 async fn a_posted_message_written_before_a_rename_renders_it_on_the_way_out() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("place:shelbyvile", "Shelbyville").await;
 
@@ -485,8 +479,7 @@ async fn a_posted_message_written_before_a_rename_renders_it_on_the_way_out() {
 /// and a walk that named no shape at all is what reaches them together.
 #[tokio::test]
 async fn a_walk_with_no_shape_named_reaches_an_edge_a_mention_and_a_ref_at_once() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("topic:widgets", "The Widgets Project").await;
     s.add("person:milhouse", "Milhouse").await;
@@ -552,8 +545,7 @@ async fn a_walk_with_no_shape_named_reaches_an_edge_a_mention_and_a_ref_at_once(
 /// quarantine reason stored what it was sent.
 #[tokio::test]
 async fn a_quarantine_reason_that_names_a_thing_follows_it_through_a_rename() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:handcart", "The Handcart").await;
     let stray = s
         .post("gamma", "Twice", "This one went out twice by mistake.")
@@ -604,8 +596,7 @@ async fn a_quarantine_reason_that_names_a_thing_follows_it_through_a_rename() {
 /// under the new name, and the walk reaches it from either end.
 #[tokio::test]
 async fn a_link_under_a_key_nobody_declared_follows_its_target_through_a_rename() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("work:sigma", "The First Job").await;
     s.add("thing:handcart", "The Handcart").await;
@@ -673,8 +664,7 @@ async fn a_link_under_a_key_nobody_declared_follows_its_target_through_a_rename(
 /// handle lands and reads back.
 #[tokio::test]
 async fn the_way_a_link_is_stored_is_refused_when_a_caller_writes_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("work:sigma", "The First Job").await;
     s.add("thing:handcart", "The Handcart").await;
@@ -767,8 +757,7 @@ async fn the_way_a_link_is_stored_is_refused_when_a_caller_writes_it() {
 /// afterwards, and finds nothing of a colleague's.
 #[tokio::test]
 async fn a_renamed_bots_outbox_still_lists_the_mail_it_sent_under_its_old_handle() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:sigma", "Sigma").await;
     s.add("bot:omega", "Omega").await;
     let sigma = story.as_bot("bot:sigma").await;
@@ -836,8 +825,7 @@ async fn a_renamed_bots_outbox_still_lists_the_mail_it_sent_under_its_old_handle
 /// reached.
 #[tokio::test]
 async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_one() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:milhouse", "Milhouse").await;
@@ -895,8 +883,7 @@ async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_o
 /// afterwards is a claim that moved and not one the query never reached.
 #[tokio::test]
 async fn search_follows_a_rename_into_a_claim_that_mentions_the_thing_only_in_its_details() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:homer", "Homer").await;
@@ -936,8 +923,7 @@ async fn search_follows_a_rename_into_a_claim_that_mentions_the_thing_only_in_it
 /// the archive and in every later read.** A badge in either is a link served bare.
 #[tokio::test]
 async fn the_reason_an_archive_records_reads_back_with_the_handle_it_names() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:handcart", "The Handcart").await;
     s.add("thread:deploys-alpha", "Deploys Alpha").await;
     let address = s

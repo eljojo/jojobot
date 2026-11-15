@@ -40,8 +40,7 @@ async fn the_ledger_under_the_twelfth_rule(s: &Session) {
 /// **The live read, the saved view and a rename agree.**
 #[tokio::test]
 async fn a_saved_view_names_a_decision_by_its_number_and_follows_its_rename() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_ledger_under_the_twelfth_rule(&s).await;
     let line = format!("ruled_by = {RULES}/12");
 
@@ -84,8 +83,7 @@ async fn a_saved_view_names_a_decision_by_its_number_and_follows_its_rename() {
 /// found instead, and nothing is saved.
 #[tokio::test]
 async fn a_saved_view_naming_a_number_nobody_holds_is_refused() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_ledger_under_the_twelfth_rule(&s).await;
     s.call(
         "add_entity",
@@ -119,8 +117,7 @@ async fn a_saved_view_naming_a_number_nobody_holds_is_refused() {
 /// addressed through. A number nobody holds is refused when the view is asked.
 #[tokio::test]
 async fn a_view_input_of_kind_decision_takes_a_decision_by_its_number() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_ledger_under_the_twelfth_rule(&s).await;
     s.call(
         "add_entity",
@@ -159,8 +156,7 @@ async fn a_view_input_of_kind_decision_takes_a_decision_by_its_number() {
 /// number**, as `recall` reads it. A number nobody holds is an unknown thing.
 #[tokio::test]
 async fn a_document_that_is_a_numbered_member_is_read_by_its_number() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_ledger_under_the_twelfth_rule(&s).await;
     s.call(
         "add_entity",
@@ -201,8 +197,7 @@ async fn a_document_that_is_a_numbered_member_is_read_by_its_number() {
 /// so the receipt never says the member was created.
 #[tokio::test]
 async fn an_edit_sent_a_members_number_reports_an_edit_and_not_a_creation() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_ledger_under_the_twelfth_rule(&s).await;
     let by_number = s
         .call(
@@ -263,8 +258,7 @@ async fn an_edit_sent_a_members_number_reports_an_edit_and_not_a_creation() {
 /// read.
 #[tokio::test]
 async fn a_document_that_is_a_numbered_member_is_written_by_its_number() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_ledger_under_the_twelfth_rule(&s).await;
     s.call(
         "add_entity",
@@ -334,8 +328,7 @@ async fn rules_in_a_book_in_a_chapter(s: &Session) {
 /// in a `where`**, as it does for `recall`.
 #[tokio::test]
 async fn an_address_through_two_collections_names_its_member_everywhere() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     rules_in_a_book_in_a_chapter(&s).await;
     let address = format!("{RULES}/2/5/7");
 
@@ -388,8 +381,7 @@ fn clauses(seed: usize, count: usize) -> Vec<String> {
 /// spelling. The size guard measures the member and not the address.
 #[tokio::test]
 async fn a_relabelling_too_big_to_read_is_refused_by_number_as_by_handle() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_ledger_under_the_twelfth_rule(&s).await;
     let number = format!("{RULES}/12");
     let handle = "decision:springfield-12";
@@ -433,8 +425,7 @@ async fn a_relabelling_too_big_to_read_is_refused_by_number_as_by_handle() {
 /// `recall` does. The old handle as a WHOLE reference stays refused.
 #[tokio::test]
 async fn a_number_through_a_renamed_collections_old_handle_names_its_member() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("topic:rules-old", "Old rules").await;
     s.call(
         "capture",

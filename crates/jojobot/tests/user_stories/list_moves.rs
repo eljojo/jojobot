@@ -62,8 +62,7 @@ async fn a_rotation_after_a_turn(s: &Session) -> (String, String, String) {
 /// that follow go on from where they were.
 #[tokio::test]
 async fn a_back_list_reads_a_moved_entry_first_until_it_is_ticked_and_then_resumes() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let (homer, bart, _lisa) = a_rotation_after_a_turn(&s).await;
 
     moving(&s, &homer, "first").await;
@@ -91,8 +90,7 @@ async fn a_back_list_reads_a_moved_entry_first_until_it_is_ticked_and_then_resum
 /// taken a turn, and the hold lasts through other entries' turns.
 #[tokio::test]
 async fn a_back_list_reads_an_entry_put_after_another_behind_it_until_it_is_ticked() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let (homer, bart, _lisa) = a_rotation_after_a_turn(&s).await;
 
     moving(&s, &homer, &bart).await;
@@ -120,8 +118,7 @@ async fn a_back_list_reads_an_entry_put_after_another_behind_it_until_it_is_tick
 /// **An entry sent to the end reads last, behind the entries that took a turn.**
 #[tokio::test]
 async fn a_back_list_reads_an_entry_sent_to_the_end_last_until_it_is_ticked() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let (_homer, bart, _lisa) = a_rotation_after_a_turn(&s).await;
 
     moving(&s, &bart, "last").await;
@@ -143,8 +140,7 @@ async fn a_back_list_reads_an_entry_sent_to_the_end_last_until_it_is_ticked() {
 /// and a tick does what the list is for.**
 #[tokio::test]
 async fn a_move_holds_on_sink_and_leave_lists_and_a_tick_does_what_the_list_is_for() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let tent = add_entry(&s, "list:packing", "tent", None).await;
     let stove = add_entry(&s, "list:packing", "stove", None).await;
@@ -257,8 +253,7 @@ async fn a_move_that_cannot_be_honoured_is_refused_and_writes_nothing() {
 /// positive is an entry put after one that has not turned.
 #[tokio::test]
 async fn a_new_entry_on_a_rotation_that_has_turned_sits_where_the_list_reads_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let (homer, bart, _lisa) = a_rotation_after_a_turn(&s).await;
 
     add_entry(&s, "list:rotation", "Marge", Some(&bart)).await;
@@ -325,8 +320,7 @@ async fn a_new_entry_cannot_be_put_behind_a_done_entry() {
 /// that session is still refused.
 #[tokio::test]
 async fn another_session_moves_an_entry_without_touching_its_words() {
-    let story = Story::begin("bot:gamma").await;
-    let writer = story.session().await;
+    let (story, writer) = Story::begin_with_session("bot:gamma").await;
     a_driving_rotation(&writer, "rotation", json!({"tick": "back"})).await;
     let homer = add_entry(&writer, "list:rotation", "Homer", None).await;
     add_entry(&writer, "list:rotation", "Bart", None).await;

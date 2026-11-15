@@ -49,8 +49,7 @@ async fn status_of(s: &Session) -> String {
 /// land.**
 #[tokio::test]
 async fn done_is_refused_through_every_verb_while_an_entry_is_open_and_lands_after() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     work_with_a_list(&s, "checklist", "sink").await;
     let claim = s
         .call(
@@ -123,8 +122,7 @@ async fn done_is_refused_through_every_verb_while_an_entry_is_open_and_lands_aft
 /// back.**
 #[tokio::test]
 async fn a_rotation_does_not_hold_a_work_item_from_done() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     work_with_a_list(&s, "packing", "back").await;
     add_entry(&s, "list:packing", "check the forms", None).await;
     s.call(

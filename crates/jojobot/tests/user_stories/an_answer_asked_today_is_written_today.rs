@@ -19,8 +19,7 @@ const TODAY: &str = "2026-11-08";
 /// **The teachings the first read of the glasses carried**, for a claim dated
 /// `claim_day`, read by a session standing in [`TODAY`].
 async fn first_read_teachings(claim_day: &str) -> usize {
-    let story = Story::begin("bot:otto").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:otto").await;
     setup.add("thing:glasses", "The glasses").await;
     setup
         .fact_on(
@@ -50,8 +49,7 @@ async fn a_read_of_last_seasons_answer_teaches_one_more_than_a_read_of_todays() 
 /// story ran, so a reader on a day after it stands later than the write and a
 /// reader on a day before it stands earlier.
 async fn first_field_read_teachings(reader_day: &str) -> usize {
-    let story = Story::begin("bot:otto").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:otto").await;
     setup.add("thing:glasses", "The glasses").await;
     setup
         .call(
@@ -88,8 +86,7 @@ async fn a_default_read_of_an_earlier_days_fields_teaches_one_more_than_a_read_o
 
 #[tokio::test]
 async fn an_answer_asked_today_is_written_on_the_thing_and_read_back_dated_today() {
-    let story = Story::begin("bot:otto").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:otto").await;
     setup.add("thing:glasses", "The glasses").await;
     setup
         .fact_on(

@@ -14,8 +14,7 @@ use super::dsl::Story;
 /// A machine read with no system named is refused by name, per verb.
 #[tokio::test]
 async fn a_read_with_no_system_is_refused_naming_the_argument_of_the_verb_called() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("document:homer", "Homer").await;
     s.add("thing:gamma", "Gamma").await;
 
@@ -63,8 +62,7 @@ async fn a_read_with_no_system_is_refused_naming_the_argument_of_the_verb_called
 /// A receipt without a move to settled is refused; with one, it settles.
 #[tokio::test]
 async fn a_receipt_is_accepted_only_with_a_move_to_settled() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:gamma", "Gamma").await;
     let claim = s.guess("thing:gamma", "the rigging holds").await;
 
@@ -99,8 +97,7 @@ async fn a_receipt_is_accepted_only_with_a_move_to_settled() {
 /// nothing.
 #[tokio::test]
 async fn a_capture_with_a_receipt_lands_only_when_it_lands_settled() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:gamma", "Alpha").await;
 
     // An inference, a receipt, and no standing: refused, nothing written.

@@ -31,8 +31,7 @@ async fn the_child_is_where_it_was(s: &Session, when: &str) {
 
 #[tokio::test]
 async fn a_mistaken_entry_drops_out_of_the_default_list_and_stays_reachable_by_name() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     // Two people on file — one turns out not to belong here, one is
     // ordinary and stays exactly as it was.
@@ -156,8 +155,7 @@ async fn an_archived_thing_is_put_back_with_its_records_and_the_history_of_both_
 /// them and carries no such line.
 #[tokio::test]
 async fn an_empty_browse_says_what_it_looked_through_and_a_full_one_does_not() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("person:apu", "Apu").await;
     s.call(

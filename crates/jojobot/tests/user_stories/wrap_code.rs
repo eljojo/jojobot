@@ -66,8 +66,7 @@ async fn working_on(who: &Session, focus: &str, entry: &str) {
 
 #[tokio::test]
 async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_stays_wrapped() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     working_on(&first, "the run that wraps twice", "built the first part").await;
     assert_eq!(
         runs_on_the_page(&story).await["the run that wraps twice"],
@@ -197,8 +196,7 @@ async fn story_refuses_a_code(asking: &Session, code: &str) {
 
 #[tokio::test]
 async fn a_newer_run_ends_the_window_and_is_left_alone() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     working_on(&first, "the run that wrapped", "did the work").await;
     let code = first
         .call("wrap_session", json!({"story": "told"}))
@@ -238,8 +236,7 @@ async fn a_newer_run_ends_the_window_and_is_left_alone() {
 
 #[tokio::test]
 async fn a_newer_run_ends_an_open_window_at_its_first_write() {
-    let story = Story::begin("bot:otto").await;
-    let older = story.session().await;
+    let (story, older) = Story::begin_with_session("bot:otto").await;
     working_on(&older, "the run that wraps late", "did the work").await;
 
     // The newer run is booted while the older one is live, and writes nothing,
@@ -284,8 +281,7 @@ async fn a_newer_run_ends_an_open_window_at_its_first_write() {
 
 #[tokio::test]
 async fn using_the_code_abandons_no_other_run_of_the_bot() {
-    let story = Story::begin("bot:otto").await;
-    let older = story.session().await;
+    let (story, older) = Story::begin_with_session("bot:otto").await;
     working_on(&older, "the older run still open", "left open on purpose").await;
 
     // A second run of the same bot, answering `new` to the offer.
@@ -357,8 +353,7 @@ async fn answering_new_to_the_offer_starts_a_newer_run_and_ends_the_window() {
 
 #[tokio::test]
 async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     first.add("person:milhouse", "Milhouse").await;
     working_on(&first, "the run that reopens", "did the work").await;
     let code = first
@@ -514,8 +509,7 @@ async fn the_handover_after_a_reopened_run_is_the_closing_story() {
 /// last change between them.
 #[tokio::test]
 async fn the_handover_after_a_second_wrap_is_the_newest_closing_story() {
-    let story = Story::begin("bot:otto").await;
-    let run = story.session().await;
+    let (story, run) = Story::begin_with_session("bot:otto").await;
     working_on(&run, "a run wrapped twice", "set out").await;
     let wrapped = run
         .call(
@@ -568,8 +562,7 @@ async fn the_handover_after_a_second_wrap_is_the_newest_closing_story() {
 /// role without taking it over from a run, so the release is what freed it.
 #[tokio::test]
 async fn a_live_handover_is_a_wrap_the_next_agent_reads_and_the_role_is_free_at_once() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.event_with(
         "bot:gamma",

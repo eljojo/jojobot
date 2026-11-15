@@ -12,8 +12,7 @@ use super::dsl::Story;
 /// found the thing before no longer finds it.
 #[tokio::test]
 async fn an_empty_value_takes_the_key_off_so_a_bare_key_where_no_longer_finds_the_thing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add("person:marge", "Marge").await;
     s.event_with(

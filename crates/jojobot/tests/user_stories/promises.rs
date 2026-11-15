@@ -19,8 +19,7 @@ fn owed_on(day: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn a_borrowed_thing_that_has_to_go_back_is_owed_beside_the_loops() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     // ── the people and things it is about ───────────────────────────────────
     s.add("person:ned-flanders", "Ned").await;
@@ -248,8 +247,7 @@ async fn the_stored_due_moment_is_jojobots_and_a_promise_keeps_the_operators_wor
 /// advice is told apart by kind.
 #[tokio::test]
 async fn the_refusal_for_a_hand_written_due_moment_tells_finished_work_to_be_marked_done() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("project:atlas", "Atlas").await;
     s.add_under("project:atlas", "work:phi", "Phi").await;
@@ -301,8 +299,7 @@ async fn the_refusal_for_a_hand_written_due_moment_tells_finished_work_to_be_mar
 #[tokio::test]
 async fn a_promises_refusal_names_ended_and_ending_it_stops_it_falling_due() {
     use jojobot_domain::attention::PromiseEnd;
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:ned-flanders", "Ned").await;
     s.add_under(
         "person:ned-flanders",

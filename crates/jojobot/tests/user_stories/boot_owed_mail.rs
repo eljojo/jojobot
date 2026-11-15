@@ -16,8 +16,7 @@ const RECOVERY_ARGUMENT: &str = "new_only";
 
 #[tokio::test]
 async fn a_boot_names_the_read_that_returns_mail_delivered_and_not_finished() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
     s.post("gamma", "the first", "one").await;

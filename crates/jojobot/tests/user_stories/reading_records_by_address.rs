@@ -124,8 +124,7 @@ async fn a_reader_with_three_addresses_reads_what_each_says_now_in_one_call() {
 /// sent alone is served, so none of the refusals is about the list.
 #[tokio::test]
 async fn a_day_a_window_or_a_clock_beside_a_list_of_records_is_refused_by_name() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:the-mailbox", "The Mailbox").await;
     let painted = s.fact("thing:the-mailbox", "is painted green").await;
 
@@ -163,8 +162,7 @@ async fn a_day_a_window_or_a_clock_beside_a_list_of_records_is_refused_by_name()
 /// served whole.
 #[tokio::test]
 async fn an_address_on_a_merged_away_thing_is_named_and_the_rest_are_served() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     s.add("person:bart", "Bart").await;
     let cornet = s.fact("person:milhouse", "plays the cornet").await;
@@ -209,8 +207,7 @@ async fn an_address_on_a_merged_away_thing_is_named_and_the_rest_are_served() {
 /// doing and the answer says so.
 #[tokio::test]
 async fn an_offset_past_the_last_record_says_how_many_records_there_are() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:the-mailbox", "The Mailbox").await;
     let painted = s.fact("thing:the-mailbox", "is painted green").await;
     let dented = s.fact("thing:the-mailbox", "has a dent in the flag").await;

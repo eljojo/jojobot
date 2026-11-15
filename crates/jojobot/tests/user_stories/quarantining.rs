@@ -24,8 +24,7 @@ fn is_the_verbs_own_refusal(refusal: &Value, arguments: &[&str]) {
 
 #[tokio::test]
 async fn a_blank_quarantine_reason_is_refused_and_retires_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let stray = s
         .post("gamma", "Twice", "This one went out twice by mistake.")
@@ -91,8 +90,7 @@ async fn a_blank_quarantine_reason_is_refused_and_retires_nothing() {
 /// and teach it nothing, so the pair is refused and nothing is written.
 #[tokio::test]
 async fn a_quarantine_beside_notes_is_refused_and_nothing_is_written() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let stray = s
         .post("gamma", "Twice", "This one went out twice by mistake.")
@@ -142,8 +140,7 @@ async fn a_quarantine_beside_notes_is_refused_and_nothing_is_written() {
 /// is written, and the message still reads back processed with its notes.
 #[tokio::test]
 async fn a_processed_message_is_refused_a_quarantine_and_stays_readable() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:lisa", "Lisa").await;
     let done = s.post("lisa", "Done", "This one was handled.").await;
     let open = s

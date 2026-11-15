@@ -25,8 +25,7 @@ fn pledge_type(must: &str) -> serde_json::Value {
 #[tokio::test]
 #[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_claim_missing_what_the_types_rule_asks_for_is_refused_and_says_what_fixes_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     let rule = "!(purpose = pledge) || witness || receipt_note";
     let declared = s.call("declare_type", pledge_type(rule)).await.json();
@@ -82,8 +81,7 @@ async fn a_claim_missing_what_the_types_rule_asks_for_is_refused_and_says_what_f
 #[tokio::test]
 #[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_rule_that_does_not_read_is_refused_when_the_type_is_declared() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.refused("declare_type", pledge_type("witness &&")).await;
     let types = s.call("declare_type", pledge_type("witness")).await.json();
     assert_eq!(types["type"]["must"], "witness", "{types}");
@@ -116,8 +114,7 @@ async fn queue(defrag: &super::dsl::Session) -> Vec<String> {
 #[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_refused_claim_lands_with_its_token_and_a_written_reason_and_the_thing_waits_for_review()
 {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     s.call(
         "declare_type",
@@ -188,8 +185,7 @@ async fn a_refused_claim_lands_with_its_token_and_a_written_reason_and_the_thing
 #[tokio::test]
 #[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn an_edit_the_rule_turns_away_lands_with_its_token_and_a_written_reason() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     s.call("declare_type", pledge_type("witness || receipt_note"))
         .await;
@@ -239,8 +235,7 @@ async fn an_edit_the_rule_turns_away_lands_with_its_token_and_a_written_reason()
 #[tokio::test]
 #[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_verb_without_an_override_names_the_key_and_the_verbs_that_have_one() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     // The rule asks a thing set through these verbs to carry a `witness`.
     s.call("declare_type", pledge_type("witness || receipt_note"))
@@ -280,8 +275,7 @@ async fn a_verb_without_an_override_names_the_key_and_the_verbs_that_have_one() 
 #[tokio::test]
 #[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_claim_whose_value_the_rule_turns_away_names_the_key_and_the_values_it_asks_for() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     s.call(
         "declare_type",
@@ -318,8 +312,7 @@ async fn a_claim_whose_value_the_rule_turns_away_names_the_key_and_the_values_it
 #[tokio::test]
 #[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_claim_failing_two_rules_is_refused_for_each_in_turn_and_each_token_lifts_its_own() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     for (name, key) in [("twin-alpha", "twin_alpha"), ("twin-beta", "twin_beta")] {
         s.call(
@@ -376,8 +369,7 @@ async fn a_claim_failing_two_rules_is_refused_for_each_in_turn_and_each_token_li
 #[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn the_advice_asks_for_all_of_the_keys_a_rule_needs_all_of_and_one_of_those_it_needs_one_of()
 {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     s.call(
         "declare_type",
@@ -443,8 +435,7 @@ async fn a_relative_day_in_a_rule_counts_from_the_day_the_run_is_in() {
 /// turned away is written, because nothing is refused by a type's rule.
 #[tokio::test]
 async fn a_type_declared_with_a_rule_is_refused_and_one_without_it_refuses_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     let refused = s
         .refused(

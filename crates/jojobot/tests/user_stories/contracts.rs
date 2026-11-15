@@ -24,8 +24,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_declared_type_describes_a_thing_and_holds_it_to_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("place:moes", "Moe's").await;
     s.add("pet:santas-little-helper", "Santa's Little Helper")

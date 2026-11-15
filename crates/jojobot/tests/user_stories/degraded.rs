@@ -157,8 +157,7 @@ async fn a_write_that_lands_with_the_fold_behind_is_found_by_search() {
 /// asserts are about the fold being behind and nothing else.
 #[tokio::test]
 async fn a_capture_the_fold_followed_is_found_by_search() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:apu", "Apu").await;
     s.fact("person:apu", "collects thimbles").await;
 

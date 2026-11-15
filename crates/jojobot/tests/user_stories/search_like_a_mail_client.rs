@@ -155,8 +155,7 @@ async fn an_archived_claim_is_found_below_the_active_ones_and_a_retracted_one_is
 /// the claim that took its place, and an active claim carries nothing.
 #[tokio::test]
 async fn a_replaced_claim_names_the_claim_that_replaced_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("person:maude", "Maude").await;
     let bees = s.fact("person:maude", "keeps bees on the roof").await;

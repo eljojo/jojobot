@@ -21,8 +21,7 @@ const DUPLICATE: &str = "thread:simpson-kitchen";
 /// archiving the claim lands and the merge then lands.
 #[tokio::test]
 async fn a_merge_refusal_names_the_archive_route_only_to_a_caller_whose_archive_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     s.add("bot:bart", "Bart").await;
     let marge = story.as_bot("bot:marge").await;
@@ -102,8 +101,7 @@ async fn a_merge_refusal_names_the_archive_route_only_to_a_caller_whose_archive_
 /// note, where marge may not.
 #[tokio::test]
 async fn a_bot_that_set_a_ceiling_and_took_it_off_is_not_made_a_writer_by_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     s.add("thread:alpha", "Alpha").await;

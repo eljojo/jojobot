@@ -15,8 +15,7 @@ use super::dsl::{Answer, Story};
 /// the first act is a `keep` on the first two thoughts, or a journal entry and
 /// then the keeps.
 async fn the_room_in_the_third_run(journal_first: bool) -> (Answer, Vec<String>) {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     first.add("bot:marge", "Marge").await;
     // The ceilings of a room are set by another identity, never by its bot.
     let marge = story.as_bot("bot:marge").await;

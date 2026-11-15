@@ -197,8 +197,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
 
 #[tokio::test]
 async fn a_trips_two_ends_are_places_and_an_organisation_at_either_end_is_reported_by_name() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add(
         "event:gorge-safety-inspection",
         "The Gorge Safety Inspection",
@@ -308,8 +307,7 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
     // name only, so the first question it can ask is `answers_type: trip`, and
     // an empty answer that said nothing more sent it away without the spelling
     // of a single key.
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add(
         "event:gorge-safety-inspection",
         "The Gorge Safety Inspection",
@@ -380,8 +378,7 @@ async fn a_record_holding_only_some_of_a_types_keys_is_kept_and_found_with_what_
     // know where the trip starts.** The empty answer is where it decides, so the
     // note there names the bag that sets keys on a thing and says that a record
     // holding only what is known is kept and found.
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let empty = s
         .call("recall", json!({ "answers_type": "trip" }))
         .await

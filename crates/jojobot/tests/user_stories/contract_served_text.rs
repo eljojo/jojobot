@@ -17,8 +17,7 @@ use super::dsl::Story;
 /// served with, its description or its arguments', or not at all.
 #[tokio::test]
 async fn the_description_of_a_verb_names_the_keys_its_answer_can_carry() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let list_runs = s.served_text("list_runs").await;
     for key in ["unreadable", "fix_by"] {
         assert!(
@@ -42,8 +41,7 @@ async fn the_description_of_a_verb_names_the_keys_its_answer_can_carry() {
 /// publish it.
 #[tokio::test]
 async fn capture_and_update_fact_publish_no_override_while_no_refusal_of_theirs_carries_one() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     for argument in ["override_token", "override_reason"] {
         let publishing = s.verbs_publishing(argument).await;
         for verb in ["capture", "update_fact"] {

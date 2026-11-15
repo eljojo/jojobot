@@ -14,8 +14,7 @@ use super::dsl::Story;
 /// the bot's name beside the bot it is about.
 #[tokio::test]
 async fn the_first_claim_on_a_bot_made_with_settings_is_found_by_a_default_search() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let made = s
         .call(
             "add_entity",

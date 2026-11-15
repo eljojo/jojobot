@@ -87,8 +87,7 @@ fn all_name(moved: &[(String, Option<String>)], run: &str, at_least: usize) {
 /// names its run as it always did.
 #[tokio::test]
 async fn a_retraction_names_the_run_that_made_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("thing:delta", "Delta").await;
     let gamma = story.as_bot("bot:gamma").await;
@@ -115,8 +114,7 @@ async fn a_retraction_names_the_run_that_made_it() {
 /// **A fold names the run that made it**, on the account the survivor keeps.
 #[tokio::test]
 async fn a_merge_names_the_run_that_made_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("thing:epsilon", "Epsilon").await;
     s.add("thing:sigma", "Sigma").await;
@@ -138,8 +136,7 @@ async fn a_merge_names_the_run_that_made_it() {
 /// records both acts.
 #[tokio::test]
 async fn a_restore_names_the_run_that_made_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("thing:omega", "Omega").await;
     let gamma = story.as_bot("bot:gamma").await;
@@ -164,8 +161,7 @@ async fn a_restore_names_the_run_that_made_it() {
 /// **A role's claim and its release name the run that held it.**
 #[tokio::test]
 async fn a_role_claim_and_a_release_name_the_run() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     // A role nobody has claimed is not an entity yet, and holds no claim.
     let before = BTreeMap::new();
@@ -190,8 +186,7 @@ async fn a_role_claim_and_a_release_name_the_run() {
 /// **Taking the stored due moment off a thing names the run that did.**
 #[tokio::test]
 async fn clearing_a_stored_due_moment_names_the_run_that_did() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("thing:tau", "Tau").await;
     let gamma = story.as_bot("bot:gamma").await;

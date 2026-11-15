@@ -32,8 +32,7 @@ async fn overdue(s: &super::dsl::Session) -> Vec<String> {
 
 #[tokio::test]
 async fn a_runs_out_thing_that_ended_is_not_owed_and_keeps_its_date() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(DESK, "Standing desk").await;
     s.call(
         "capture",
@@ -101,8 +100,7 @@ async fn a_runs_out_thing_that_ended_is_not_owed_and_keeps_its_date() {
 
 #[tokio::test]
 async fn a_decide_by_thing_that_ended_is_not_owed_and_keeps_its_date() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("project:atlas", "Atlas").await;
     s.call(
         "capture",
@@ -145,8 +143,7 @@ async fn a_decide_by_thing_that_ended_is_not_owed_and_keeps_its_date() {
 async fn a_thing_the_old_build_left_holding_both_runs_out_and_ended_is_not_owed() {
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
 
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     let store = story.memory_store();
     let desk = EntityId(DESK.into());
     store

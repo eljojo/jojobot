@@ -25,8 +25,7 @@ async fn without_a_box(story: &Story, handle: &str, name: &str) {
 
 #[tokio::test]
 async fn a_boot_opens_no_box_for_a_folded_bot_and_one_for_an_unfolded_bot() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     without_a_box(&story, "bot:lisa", "Lisa").await;
     without_a_box(&story, "bot:delta", "Delta").await;
@@ -81,8 +80,7 @@ async fn a_boot_opens_no_box_for_a_folded_bot_and_one_for_an_unfolded_bot() {
 /// fold would be refused for a missing box.
 #[tokio::test]
 async fn mail_to_a_folded_bot_reaches_the_survivor_and_the_receipt_names_the_fold() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     without_a_box(&story, "bot:lisa", "Lisa").await;
     story.the_store_changed_underneath().await;

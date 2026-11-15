@@ -10,8 +10,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn the_writer_of_a_message_to_the_operator_reads_its_receipt_and_another_bot_does_not() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:lisa", "Lisa").await;
     s.event_with(
         "topic:instance",

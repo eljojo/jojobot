@@ -24,8 +24,7 @@ fn note(read: &Value) -> Option<&Value> {
 /// left prose out.** Asked for, the prose comes back and the note does not.
 #[tokio::test]
 async fn a_read_of_runs_says_once_that_it_left_their_prose_out_and_how_to_ask() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
 
     let read = s.call("recall", json!({"kind": "session"})).await.json();
@@ -60,8 +59,7 @@ async fn a_read_of_runs_says_once_that_it_left_their_prose_out_and_how_to_ask() 
 /// no page, so there is nothing left out to report.
 #[tokio::test]
 async fn a_read_of_things_with_no_prose_says_nothing_of_prose() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("person:homer", "Homer"),
         ("person:lisa", "Lisa"),
@@ -87,8 +85,7 @@ async fn a_read_of_things_with_no_prose_says_nothing_of_prose() {
 /// out**, so the prose note does not repeat it.
 #[tokio::test]
 async fn a_bots_charter_note_is_not_said_twice() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     s.call(
         "set_charter",
@@ -120,8 +117,7 @@ async fn with_a_page(story: &Story, handle: &str, page: &str) {
 /// does not.
 #[tokio::test]
 async fn a_read_of_a_thing_with_a_page_says_its_prose_was_left_out() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     with_a_page(&story, "person:milhouse", "Milhouse lives next door.").await;
 
@@ -164,8 +160,7 @@ async fn a_read_of_a_thing_with_a_page_says_its_prose_was_left_out() {
 /// thing with no page says nothing of prose on its own.
 #[tokio::test]
 async fn a_kind_read_counts_only_the_pages_it_left_out() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("person:milhouse", "Milhouse"),
         ("person:lisa", "Lisa"),
@@ -206,8 +201,7 @@ async fn a_kind_read_counts_only_the_pages_it_left_out() {
 /// says nothing of prose.
 #[tokio::test]
 async fn a_walk_names_the_pages_it_reached_and_left_out() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("person:milhouse", "Milhouse"),
         ("person:nelson", "Nelson"),

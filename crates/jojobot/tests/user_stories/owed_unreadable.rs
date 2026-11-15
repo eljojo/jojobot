@@ -49,8 +49,7 @@ fn the_object<'a>(owed: &'a Value, handle: &str) -> &'a Value {
 /// day and to put the broken one ahead of it.
 #[tokio::test]
 async fn a_thing_whose_schedule_cannot_be_read_is_owed_first_with_its_reason() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:fern", "The Fern").await;
     s.add("thing:wrench", "The Wrench").await;
     s.event_with(

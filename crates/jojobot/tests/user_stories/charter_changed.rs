@@ -22,8 +22,7 @@ fn entrant(answer: &Answer) -> Value {
 #[tokio::test]
 async fn a_charter_rewritten_by_another_identity_is_told_to_the_running_session_until_it_reads_it()
 {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
     // A run that has written nothing has no card yet, and it is told all the same.
@@ -120,8 +119,7 @@ async fn a_charter_rewritten_by_another_identity_is_told_to_the_running_session_
 
 #[tokio::test]
 async fn a_bot_rewriting_its_own_charter_and_a_first_boot_after_a_change_are_told_nothing() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
     // Another run of gamma, written nothing yet, which never reads its charter.
@@ -206,8 +204,7 @@ fn offered(door: &Answer) -> String {
 /// restarted between the change and the resume.
 #[tokio::test]
 async fn a_resumed_run_is_told_until_it_reads_the_charter_the_same_after_a_restart() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     // A write makes the run a card, which is what a later boot can offer back.
     gamma.journal("working to the first charter").await;
@@ -303,8 +300,7 @@ async fn a_resumed_run_is_told_until_it_reads_the_charter_the_same_after_a_resta
 /// restart after that still tells it about that change.
 #[tokio::test]
 async fn a_charter_read_before_the_run_had_a_card_is_remembered_by_the_card_it_makes() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
     // This run has written nothing, so it has no card yet.
@@ -368,8 +364,7 @@ async fn a_charter_read_before_the_run_had_a_card_is_remembered_by_the_card_it_m
 /// bot's page does not end a notice about one's own.
 #[tokio::test]
 async fn reading_ones_own_bots_prose_ends_the_notice_and_another_bots_does_not() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
     delta
@@ -428,8 +423,7 @@ async fn a_new_run_is_told_of_a_charter_rewritten_between_the_offer_and_the_answ
     for (with_the_code, rewritten_between) in
         [(true, false), (true, true), (false, false), (false, true)]
     {
-        let story = Story::begin("bot:gamma").await;
-        let gamma = story.session().await;
+        let (story, gamma) = Story::begin_with_session("bot:gamma").await;
         gamma.add("bot:delta", "Delta").await;
         // A write makes the run a card, which is what a later boot offers back.
         gamma.journal("working to the first charter").await;
@@ -492,8 +486,7 @@ async fn a_new_run_is_told_of_a_charter_rewritten_between_the_offer_and_the_answ
 /// A restart then loses what the process held, so the card is all that is left.
 #[tokio::test]
 async fn a_new_run_with_no_offer_code_keeps_the_notice_through_its_first_write_and_a_restart() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     // A write makes the run a card, which is what a later boot offers back.
     gamma.journal("working to the first charter").await;

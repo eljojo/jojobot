@@ -36,8 +36,7 @@ fn claim_of(booted: &serde_json::Value) -> &serde_json::Value {
 
 #[tokio::test]
 async fn a_claim_at_the_door_is_refused_when_the_role_belongs_to_another_bot() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     s.add("bot:bart", "Bart").await;
 
@@ -138,8 +137,7 @@ fn reporting_to(subject: &str, manager: &str) -> serde_json::Value {
 /// Without this, archiving would free the name and walk around the owner check.
 #[tokio::test]
 async fn only_the_owner_or_the_chart_head_may_archive_or_restore_a_role_object() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     s.add("bot:bart", "Bart").await;
     s.add("bot:smithers", "Smithers").await;
@@ -247,8 +245,7 @@ async fn only_the_owner_or_the_chart_head_may_archive_or_restore_a_role_object()
 /// of this role would not pass.
 #[tokio::test]
 async fn a_claim_on_an_archived_role_object_is_refused_naming_the_restore() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     s.add("bot:bart", "Bart").await;
     let marge = story.as_bot("bot:marge").await;
@@ -315,8 +312,7 @@ async fn a_claim_on_an_archived_role_object_is_refused_naming_the_restore() {
 /// thing, so the served sentence says "a role claim at boot".
 #[tokio::test]
 async fn a_memory_claim_on_an_archived_role_object_still_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     let (booted, _) = story
@@ -367,8 +363,7 @@ async fn a_memory_claim_on_an_archived_role_object_still_lands() {
 /// object would not pass.
 #[tokio::test]
 async fn only_the_owner_or_the_chart_head_may_move_or_merge_a_role_object() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("bot:marge", "Marge"),
         ("bot:bart", "Bart"),

@@ -73,8 +73,7 @@ fn the_step() -> Vec<(String, Vec<String>)> {
 /// missing other keys is told for itself.
 #[tokio::test]
 async fn a_run_of_things_missing_the_same_keys_is_told_once_and_other_keys_are_told_again() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     declare_the_type(&s).await;
 
     // ── (1) the first receipt carries the step whole ────────────────────────
@@ -112,8 +111,7 @@ async fn a_run_of_things_missing_the_same_keys_is_told_once_and_other_keys_are_t
 /// A new session is told again on its first create, whatever an earlier one was told.
 #[tokio::test]
 async fn a_new_session_is_told_again_on_its_first_create() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     declare_the_type(&s).await;
     let first = chore(&s, 1, json!({"title": "sweep the porch"})).await;
     assert_eq!(type_steps(&first), the_step(), "{first}");

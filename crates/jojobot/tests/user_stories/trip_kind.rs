@@ -13,8 +13,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_trip_is_a_kind_whose_keys_decide_which_trips_fit() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("place:springfield", "Springfield").await;
     s.add("place:shelbyville", "Shelbyville").await;
 
@@ -86,8 +85,7 @@ async fn a_trip_is_a_kind_whose_keys_decide_which_trips_fit() {
 /// so the name is the whole cause.
 #[tokio::test]
 async fn declaring_a_type_called_trip_is_refused_and_the_same_fields_under_another_name_are_not() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let fields = json!([{ "key": "cadence_km", "holds": "number" }]);
     let refused = s
         .refused("declare_type", json!({ "name": "trip", "fields": fields }))

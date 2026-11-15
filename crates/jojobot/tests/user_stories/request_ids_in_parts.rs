@@ -28,8 +28,7 @@ async fn row_versions(s: &super::dsl::Session, handle: &str) -> i64 {
 
 #[tokio::test]
 async fn a_charter_whose_change_record_failed_is_finished_by_sending_it_again() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
     let args = json!({ "bot": "bot:gamma", "prose": CHARTER, "request_id": "charter-1" });
@@ -81,8 +80,7 @@ async fn a_charter_whose_change_record_failed_is_finished_by_sending_it_again() 
 
 #[tokio::test]
 async fn a_restart_between_the_two_calls_still_finishes_the_write() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
     let args = json!({ "bot": "bot:gamma", "prose": CHARTER, "request_id": "charter-2" });
@@ -105,8 +103,7 @@ async fn a_restart_between_the_two_calls_still_finishes_the_write() {
 
 #[tokio::test]
 async fn an_id_sent_with_other_arguments_before_the_write_finished_is_turned_back() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
 
@@ -138,8 +135,7 @@ async fn an_id_sent_with_other_arguments_before_the_write_finished_is_turned_bac
 
 #[tokio::test]
 async fn a_restore_whose_history_claim_failed_is_finished_by_sending_it_again() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     s.call(
         "archive_entity",
@@ -208,8 +204,7 @@ async fn a_restore_whose_history_claim_failed_is_finished_by_sending_it_again() 
 
 #[tokio::test]
 async fn a_rename_whose_box_repoint_failed_is_finished_by_sending_it_again() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     gamma
         .post("delta", "for the new name", "mail that has to follow")
@@ -317,8 +312,7 @@ async fn a_numbered_rename_whose_box_repoint_failed_is_finished_by_sending_it_ag
 
 #[tokio::test]
 async fn a_rename_whose_reason_failed_is_finished_by_sending_it_again() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("org:moes-tavern", "Moes Tavern").await;
     s.add("place:moes", "Moe's").await;
     s.add("place:gorge-spot", "The back room").await;
@@ -370,8 +364,7 @@ async fn has_a_box(story: &Story, name: &str) -> bool {
 
 #[tokio::test]
 async fn a_bot_whose_box_failed_to_open_is_finished_by_sending_it_again() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     let args = json!({
         "kind": "bot", "handle": "delta", "name": "Delta", "source": "user-named",
         "request_id": "bot-1",
@@ -409,8 +402,7 @@ async fn a_bot_whose_box_failed_to_open_is_finished_by_sending_it_again() {
 
 #[tokio::test]
 async fn a_post_whose_delivery_failed_is_finished_by_sending_it_again_with_the_same_mail() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
     delta
@@ -459,8 +451,7 @@ async fn a_post_whose_delivery_failed_is_finished_by_sending_it_again_with_the_s
 
 #[tokio::test]
 async fn a_first_post_to_the_operator_whose_box_failed_to_open_is_sent_again_and_opens_it_once() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:lisa", "Lisa").await;
     s.event_with(
         "topic:instance",
@@ -494,8 +485,7 @@ async fn a_first_post_to_the_operator_whose_box_failed_to_open_is_sent_again_and
 
 #[tokio::test]
 async fn a_capture_that_ends_what_is_owed_is_finished_by_sending_it_again() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:standing-desk", "Standing desk").await;
     s.call(
         "capture",
@@ -557,8 +547,7 @@ async fn a_capture_that_ends_what_is_owed_is_finished_by_sending_it_again() {
 
 #[tokio::test]
 async fn a_capture_that_ends_what_is_owed_and_landed_whole_is_a_repeat_when_sent_again() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:standing-desk", "Standing desk").await;
     s.call(
         "capture",
@@ -598,8 +587,7 @@ const MANUAL: &str = "# Fryer manual\n\nRead this before the first shift.\n\n## 
 
 #[tokio::test]
 async fn a_document_put_that_stopped_partway_is_finished_in_the_same_places_by_sending_it_again() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:homer", "Fryer manual").await;
     let args = json!({
         "document": "document:homer", "markdown": MANUAL, "request_id": "put-1",
@@ -656,8 +644,7 @@ async fn a_document_put_that_stopped_partway_is_finished_in_the_same_places_by_s
 
 #[tokio::test]
 async fn a_put_after_a_section_that_stopped_partway_finishes_in_the_places_the_first_call_chose() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:homer", "Fryer manual").await;
     s.call(
         "put_document",
@@ -698,8 +685,7 @@ fn paragraph() -> String {
 
 #[tokio::test]
 async fn a_long_section_put_in_cut_pieces_finishes_with_every_piece_linked_to_its_heading() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:homer", "Fryer manual").await;
     let mut text = String::from("# Big\n\n");
     for _ in 0..60 {
@@ -743,8 +729,7 @@ async fn a_long_section_put_in_cut_pieces_finishes_with_every_piece_linked_to_it
 
 #[tokio::test]
 async fn a_section_moved_with_its_cut_pieces_is_finished_in_the_places_the_first_call_chose() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:homer", "Fryer manual").await;
     let mut text = String::from("# A\n\nalpha.\n\n# B\n\n");
     for _ in 0..60 {
@@ -826,8 +811,7 @@ async fn a_section_moved_with_its_cut_pieces_is_finished_in_the_places_the_first
 
 #[tokio::test]
 async fn a_section_moved_whole_under_an_id_is_a_repeat_when_sent_again() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:homer", "Fryer manual").await;
     s.call(
         "put_document",
@@ -873,8 +857,7 @@ async fn a_section_moved_whole_under_an_id_is_a_repeat_when_sent_again() {
 
 #[tokio::test]
 async fn a_beat_whose_focus_failed_is_finished_by_sending_it_again_and_the_entry_lands_once() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.journal("opened the run").await;
     let handle = format!("session:{}", s.run());
     let args = json!({
@@ -911,8 +894,7 @@ async fn a_beat_whose_focus_failed_is_finished_by_sending_it_again_and_the_entry
 
 #[tokio::test]
 async fn a_beat_whose_working_on_failed_is_finished_by_sending_it_again() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("work:sigma", "Sigma").await;
     let reader = story.as_bot("bot:assistant").await;
     let working_on = || async {
@@ -942,8 +924,7 @@ async fn a_beat_whose_working_on_failed_is_finished_by_sending_it_again() {
 
 #[tokio::test]
 async fn a_compaction_report_whose_total_failed_is_sent_again_and_marks_the_run_once() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let run = story.as_bot("bot:gamma").await;
     run.journal("opened the run").await;
@@ -983,8 +964,7 @@ async fn a_compaction_report_whose_total_failed_is_sent_again_and_marks_the_run_
 
 #[tokio::test]
 async fn an_edit_that_ends_what_is_owed_is_finished_by_sending_it_again() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:standing-desk", "Standing desk").await;
     let carrier = s
         .call(
@@ -1032,8 +1012,7 @@ async fn an_edit_that_ends_what_is_owed_is_finished_by_sending_it_again() {
 
 #[tokio::test]
 async fn an_entity_edit_that_ends_what_is_owed_is_finished_by_sending_it_again() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:standing-desk", "Standing desk").await;
     s.call(
         "capture",

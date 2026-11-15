@@ -44,8 +44,7 @@ fn carries_the_note(answer: &Answer) -> bool {
 
 #[tokio::test]
 async fn an_empty_search_names_the_place_that_shares_a_word_with_it() {
-    let story = Story::begin("bot:otto").await;
-    let writer = story.session().await;
+    let (story, writer) = Story::begin_with_session("bot:otto").await;
     writer.add("place:wonder-wharf", "Wonder Wharf").await;
     writer.add("person:lisa", "Lisa").await;
     writer.add("bot:sigma", "Sigma").await;
@@ -91,8 +90,7 @@ async fn an_empty_search_names_the_place_that_shares_a_word_with_it() {
 /// whether two things are the same, so an empty search does not name it.
 #[tokio::test]
 async fn the_word_a_thing_takes_from_its_parent_is_not_shared_evidence() {
-    let story = Story::begin("bot:otto").await;
-    let writer = story.session().await;
+    let (story, writer) = Story::begin_with_session("bot:otto").await;
     writer.add("project:atlas", "Atlas").await;
     writer
         .add_under("project:atlas", "work:atlas-x-donut-stand", "Donut Stand")
@@ -135,8 +133,7 @@ async fn the_word_a_thing_takes_from_its_parent_is_not_shared_evidence() {
 /// does.
 #[tokio::test]
 async fn an_empty_search_does_not_name_things_for_a_common_word() {
-    let story = Story::begin("bot:otto").await;
-    let writer = story.session().await;
+    let (story, writer) = Story::begin_with_session("bot:otto").await;
     let crowd = [
         "alpha", "omega", "kappa", "sigma", "theta", "lambda", "epsilon", "iota",
     ];

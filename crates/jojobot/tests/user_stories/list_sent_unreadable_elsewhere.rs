@@ -11,8 +11,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn list_sent_counts_the_damage_in_a_box_it_cannot_show_and_names_none_of_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:sigma", "Sigma").await;
     s.add("bot:marge", "Marge").await;
     let sigma = story.as_bot("bot:sigma").await;

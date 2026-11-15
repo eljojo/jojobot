@@ -27,8 +27,7 @@ fn listed(answer: &super::dsl::Answer) -> Vec<String> {
 
 #[tokio::test]
 async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_query_language() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("project:the-shed", "The shed").await;
     s.add("project:kitchen-floor", "The kitchen floor").await;
@@ -158,8 +157,7 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
 
 #[tokio::test]
 async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_refused() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("project:the-shed", "The shed").await;
     s.add("project:kitchen-floor", "The kitchen floor").await;

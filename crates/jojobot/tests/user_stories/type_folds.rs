@@ -43,8 +43,7 @@ fn token_in(refusal: &serde_json::Value) -> String {
 
 #[tokio::test]
 async fn declaring_a_counter_over_a_held_key_asks_first_and_counts_what_it_changes() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     for count in ["3", "5"] {
         s.call(
@@ -88,8 +87,7 @@ async fn declaring_a_counter_over_a_held_key_asks_first_and_counts_what_it_chang
 /// force afterwards: the next writes of the key total.
 #[tokio::test]
 async fn declaring_a_counter_over_a_key_nothing_holds_lands_without_asking() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
 
     let landed = s.call("declare_type", tally(true)).await.json();
@@ -124,8 +122,7 @@ async fn declaring_a_counter_over_a_key_nothing_holds_lands_without_asking() {
 /// before and after. A declaration over an ordinary key is unchanged.
 #[tokio::test]
 async fn a_type_cannot_give_a_describing_key_a_fold_of_its_own() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     let star_the_kettle = || {
         json!({"subject": "thing:kettle", "content": "starred", "provenance": "testimony",
@@ -189,8 +186,7 @@ async fn a_kettle_that_was_visited_twice(s: &Session) {
 /// refused for that, with nothing to override, and the type is not declared.
 #[tokio::test]
 async fn a_declaration_naming_a_held_key_twice_is_refused_with_no_token_to_lift_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_kettle_that_was_visited_twice(&s).await;
 
     // The positive: the valid counter over the held key is refused with a token.
@@ -229,8 +225,7 @@ async fn a_declaration_naming_a_held_key_twice_is_refused_with_no_token_to_lift_
 /// lifts the first.
 #[tokio::test]
 async fn a_token_lifts_only_the_declaration_it_was_issued_for() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_kettle_that_was_visited_twice(&s).await;
 
     let token = token_in(&s.refused("declare_type", tally(true)).await.json());

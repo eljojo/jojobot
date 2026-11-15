@@ -189,8 +189,7 @@ async fn the_asking_skills_calls_do_what_the_skill_says() {
 /// operator finds stressful is archived.
 #[tokio::test]
 async fn the_rhythm_keys_the_skill_describes_work_with_handwritten_calls() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:gravel-bike", "The Gravel Bike").await;
 
     // ── a loop, its keys in `sets`, and a check-in dated the day it ran ─────
@@ -294,8 +293,7 @@ async fn the_rhythm_keys_the_skill_describes_work_with_handwritten_calls() {
 /// naming the word it lacks.
 #[tokio::test]
 async fn the_projects_skills_columns_call_holds_every_shipped_word() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "Atlas").await;
     let projects = body_of(&story, "projects").await;
     // The call as the skill prints it, with the words a capture needs beside it.
@@ -322,8 +320,7 @@ async fn the_projects_skills_columns_call_holds_every_shipped_word() {
 /// address, and `entries` reads them back in that order.
 #[tokio::test]
 async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     let projects = body_of(&story, "projects").await;
     s.add("work:phi", "Phi").await;
     // Each call as the skill prints it: the list, then the first step, then the
@@ -381,8 +378,7 @@ async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
 /// write, and each refusal's way forward names the skill.
 #[tokio::test]
 async fn every_full_refusal_names_the_organizing_skill() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let (boot, _) = story
         .call("start_here", json!({"bot": "gamma", "brief": true}))
@@ -491,8 +487,7 @@ async fn every_full_refusal_names_the_organizing_skill() {
 /// branch whole.
 #[tokio::test]
 async fn a_bot_that_follows_the_organizing_skill_reaches_its_filed_rules() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let organizing = body_of(&story, "organizing").await;
     let gamma = story.as_bot("bot:gamma").await;

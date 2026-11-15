@@ -16,8 +16,7 @@ use super::dsl::Story;
 /// operator's words; the route works; the first run still edits its own.**
 #[tokio::test]
 async fn a_later_session_does_not_rewrite_the_details_of_the_operators_word() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("person:kenny", "Kenny").await;
     let said = first
         .call(

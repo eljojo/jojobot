@@ -26,8 +26,7 @@ fn with(mut call: serde_json::Value, extra: serde_json::Value) -> serde_json::Va
 
 #[tokio::test]
 async fn the_same_name_under_another_kind_lands_only_with_a_reason_and_the_reason_is_kept() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("org:moes-tavern", "Moe's Tavern").await;
 
     let refusal = s
@@ -80,8 +79,7 @@ async fn the_same_name_under_another_kind_lands_only_with_a_reason_and_the_reaso
 
 #[tokio::test]
 async fn a_name_that_contains_another_lands_only_with_a_reason() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("place:moes", "Moe's").await;
 
     let refusal = s
@@ -122,8 +120,7 @@ async fn a_name_that_contains_another_lands_only_with_a_reason() {
 
 #[tokio::test]
 async fn a_near_slug_keeps_the_token_alone() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:contract-nearslug", "Contract Nearslug").await;
 
     let refusal = s
@@ -148,8 +145,7 @@ async fn a_near_slug_keeps_the_token_alone() {
 
 #[tokio::test]
 async fn a_rename_onto_a_name_that_resembles_another_lands_only_with_a_reason_and_keeps_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("org:moes-tavern", "Moes Tavern").await;
     s.add("place:moes", "Moe's").await;
     s.add("place:gorge-spot", "The back room").await;
@@ -186,8 +182,7 @@ async fn a_rename_onto_a_name_that_resembles_another_lands_only_with_a_reason_an
 
 #[tokio::test]
 async fn a_new_name_that_resembles_another_lands_only_with_a_reason_and_keeps_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("org:moes-tavern", "Moe's Tavern").await;
     s.add("place:gorge-spot", "The back room").await;
 
@@ -230,8 +225,7 @@ async fn a_new_name_that_resembles_another_lands_only_with_a_reason_and_keeps_it
 
 #[tokio::test]
 async fn a_reason_sent_where_none_was_needed_is_kept() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:contract-nearslug", "Contract Nearslug").await;
 
     let refusal = s
@@ -260,8 +254,7 @@ async fn a_reason_sent_where_none_was_needed_is_kept() {
 #[tokio::test]
 async fn a_later_refusal_and_a_search_show_what_tells_a_kept_apart_thing_from_the_one_it_resembles()
 {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("place:moes", "Moe's").await;
 
     // The second Moe, made with the reason that tells it apart.
@@ -330,8 +323,7 @@ async fn a_later_refusal_and_a_search_show_what_tells_a_kept_apart_thing_from_th
 
 #[tokio::test]
 async fn a_move_that_keeps_its_name_is_never_screened_and_a_new_handle_is() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("org:moes-tavern", "Tavern Holdings").await;
     s.add("place:moes-tavern", "The back room").await;
     // Made beside it, with a reason: the pair that the screen would refuse.
@@ -388,8 +380,7 @@ async fn told_apart_by(s: &super::dsl::Session, handle: &str) -> String {
 /// thing holding both. **The same reason sent again is not added twice.**
 #[tokio::test]
 async fn a_second_override_keeps_the_first_reason_and_a_repeated_reason_is_not_added_twice() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("org:moes-tavern", "Moes Tavern").await;
     s.add("org:moes-taproom", "Moes Taproom").await;
     s.add("place:gorge-spot", "The back room").await;
@@ -466,8 +457,7 @@ async fn a_second_override_keeps_the_first_reason_and_a_repeated_reason_is_not_a
 /// adds its reason beside the one the thing already holds.
 #[tokio::test]
 async fn an_update_that_needs_an_override_adds_its_reason_beside_the_earlier_one() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("org:moes-tavern", "Moes Tavern").await;
     s.add("org:moes-taproom", "Moes Taproom").await;
     s.add("place:gorge-spot", "The back room").await;

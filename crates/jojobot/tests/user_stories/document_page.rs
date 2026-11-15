@@ -45,8 +45,7 @@ async fn put(session: &Session, markdown: &str) {
 /// **The page reads like a document, and an ordinary thing's page does not.**
 #[tokio::test]
 async fn a_document_page_shows_its_name_its_one_liner_and_its_sections_as_markdown() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (story, session) = Story::begin_with_session("bot:gamma").await;
     put(&session, OPENING_AND_CLOSING).await;
     session
         .call(
@@ -98,8 +97,7 @@ async fn a_document_page_shows_its_name_its_one_liner_and_its_sections_as_markdo
 /// renders.**
 #[tokio::test]
 async fn a_raw_tag_in_a_section_is_text_and_the_markdown_beside_it_renders() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (story, session) = Story::begin_with_session("bot:gamma").await;
     put(
         &session,
         "## Notes\n\n<script>alert(1)</script>\n\nSome <b onclick=\"x()\">inline</b> html and **bold**.\n\n<div class=\"x\">block</div>\n",
@@ -127,8 +125,7 @@ async fn a_raw_tag_in_a_section_is_text_and_the_markdown_beside_it_renders() {
 /// **A handle in a paragraph is a link, and the same handle in code is not.**
 #[tokio::test]
 async fn a_handle_in_a_paragraph_is_a_link_and_the_same_handle_in_code_is_not() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("thing:kettle", "Kettle").await;
     put(
         &session,
@@ -154,8 +151,7 @@ async fn a_handle_in_a_paragraph_is_a_link_and_the_same_handle_in_code_is_not() 
 /// was moved.**
 #[tokio::test]
 async fn sections_read_in_put_order_and_a_moved_section_reads_where_it_went() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (story, session) = Story::begin_with_session("bot:gamma").await;
     put(
         &session,
         "## Alpha\n\nfirst words\n\n## Beta\n\nsecond words\n\n## Gamma\n\nthird words\n",
@@ -202,8 +198,7 @@ async fn sections_read_in_put_order_and_a_moved_section_reads_where_it_went() {
 /// ordinary link and an anchor stay links.**
 #[tokio::test]
 async fn a_link_that_runs_a_script_and_an_image_do_not_reach_the_page() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (story, session) = Story::begin_with_session("bot:gamma").await;
     put(
         &session,
         "## Targets\n\n[bad](javascript:alert(1)) and [good](https://example.org/path) and ![pic](http://tracker.example/p.png) and [anchor](#sec-targets)\n",
@@ -235,8 +230,7 @@ async fn a_link_that_runs_a_script_and_an_image_do_not_reach_the_page() {
 /// shown as the text it is.**
 #[tokio::test]
 async fn two_headings_of_one_wording_get_two_anchors_and_frontmatter_is_not_prose() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (story, session) = Story::begin_with_session("bot:gamma").await;
     put(
         &session,
         "---\ntitle: Fryer & oil\n---\n\n## Notes\n\nfirst\n\n## Notes\n\nsecond\n",

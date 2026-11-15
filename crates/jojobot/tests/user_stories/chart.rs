@@ -109,8 +109,7 @@ async fn the_chart_is_changed_only_by_a_superior() {
 /// hang a new bot under a manager it does not own.
 #[tokio::test]
 async fn a_new_bot_is_placed_under_a_manager_only_by_whom_may_place_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
     let omega = story.as_bot("bot:omega").await;
     let creating = || {
@@ -140,8 +139,7 @@ async fn a_new_bot_is_placed_under_a_manager_only_by_whom_may_place_it() {
 
 #[tokio::test]
 async fn the_head_of_a_chart_places_itself() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("bot:alpha", "Alpha"),
         ("bot:beta", "Beta"),
@@ -329,8 +327,7 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
 /// it is refused, so a build where no verb refuses would not pass.
 #[tokio::test]
 async fn a_ceiling_key_sent_as_a_setting_is_refused_as_a_capture_of_it_is() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:sigma", "Sigma").await;
     let sigma = story.as_bot("bot:sigma").await;
 
@@ -399,8 +396,7 @@ async fn a_ceiling_key_sent_as_a_setting_is_refused_as_a_capture_of_it_is() {
 /// every write of the key would not pass.
 #[tokio::test]
 async fn a_write_that_names_no_manager_is_told_to_name_one_and_sends_nobody_looking() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("bot:alpha", "Alpha"),
         ("bot:beta", "Beta"),

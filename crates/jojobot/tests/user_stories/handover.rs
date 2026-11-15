@@ -77,8 +77,7 @@ async fn a_session_that_closed_properly_is_what_the_next_one_is_handed() {
 /// that run and no other, and the offer hands out no key until one is picked.
 #[tokio::test]
 async fn the_resume_offer_names_each_run_and_resuming_by_one_lands() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     first
         .call(
             "journal",
@@ -150,8 +149,7 @@ async fn the_resume_offer_names_each_run_and_resuming_by_one_lands() {
 /// the essay, the snapshot and the handover story, so the saving is real.
 #[tokio::test]
 async fn the_answer_to_the_offer_carries_only_what_is_new_and_names_the_call_for_the_rest() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     first
         .call(
             "journal",
@@ -236,8 +234,7 @@ async fn the_answer_to_the_offer_carries_only_what_is_new_and_names_the_call_for
 /// writes its own and the focus rides on it.
 #[tokio::test]
 async fn a_wrap_whose_story_repeats_a_journal_entry_still_writes_its_closing_entry() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:marge").await;
     let beat = s
         .call(
             "journal",

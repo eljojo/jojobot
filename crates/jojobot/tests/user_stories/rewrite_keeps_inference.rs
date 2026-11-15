@@ -25,8 +25,7 @@ fn address_of(captured: &serde_json::Value) -> String {
 /// inference it was.
 #[tokio::test]
 async fn a_later_run_rewrites_an_earlier_runs_inference_and_it_stays_an_inference() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
     let note = address_of(
         &first
@@ -65,8 +64,7 @@ async fn a_later_run_rewrites_an_earlier_runs_inference_and_it_stays_an_inferenc
 /// refused nothing would not pass this one.
 #[tokio::test]
 async fn a_later_run_rewriting_an_observation_still_has_to_say_how_it_is_known() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
     let seen = address_of(
         &first
@@ -101,8 +99,7 @@ async fn a_later_run_rewriting_an_observation_still_has_to_say_how_it_is_known()
 /// whether or not the rewrite names a provenance.
 #[tokio::test]
 async fn a_later_run_rewriting_testimony_with_no_provenance_is_still_refused() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
     let said = first.fact("thing:handcart", "the handcart is red").await;
     first.wrap("wrote down what the operator said").await;
@@ -128,8 +125,7 @@ async fn a_later_run_rewriting_testimony_with_no_provenance_is_still_refused() {
 /// again; a rewrite that brings its own receipt leaves it settled.
 #[tokio::test]
 async fn a_later_runs_rewrite_reopens_a_settled_inference_unless_it_brings_a_receipt() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
     let note = address_of(
         &first

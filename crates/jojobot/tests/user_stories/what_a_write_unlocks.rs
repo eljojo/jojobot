@@ -21,8 +21,7 @@ use super::dsl::Story;
 /// offered it, and the refusal on the thing is real, so the two agree.
 #[tokio::test]
 async fn a_check_in_is_offered_only_where_one_can_be_taken() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:the-air-filter", "The air filter").await;
     s.add_under(
         "thing:the-air-filter",
@@ -89,8 +88,7 @@ async fn a_check_in_is_offered_only_where_one_can_be_taken() {
 /// cannot pass for the right one.
 #[tokio::test]
 async fn a_schedule_is_offered_only_where_a_check_in_can_follow() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:the-air-filter", "The air filter").await;
     s.add("work:phi", "Phi").await;
     s.add_under(
@@ -174,8 +172,7 @@ async fn a_schedule_is_offered_only_where_a_check_in_can_follow() {
 
 #[tokio::test]
 async fn a_write_says_what_the_thing_could_answer_with_one_more_key() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.past_first_contact().await;
 
     s.add("thing:the-air-filter", "The air filter").await;

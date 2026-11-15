@@ -24,8 +24,7 @@ async fn note(s: &Session, content: &str) -> String {
 
 #[tokio::test]
 async fn a_fourth_live_record_on_a_thread_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(THREAD, "Milhouse moves").await;
 
     // ── three land ───────────────────────────────────────────────────────────
@@ -125,8 +124,7 @@ async fn a_fourth_live_record_on_a_thread_is_refused() {
 
 #[tokio::test]
 async fn a_full_thread_borrows_one_record_once_and_archiving_repays_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(THREAD, "Milhouse moves").await;
     let first = note(&s, "the first quote from the movers").await;
     note(&s, "the second quote from the movers").await;
@@ -221,8 +219,7 @@ async fn a_full_thread_borrows_one_record_once_and_archiving_repays_it() {
 
 #[tokio::test]
 async fn a_thread_that_sets_its_own_number_is_bounded_by_that_instead() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(THREAD, "Milhouse moves").await;
     // The record that sets the number is not a note filling the thread, so the
     // bot that sets it is not bound by it.
@@ -248,8 +245,7 @@ async fn a_thread_that_sets_its_own_number_is_bounded_by_that_instead() {
 
 #[tokio::test]
 async fn the_bots_that_write_into_a_thread_never_raise_its_number() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add(THREAD, "Milhouse moves").await;
     for bot in ["marge", "patty", "ralph"] {
         s.add(&format!("bot:{bot}"), bot).await;
@@ -334,8 +330,7 @@ async fn the_bots_that_write_into_a_thread_never_raise_its_number() {
 /// nothing to say so.
 #[tokio::test]
 async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every_verb() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(THREAD, "Milhouse moves").await;
     // The record that sets the number is not a note filling the thread, so the
     // bot that wrote it may set the number again.
@@ -517,8 +512,7 @@ async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
 /// a writer for having set it.
 #[tokio::test]
 async fn the_bot_that_fills_a_container_does_not_raise_its_number() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     // marge reports to otto, so otto is above marge.
@@ -679,8 +673,7 @@ async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
 /// above it, who is not a writer, can.
 #[tokio::test]
 async fn a_bot_that_filled_a_thread_cannot_raise_its_number_by_merging() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     // marge reports to otto, so otto is above marge.
@@ -783,8 +776,7 @@ async fn a_full_thread(s: &Session, handle: &str, name: &str) {
 /// with or without a request id, and the thread still holds three.
 #[tokio::test]
 async fn a_thread_at_its_number_is_restored_with_the_record_of_the_restore() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name, request_id) in [
         (THREAD, "Milhouse moves", Some("restore-1")),
         ("thread:simpson-kitchen", "Simpson kitchen", None),
@@ -826,8 +818,7 @@ async fn a_thread_at_its_number_is_restored_with_the_record_of_the_restore() {
 /// it lands, and a resend under the id finishes nothing twice.
 #[tokio::test]
 async fn a_thread_at_its_number_is_renamed_with_the_reason_it_was_let_through() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_full_thread(&s, THREAD, "Milhouse moves").await;
     s.add("thread:simpson-kitchen", "Simpson kitchen").await;
     let call = json!({"handle": THREAD, "to": "thread:kitchen"});
@@ -871,8 +862,7 @@ async fn a_thread_at_its_number_is_renamed_with_the_reason_it_was_let_through() 
 /// caller that sent it could keep adding to a full thread.
 #[tokio::test]
 async fn a_caller_cannot_label_its_own_record_as_one_that_takes_no_slot() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_full_thread(&s, THREAD, "Milhouse moves").await;
 
     // The positive: the same fourth note without the label is an ordinary record
@@ -913,8 +903,7 @@ async fn a_caller_cannot_label_its_own_record_as_one_that_takes_no_slot() {
 /// still raises it.
 #[tokio::test]
 async fn the_assistant_raises_the_number_of_a_container_it_fills() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let assistant = story.as_bot("bot:assistant").await;
     let marge = story.as_bot("bot:marge").await;
@@ -979,8 +968,7 @@ async fn the_assistant_raises_the_number_of_a_container_it_fills() {
 /// exempt from both, and a bot that is not the assistant is bound by the thought.
 #[tokio::test]
 async fn the_assistant_that_wrote_a_thought_into_a_thread_raises_its_number() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let assistant = story.as_bot("bot:assistant").await;
     let marge = story.as_bot("bot:marge").await;
@@ -1038,8 +1026,7 @@ async fn the_assistant_that_wrote_a_thought_into_a_thread_raises_its_number() {
 /// thread did not fill it and may raise its number.
 #[tokio::test]
 async fn a_bot_that_only_restored_a_thread_did_not_fill_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     s.add(THREAD, "Milhouse moves").await;
@@ -1082,8 +1069,7 @@ async fn a_bot_that_only_restored_a_thread_did_not_fill_it() {
 /// with no setting has no ceiling and takes the same write.
 #[tokio::test]
 async fn a_topic_carrying_record_capacity_refuses_the_write_past_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.call(
         "add_entity",
         json!({"kind": "topic", "handle": "all-rules", "name": "All rules",
@@ -1149,8 +1135,7 @@ async fn marge_writes_into(marge: &Session, thread: &str) {
 /// followed to a merge that lands. Each route a refusal names is followed to the end.
 #[tokio::test]
 async fn a_merge_refusal_names_the_archive_route_only_to_a_caller_who_may_make_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     story
@@ -1223,8 +1208,7 @@ async fn a_merge_refusal_names_the_archive_route_only_to_a_caller_who_may_make_i
 /// exemption, so its refusal names nobody and the assistant is refused too.
 #[tokio::test]
 async fn with_no_bot_above_the_writers_the_assistant_makes_a_record_ceiling_merge() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     let assistant = story.as_bot("bot:assistant").await;
@@ -1288,8 +1272,7 @@ async fn with_no_bot_above_the_writers_the_assistant_makes_a_record_ceiling_merg
 /// it rather than saying no bot may.
 #[tokio::test]
 async fn a_writer_refused_a_record_ceiling_is_sent_to_the_assistant() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     let assistant = story.as_bot("bot:assistant").await;

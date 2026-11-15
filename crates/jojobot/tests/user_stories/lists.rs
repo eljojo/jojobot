@@ -29,8 +29,7 @@ pub(super) async fn a_list_on_the_trip(s: &Session, handle: &str, sets: serde_js
 /// them is refused naming all three.** The paired positive is a list that lands.
 #[tokio::test]
 async fn a_list_takes_sink_leave_or_back_and_refuses_any_other_tick() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:springfield-camping", "Springfield camping")
         .await;
 
@@ -64,8 +63,7 @@ async fn a_list_takes_sink_leave_or_back_and_refuses_any_other_tick() {
 /// forms.** The paired positives are a day and a week that land.
 #[tokio::test]
 async fn a_list_covers_a_day_or_an_iso_week_and_refuses_any_other_span() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
 
     for (handle, covers) in [("saturday", "2026-10-19"), ("fortnight", "2026-W43")] {
@@ -124,8 +122,7 @@ pub(super) async fn add_entry(s: &Session, list: &str, text: &str, after: Option
 /// the order is the entries' and not the read's.
 #[tokio::test]
 async fn entries_read_back_in_the_order_added_and_one_placed_after_the_first_sits_second() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     assert_eq!(read_back(&s, "list:packing").await, Vec::<String>::new());
 
@@ -148,8 +145,7 @@ async fn entries_read_back_in_the_order_added_and_one_placed_after_the_first_sit
 /// at the end.** Each paired with the default, which is the end.
 #[tokio::test]
 async fn first_places_at_the_front_and_after_the_last_entry_places_at_the_end() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     add_entry(&s, "list:packing", "stove", None).await;
     let last = add_entry(&s, "list:packing", "matches", None).await;
@@ -167,8 +163,7 @@ async fn first_places_at_the_front_and_after_the_last_entry_places_at_the_end() 
 /// link.** Its neighbour, a plain text entry, reads back with none.
 #[tokio::test]
 async fn an_entry_with_an_edge_reads_back_with_the_link() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     s.add("work:bart-tent", "Bart's tent").await;
     add_entry(&s, "list:packing", "stove", None).await;
@@ -193,8 +188,7 @@ async fn an_entry_with_an_edge_reads_back_with_the_link() {
 /// the same call naming a real entry.
 #[tokio::test]
 async fn after_naming_a_stranger_is_refused_with_the_entries_and_writes_nothing() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let stove = add_entry(&s, "list:packing", "stove", None).await;
     add_entry(&s, "list:packing", "lantern", Some(&stove)).await;
@@ -216,8 +210,7 @@ async fn after_naming_a_stranger_is_refused_with_the_entries_and_writes_nothing(
 /// The paired positive is the same words captured with no `after`.
 #[tokio::test]
 async fn after_on_a_subject_that_is_not_a_list_is_refused() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:springfield-camping", "Springfield camping")
         .await;
 
@@ -243,8 +236,7 @@ async fn after_on_a_subject_that_is_not_a_list_is_refused() {
 /// the session that wrote it, which lands and leaves the entry where it was.
 #[tokio::test]
 async fn a_caller_sending_an_order_key_on_an_entry_is_refused_and_an_edit_of_its_words_is_not() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let stove = add_entry(&s, "list:packing", "stove", None).await;
     add_entry(&s, "list:packing", "lantern", None).await;
@@ -275,8 +267,7 @@ async fn a_caller_sending_an_order_key_on_an_entry_is_refused_and_an_edit_of_its
 /// the entry's own words, which finds it.
 #[tokio::test]
 async fn an_entry_is_found_by_its_own_words_and_not_by_the_name_of_its_list() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:springfield-camping", "Springfield camping")
         .await;
     s.call(
@@ -312,8 +303,7 @@ async fn add_at_the_front(who: &Session, n: usize) {
 /// different keys.
 #[tokio::test]
 async fn entries_added_at_the_same_moment_get_keys_of_their_own() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     add_entry(&s, "list:packing", "stove", None).await;
 
@@ -356,8 +346,7 @@ async fn entries_added_at_the_same_moment_get_keys_of_their_own() {
 /// it was written as, and an entry added after a merged one lands after it.
 #[tokio::test]
 async fn two_lists_merged_keep_each_lists_order_and_every_entry_its_provenance() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     s.call(
         "add_entity",

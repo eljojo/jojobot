@@ -71,8 +71,7 @@ async fn the_copied_stamp_was_not_kept(dev: &Session, defrag: &Session, handle: 
 
 #[tokio::test]
 async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_marks_it() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     dev.add("person:homer", "Homer").await;
     dev.add("person:bart", "Bart").await;
     let defrag = story.as_bot("bot:defrag").await;
@@ -247,8 +246,7 @@ async fn marks_of(reader: &Session, handle: &str) -> usize {
 
 #[tokio::test]
 async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes_no_slot() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     dev.add("thread:milhouse-moves", "Milhouse moves").await;
     let defrag = story.as_bot("bot:defrag").await;
     for note in ["first", "second", "third"] {
@@ -357,8 +355,7 @@ async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes
 
 #[tokio::test]
 async fn defrag_marks_a_thread_that_borrowed_over_its_ceiling_and_the_mark_takes_no_slot() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     dev.add("thread:milhouse-moves", "Milhouse moves").await;
     let defrag = story.as_bot("bot:defrag").await;
     for note in ["first", "second", "third"] {
@@ -420,8 +417,7 @@ async fn defrag_marks_a_thread_that_borrowed_over_its_ceiling_and_the_mark_takes
 
 #[tokio::test]
 async fn a_thing_defrag_creates_is_reviewed_and_a_thing_another_bot_creates_waits() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     let defrag = story.as_bot("bot:defrag").await;
 
     dev.add("person:bart", "Bart").await;
@@ -463,8 +459,7 @@ fn is_a_mark(fact: &serde_json::Value) -> bool {
 #[tokio::test]
 async fn a_read_of_a_marked_thing_leaves_the_review_mark_out_and_names_the_argument_that_returns_it()
  {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     dev.add("person:bart", "Bart").await;
     dev.add("person:lisa", "Lisa").await;
     let defrag = story.as_bot("bot:defrag").await;
@@ -540,8 +535,7 @@ async fn a_read_of_a_marked_thing_leaves_the_review_mark_out_and_names_the_argum
 
 #[tokio::test]
 async fn a_search_leaves_the_review_mark_out_names_it_in_left_out_and_returns_it_when_asked() {
-    let story = Story::begin("bot:otto").await;
-    let dev = story.session().await;
+    let (story, dev) = Story::begin_with_session("bot:otto").await;
     dev.add("person:bart", "Bart").await;
     let defrag = story.as_bot("bot:defrag").await;
     dev.call(
@@ -617,8 +611,7 @@ async fn status_of(session: &Session, subject: &str, address: &str) -> String {
 
 #[tokio::test]
 async fn defrag_archives_another_sessions_testimony_as_any_bot_does() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (story, marge) = Story::begin_with_session("bot:marge").await;
     marge.add("thread:alpha", "Alpha").await;
     marge.add("bot:otto", "Otto").await;
     let mut written = Vec::new();
@@ -665,8 +658,7 @@ async fn defrag_archives_another_sessions_testimony_as_any_bot_does() {
 /// change defrag has not read, and that thing waits.
 #[tokio::test]
 async fn an_archive_by_defrag_takes_the_thing_out_of_its_queue_and_one_by_another_bot_does_not() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (story, marge) = Story::begin_with_session("bot:marge").await;
     marge.add("thread:alpha", "Alpha").await;
     marge.add("thread:beta", "Beta").await;
     marge.add("bot:otto", "Otto").await;

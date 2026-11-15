@@ -412,8 +412,7 @@ async fn an_empty_replace_deletes_and_a_find_at_the_current_revision_lands() {
 /// it.
 #[tokio::test]
 async fn a_note_with_a_link_is_edited_past_the_link_and_a_cut_link_is_refused() {
-    let story = Story::begin("bot:gamma").await;
-    let run = story.session().await;
+    let (_story, run) = Story::begin_with_session("bot:gamma").await;
     run.add("person:kenny", "Kenny").await;
     run.add("person:butters", "Butters").await;
     let claim = run
@@ -504,8 +503,7 @@ async fn a_note_with_a_link_is_edited_past_the_link_and_a_cut_link_is_refused() 
 /// nothing.
 #[tokio::test]
 async fn an_edit_inside_a_fence_that_opens_on_the_content_keeps_the_code_literal() {
-    let story = Story::begin("bot:gamma").await;
-    let run = story.session().await;
+    let (_story, run) = Story::begin_with_session("bot:gamma").await;
     run.add("person:kenny", "Kenny").await;
     run.add("person:butters", "Butters").await;
     let fenced = run

@@ -14,8 +14,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("project:atlas", "Atlas").await;
     s.add_under("project:atlas", "work:phi", "Phi").await;
@@ -213,8 +212,7 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
 /// handle still links (rule 646): the work holding it is found from that one.
 #[tokio::test]
 async fn a_work_item_depending_on_two_things_is_found_from_each_of_them() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("work:phi", "Phi").await;
     s.add("work:sigma", "Sigma").await;
     s.add("work:first-mix", "First mix").await;
@@ -274,8 +272,7 @@ async fn a_work_item_depending_on_two_things_is_found_from_each_of_them() {
 #[tokio::test]
 async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_project_to_its_parents()
  {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("project:visa", "Visa").await;
     s.add("project:the-shed", "The Shed").await;

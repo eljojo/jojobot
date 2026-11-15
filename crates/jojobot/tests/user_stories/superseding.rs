@@ -18,8 +18,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
-    let story = Story::begin("bot:otto").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:otto").await;
     setup.add("bot:gamma", "Gamma").await;
     setup.add("bot:delta", "Delta").await;
     setup.add("bot:epsilon", "Epsilon").await;
@@ -234,8 +233,7 @@ async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
 /// other.
 #[tokio::test]
 async fn a_message_whose_replacement_was_set_aside_is_still_handed_over() {
-    let story = Story::begin("bot:otto").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:otto").await;
     setup.add("bot:gamma", "Gamma").await;
     setup.wrap("stood gamma up").await;
 

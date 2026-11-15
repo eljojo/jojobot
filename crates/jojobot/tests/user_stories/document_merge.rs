@@ -168,8 +168,7 @@ async fn two_documents_merged_read_as_one_with_the_folded_sections_last() {
 /// the route.** Paired: two things merge.
 #[tokio::test]
 async fn a_document_and_a_thing_do_not_merge_and_the_refusal_names_the_route() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:alpha", "Alpha notes").await;
     s.add("thing:handcart", "The Handcart").await;
     s.add("thing:the-couch", "The Couch").await;

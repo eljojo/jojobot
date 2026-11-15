@@ -18,8 +18,7 @@ use super::dsl::Story;
 /// **One call makes the thing and says where it stands.**
 #[tokio::test]
 async fn one_call_makes_a_piece_of_work_and_says_where_it_stands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("project:atlas", "Atlas").await;
     s.add("person:lisa", "Lisa").await;
 
@@ -59,8 +58,7 @@ async fn one_call_makes_a_piece_of_work_and_says_where_it_stands() {
 /// left the handle taken.
 #[tokio::test]
 async fn a_refused_field_refuses_the_whole_call_and_creates_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("project:atlas", "Atlas").await;
 
     let sent = |key: &str, value: &str| {
@@ -93,8 +91,7 @@ async fn a_refused_field_refuses_the_whole_call_and_creates_nothing() {
 /// creation would not pass.
 #[tokio::test]
 async fn a_label_in_a_creations_settings_is_refused_and_the_route_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.refused(
         "add_entity",
@@ -142,8 +139,7 @@ async fn a_label_in_a_creations_settings_is_refused_and_the_route_lands() {
 /// blocked, and the answer says the field named it, not the parent.
 #[tokio::test]
 async fn a_link_to_nothing_blocks_the_call_and_creates_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("project:atlas", "Atlas").await;
     s.add("person:lisa", "Lisa").await;
 
@@ -172,8 +168,7 @@ async fn a_link_to_nothing_blocks_the_call_and_creates_nothing() {
 /// the refusals alone.
 #[tokio::test]
 async fn a_supplied_handle_is_refused_with_fields_as_it_is_without() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let view = |handle: &str, sets: Option<serde_json::Value>| {
         let mut args = json!({
             "kind": "view", "handle": handle, "name": "My Colleagues", "source": "user-named",
@@ -218,8 +213,7 @@ async fn a_supplied_handle_is_refused_with_fields_as_it_is_without() {
 /// day it is made.
 #[tokio::test]
 async fn a_promise_made_with_its_day_has_its_due_moment_stored() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("project:atlas", "Atlas").await;
 
     s.call(
@@ -251,8 +245,7 @@ async fn a_promise_made_with_its_day_has_its_due_moment_stored() {
 /// the same write landing, so a build that refused every field would not pass.
 #[tokio::test]
 async fn a_field_that_names_nothing_is_refused_under_any_key_and_a_sentence_is_not() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("project:atlas", "Atlas").await;
     s.add("person:lisa", "Lisa").await;
     s.add_under("project:atlas", "work:phi", "Phi").await;

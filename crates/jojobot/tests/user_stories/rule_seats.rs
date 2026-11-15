@@ -50,8 +50,7 @@ fn plain_rules(contents: impl IntoIterator<Item = String>) -> Vec<(String, serde
 
 #[tokio::test]
 async fn a_bot_whose_floor_is_eight_rules_boots_with_eight_once_somebody_else_says_so() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
@@ -149,8 +148,7 @@ async fn a_bot_whose_floor_is_eight_rules_boots_with_eight_once_somebody_else_sa
 /// the ceiling is refused, naming the key that lowers it.
 #[tokio::test]
 async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:epsilon", "Epsilon").await;
 
     // Five seats' worth of rules, each two thousand characters: the floor
@@ -322,8 +320,7 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
 /// naming the overage, and the same edit shrinking the floor lands.
 #[tokio::test]
 async fn an_edit_to_a_bot_that_would_take_its_boot_over_the_ceiling_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:epsilon", "Epsilon").await;
     // Eight starred rules at the default five seats: the floor fits, so every
     // one of these lands.
@@ -442,8 +439,7 @@ async fn bots_on_the_instance(story: &Story) -> u64 {
 /// where it is written** — as a star is.
 #[tokio::test]
 async fn a_charter_that_would_take_the_boot_over_the_ceiling_is_refused_naming_the_overage() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
     s.call(
         "set_charter",
@@ -525,8 +521,7 @@ async fn a_charter_that_would_take_the_boot_over_the_ceiling_is_refused_naming_t
 /// the ceiling and the write stands.
 #[tokio::test]
 async fn creating_a_bot_says_which_bots_it_pushes_over_the_ceiling() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
 
     // ── nobody is near the ceiling, so nobody is named ──────────────────────
@@ -602,8 +597,7 @@ async fn creating_a_bot_says_which_bots_it_pushes_over_the_ceiling() {
 /// alone.
 #[tokio::test]
 async fn a_boot_the_world_grew_past_the_ceiling_says_so_and_names_what_to_drop() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
 
     // ── omega's boot sits exactly at the ceiling ────────────────────────────
@@ -659,8 +653,7 @@ async fn a_boot_the_world_grew_past_the_ceiling_says_so_and_names_what_to_drop()
 /// thousand characters over.
 #[tokio::test]
 async fn a_charter_is_measured_with_the_layer_the_build_ships() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
 
     fill_the_ceiling_with_a_charter(&s, "bot:omega").await;
@@ -704,8 +697,7 @@ async fn rule(
 /// rule is never listed, and a listed rule is fetched exactly, by its address.
 #[tokio::test]
 async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_address() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
 
     // Eight starred rules and the default five seats: the three oldest are not
@@ -834,8 +826,7 @@ async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_addres
 #[tokio::test]
 async fn a_boot_lists_a_bounded_number_of_unseated_rules_and_counts_the_rest_by_purpose() {
     const LISTED: usize = 20;
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
     s.add("bot:upsilon", "Upsilon").await;
 
@@ -960,8 +951,7 @@ async fn a_boot_lists_a_bounded_number_of_unseated_rules_and_counts_the_rest_by_
 async fn a_boot_bounds_the_purpose_groups_it_counts_and_the_length_of_each_name() {
     const LISTED: usize = 20;
     const GROUPS: usize = 10;
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:sigma", "Sigma").await;
 
     // Twenty rules fill the listing; the next ones are counted. Three of one
@@ -1119,8 +1109,7 @@ async fn loading_a_bots_rules_by_status_active_leaves_out_the_retired_and_counts
 /// listing as well.
 #[tokio::test]
 async fn the_floor_a_write_measures_counts_the_unseated_listing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:omega", "Omega").await;
     s.add("bot:upsilon", "Upsilon").await;
     for n in 0..30 {
@@ -1164,8 +1153,7 @@ async fn the_floor_a_write_measures_counts_the_unseated_listing() {
 /// nothing; and a creation that tries to carry the star is turned back by name.
 #[tokio::test]
 async fn a_bot_made_then_starred_is_held_to_the_ceiling() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let heavy = "heavyrule ".repeat(4000);
 
     // ── a creation cannot carry the star ────────────────────────────────────
@@ -1233,8 +1221,7 @@ async fn a_bot_made_then_starred_is_held_to_the_ceiling() {
 /// it, and the sources of the summary come back when they are asked for.
 #[tokio::test]
 async fn a_refusal_at_the_floor_names_the_summary_that_keeps_its_sources_and_following_it_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:epsilon", "Epsilon").await;
 
     // Eight rules of two thousand characters each, all starred: the floor fits.
@@ -1334,8 +1321,7 @@ fn taught_unstarred(answer: &super::dsl::Answer) -> bool {
 /// record that stands for the rules is the sibling case below.
 #[tokio::test]
 async fn unstarring_three_rules_is_taught_organizing_when_the_record_names_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     s.add("bot:gamma", "Gamma").await;
 
@@ -1412,8 +1398,7 @@ async fn unstarring_three_rules_is_taught_organizing_when_the_record_names_nothi
 /// a story of its own, because a lesson is delivered once in a session and the
 /// first half would spend it. The two edits differ only in `stands_for`.
 async fn three_unstars_then_an_edit(stands_for: bool) -> bool {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let mut rules = Vec::new();
     for n in 0..3 {
@@ -1489,8 +1474,7 @@ async fn an_edit_beside_three_unstars_is_taught_unless_it_stands_for_them() {
 /// lands: a build that refused every bot creation would not pass.
 #[tokio::test]
 async fn a_bot_creation_with_oversized_aliases_is_refused_whatever_it_sets() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let many: Vec<String> = (0..200)
         .map(|i| format!("alias {i} {}", "z".repeat(150)))
         .collect();
@@ -1587,8 +1571,7 @@ async fn a_bot_creation_with_oversized_aliases_is_refused_whatever_it_sets() {
 /// is the route, and the next boot carries the rule.
 #[tokio::test]
 async fn a_plain_rule_is_starred_later_through_update_fact_and_the_next_boot_carries_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:psi", "Psi").await;
     let plain = s
         .event_with(
@@ -1677,8 +1660,7 @@ fn sorted(addresses: &[&String]) -> Vec<String> {
 /// the two that are starred.
 #[tokio::test]
 async fn a_star_into_full_seats_is_refused_until_the_writer_unstars_one() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:sigma", "Sigma").await;
     s.call(
         "capture",
@@ -1792,8 +1774,7 @@ async fn a_star_into_full_seats_is_refused_until_the_writer_unstars_one() {
 /// until the bot is back within its seats; unstarring lands.
 #[tokio::test]
 async fn a_bot_over_its_seats_boots_with_the_newest_and_takes_no_star_until_it_fits() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:sigma", "Sigma").await;
     s.call(
         "capture",
@@ -1858,8 +1839,7 @@ async fn a_bot_over_its_seats_boots_with_the_newest_and_takes_no_star_until_it_f
 /// show two addresses.
 #[tokio::test]
 async fn a_bot_five_rules_over_two_seats_can_follow_the_refusal_with_only_the_rules_it_names() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:sigma", "Sigma").await;
     s.call(
         "capture",
@@ -1919,8 +1899,7 @@ async fn a_bot_five_rules_over_two_seats_can_follow_the_refusal_with_only_the_ru
 
 #[tokio::test]
 async fn lean_receipts_keep_call_specific_notes_on_each_write() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("event:birthday-party", "The Birthday Party").await;
     let mut missing = Vec::new();
     for (index, words) in ["the party happened in May", "the party started at noon"]

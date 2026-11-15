@@ -15,8 +15,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn the_ordinary_answers_of_the_ordinary_verbs_carry_no_null_keys() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     // A write of each shape the verbs have: an entity, a claim, a correction.
     let made = s
@@ -66,8 +65,7 @@ async fn the_ordinary_answers_of_the_ordinary_verbs_carry_no_null_keys() {
 /// the next read and the first write after any number of reads do not repeat it.
 #[tokio::test]
 async fn a_session_that_reads_first_is_taught_on_its_first_read_of_a_claim() {
-    let story = Story::begin("bot:otto").await;
-    let writer = story.session().await;
+    let (story, writer) = Story::begin_with_session("bot:otto").await;
     writer.add("person:lisa", "Lisa").await;
     writer.fact("person:lisa", "likes the diner").await;
     writer.add("bot:sigma", "Sigma").await;
@@ -113,8 +111,7 @@ async fn a_session_that_reads_first_is_taught_on_its_first_read_of_a_claim() {
 /// not taught again by the recall that follows.
 #[tokio::test]
 async fn a_session_whose_first_look_at_a_claim_is_a_search_is_taught_there() {
-    let story = Story::begin("bot:otto").await;
-    let writer = story.session().await;
+    let (story, writer) = Story::begin_with_session("bot:otto").await;
     writer.add("person:lisa", "Lisa").await;
     writer.fact("person:lisa", "likes the diner").await;
     writer.add("bot:sigma", "Sigma").await;
@@ -160,8 +157,7 @@ async fn a_session_whose_first_look_at_a_claim_is_a_search_is_taught_there() {
 /// what it looked through.
 #[tokio::test]
 async fn a_second_full_search_leaves_the_caveats_out_and_an_empty_one_says_what_it_searched() {
-    let story = Story::begin("bot:otto").await;
-    let writer = story.session().await;
+    let (story, writer) = Story::begin_with_session("bot:otto").await;
     for slug in ["alpha", "beta", "gamma"] {
         writer
             .add(&format!("place:{slug}"), &format!("The {slug} Diner"))
@@ -195,8 +191,7 @@ async fn a_second_full_search_leaves_the_caveats_out_and_an_empty_one_says_what_
 /// and a claim that backs several keys says its note once.
 #[tokio::test]
 async fn backing_answers_the_keys_asked_for_and_a_shared_claims_note_arrives_once() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("thing:floor-pump", "The Floor Pump").await;
     // One claim backs four keys and carries a long note; a second claim backs

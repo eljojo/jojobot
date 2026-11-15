@@ -21,8 +21,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_counter_adds_its_writes_up_and_still_lists_them() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("person:homer", "Homer").await;
     s.add("person:milhouse", "Milhouse").await;

@@ -36,8 +36,7 @@ async fn queue(defrag: &Session) -> Vec<String> {
 /// three.
 #[tokio::test]
 async fn a_list_with_a_refused_handle_marks_none_and_a_list_that_passes_marks_all() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add("person:bart", "Bart").await;
     s.add("person:lisa", "Lisa").await;
@@ -87,8 +86,7 @@ async fn a_list_with_a_refused_handle_marks_none_and_a_list_that_passes_marks_al
 /// the same call again under the same `request_id` marks the rest and none twice.
 #[tokio::test]
 async fn the_reviewed_argument_names_the_route_for_a_cut_list() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let described = s.argument_description("update_entity", "reviewed").await;
     assert!(
         described.contains("request_id"),
@@ -101,8 +99,7 @@ async fn the_reviewed_argument_names_the_route_for_a_cut_list() {
 /// stands, and the resend marks the rest and says how many it found marked.
 #[tokio::test]
 async fn a_cut_list_is_finished_by_the_same_call_under_its_request_id() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add("person:bart", "Bart").await;
     s.add("person:lisa", "Lisa").await;

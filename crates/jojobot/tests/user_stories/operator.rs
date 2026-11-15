@@ -131,8 +131,7 @@ async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
 /// holds need no step that only exists to make the record.
 #[tokio::test]
 async fn a_fresh_instance_holds_its_own_record_and_takes_a_key_with_no_add_entity_first() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     s.recall("topic:instance")
         .await

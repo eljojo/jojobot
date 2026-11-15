@@ -77,8 +77,7 @@ async fn a_write_sent_again_returns_the_first_receipt_and_writes_nothing() {
 
 #[tokio::test]
 async fn the_same_id_from_another_bot_writes_normally() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     s.call("capture", capture("wears glasses", "r1")).await;
     assert_eq!(claims(&s).await, 1);
@@ -97,8 +96,7 @@ async fn the_same_id_from_another_bot_writes_normally() {
 
 #[tokio::test]
 async fn an_id_sent_with_other_arguments_returns_the_first_receipt_and_says_so() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     let first = s
         .call("capture", capture("wears glasses", "r1"))
@@ -121,8 +119,7 @@ async fn an_id_sent_with_other_arguments_returns_the_first_receipt_and_says_so()
 
 #[tokio::test]
 async fn a_restart_between_the_two_calls_still_recognises_the_repeat() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     let first = s
         .call("capture", capture("wears glasses", "r1"))
@@ -200,8 +197,7 @@ async fn a_reused_id_replays_its_own_receipt_after_a_late_old_fill() {
 
 #[tokio::test]
 async fn a_write_that_stored_nothing_spends_no_id() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     // Milhouse is not known yet: the write is blocked and stores nothing.
     let blocked = s
@@ -225,8 +221,7 @@ async fn a_write_that_stored_nothing_spends_no_id() {
 
 #[tokio::test]
 async fn an_id_needs_a_session_and_a_good_shape() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
 
     // No session: refused, and nothing written.
@@ -272,8 +267,7 @@ fn is_a_repeat(answer: &Value) {
 
 #[tokio::test]
 async fn an_entity_made_twice_under_one_id_is_made_once() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let make = |id: &str| {
         json!({
             "kind": "person", "handle": "lisa", "name": "Lisa",
@@ -324,8 +318,7 @@ async fn an_entity_made_twice_under_one_id_is_made_once() {
 
 #[tokio::test]
 async fn an_edit_sent_twice_under_one_id_counts_once() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     // A counter adds every write, so a doubled edit would show as a doubled total.
     s.call(
@@ -361,8 +354,7 @@ async fn an_edit_sent_twice_under_one_id_counts_once() {
 
 #[tokio::test]
 async fn an_archive_a_merge_and_a_retraction_sent_twice_under_one_id_are_made_once() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:krusty", "Krusty").await;
     s.add("person:skinner", "Skinner").await;
     s.add("person:apu", "Apu").await;
@@ -397,8 +389,7 @@ async fn an_archive_a_merge_and_a_retraction_sent_twice_under_one_id_are_made_on
 
 #[tokio::test]
 async fn a_type_and_a_charter_sent_twice_under_one_id_keep_the_first() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let declare =
         |key: &str| json!({ "name": "snacking", "fields": [{ "key": key }], "request_id": "d1" });
     s.call("declare_type", declare("donuts")).await;
@@ -433,8 +424,7 @@ async fn a_type_and_a_charter_sent_twice_under_one_id_keep_the_first() {
 
 #[tokio::test]
 async fn a_message_posted_and_retired_twice_under_one_id_is_posted_and_retired_once() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     let other = story.as_bot("bot:assistant").await;
 
     let post = json!({
@@ -532,8 +522,7 @@ const A_READ_VARIES_BY: u64 = 24;
 /// first rests on.
 #[tokio::test]
 async fn a_repeat_replays_no_beat_and_no_accounting() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     s.call("capture", capture("wears glasses", "r1")).await;
     let (first, chronology) = bookkeeping(&s).await;

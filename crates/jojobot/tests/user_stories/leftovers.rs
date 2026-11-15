@@ -4,8 +4,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn leftovers_an_unreadable_run_needs_a_person_and_a_repaired_run_writes() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.journal("a healthy beat").await;
     story.the_run_read_is_unreadable(s.run(), true).await;
     let refused = s
@@ -96,8 +95,7 @@ async fn leftovers_a_numbered_mention_walks_to_the_member_and_a_miss_writes_noth
 
 #[tokio::test]
 async fn leftovers_an_argument_the_verb_does_not_have_is_named_and_nothing_is_written() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     let call = json!({"subject": "thing:kettle", "provenance": "testimony",
                       "content": "the kettle whistles"});

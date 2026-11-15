@@ -59,8 +59,7 @@ async fn depends_on(s: &Session) -> String {
 /// paired negative is the whole replacement, which still replaces.
 #[tokio::test]
 async fn adding_one_dependency_keeps_the_others_and_appends_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     work_waiting_on_two(&s).await;
     assert_eq!(
         depends_on(&s).await,
@@ -97,8 +96,7 @@ async fn adding_one_dependency_keeps_the_others_and_appends_it() {
 /// no error.
 #[tokio::test]
 async fn removing_one_dependency_keeps_the_others_through_either_verb() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let record = work_waiting_on_two(&s).await;
 
     s.call(
@@ -151,8 +149,7 @@ async fn removing_one_dependency_keeps_the_others_through_either_verb() {
 /// are asked of the same thing in one read.
 #[tokio::test]
 async fn removing_the_last_dependency_leaves_an_empty_list_and_a_blank_status_leaves_none() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let record = work_waiting_on_two(&s).await;
 
     s.call(
@@ -187,8 +184,7 @@ async fn removing_the_last_dependency_leaves_an_empty_list_and_a_blank_status_le
 /// nearest.** Nothing lands. The positive is the same call naming a real thing.
 #[tokio::test]
 async fn adding_a_dependency_that_names_nothing_is_refused_with_candidates() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     work_waiting_on_two(&s).await;
 
     s.refused(
@@ -221,8 +217,7 @@ async fn adding_a_dependency_that_names_nothing_is_refused_with_candidates() {
 /// is archived, which stays a thing and comes off just the same.
 #[tokio::test]
 async fn a_dependency_on_something_gone_can_be_removed() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     work_waiting_on_two(&s).await;
     s.call(
         "archive_entity",
@@ -260,8 +255,7 @@ async fn a_dependency_on_something_gone_can_be_removed() {
 /// named in `sets` and in a delta in one call is two answers and is refused.
 #[tokio::test]
 async fn a_key_that_is_not_a_list_refuses_the_forms_and_a_clash_with_sets() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     work_waiting_on_two(&s).await;
     s.add("person:lisa", "Lisa").await;
 
@@ -299,8 +293,7 @@ async fn a_key_that_is_not_a_list_refuses_the_forms_and_a_clash_with_sets() {
 /// work can start; after adding an unfinished one, it names what stops it.
 #[tokio::test]
 async fn the_ready_view_sees_a_dependency_added_without_resending_the_list() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     work_waiting_on_two(&s).await;
 
     let before = s
@@ -332,8 +325,7 @@ async fn the_ready_view_sees_a_dependency_added_without_resending_the_list() {
 /// value holds. The paired positive is the later claim's result, read first.
 #[tokio::test]
 async fn a_delta_is_resolved_against_the_thing_and_not_the_record_it_rides_on() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let earlier = work_waiting_on_two(&s).await;
 
     s.call(
@@ -373,8 +365,7 @@ async fn depends_on_of(s: &Session, handle: &str) -> String {
 /// the survivor already held stay.
 #[tokio::test]
 async fn an_address_kept_from_before_a_merge_adds_one_item_to_the_survivors_list() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let kept = work_waiting_on_two(&s).await;
     s.add("work:build-the-roof", "Build the roof").await;
     s.merge_entities(
@@ -405,8 +396,7 @@ async fn an_address_kept_from_before_a_merge_adds_one_item_to_the_survivors_list
 /// serves the new handle, and the caller still holds the old one.
 #[tokio::test]
 async fn removing_an_item_by_the_handle_it_used_to_wear_removes_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let kept = work_waiting_on_two(&s).await;
     s.call(
         "rename_entity",
@@ -433,8 +423,7 @@ async fn removing_an_item_by_the_handle_it_used_to_wear_removes_it() {
 /// same call naming the current handle lands.
 #[tokio::test]
 async fn adding_an_item_by_the_handle_it_used_to_wear_is_refused_with_the_current_one() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let kept = work_waiting_on_two(&s).await;
     s.add("work:wire-the-outlets", "Wire the outlets").await;
     s.call(

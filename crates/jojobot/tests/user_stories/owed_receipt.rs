@@ -34,8 +34,7 @@ async fn due_on_of(s: &Session, thing: &str) -> Option<String> {
 /// so a clear that fired on every status change would pass the finish alone.
 #[tokio::test]
 async fn finishing_a_thing_through_update_entity_takes_its_due_day_off() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_piece_of_work(&s).await;
     s.call(
         "update_entity",
@@ -77,8 +76,7 @@ async fn finishing_a_thing_through_update_entity_takes_its_due_day_off() {
 /// the finish holds the day.
 #[tokio::test]
 async fn a_thing_made_already_finished_holds_no_due_day() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
     for (handle, name, status, held) in [
         ("tau", "The Mast", "next", true),

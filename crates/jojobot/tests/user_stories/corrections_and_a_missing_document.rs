@@ -18,8 +18,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_read_of_a_missing_document_opens_as_a_read_does() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     let read = s
         .refused("read_document", json!({"document": "document:homer"}))
@@ -39,8 +38,7 @@ async fn a_read_of_a_missing_document_opens_as_a_read_does() {
 
 #[tokio::test]
 async fn the_first_capture_of_a_session_names_all_three_corrections() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
 
     let first = s

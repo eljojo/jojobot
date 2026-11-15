@@ -51,8 +51,7 @@ fn ids(read: &Value) -> Vec<String> {
 
 #[tokio::test]
 async fn a_topic_leads_with_its_standing_decisions_numbered_and_counts_the_replaced_one() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     // Added out of order, so the order read back is the numbers' and not arrival's.
     rules_of_springfield(
         &s,
@@ -119,8 +118,7 @@ async fn a_topic_leads_with_its_standing_decisions_numbered_and_counts_the_repla
 
 #[tokio::test]
 async fn a_replaced_decision_read_by_its_number_says_what_replaced_it_with_the_new_words() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     rules_of_springfield(
         &s,
         &[
@@ -181,8 +179,7 @@ async fn a_replaced_decision_read_by_its_number_says_what_replaced_it_with_the_n
 /// words; a decision nobody replaced carries no `replaced_by`.
 #[tokio::test]
 async fn a_decision_replaced_by_one_under_another_topic_says_so_with_the_new_words() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     rules_of_springfield(
         &s,
         &[
@@ -286,8 +283,7 @@ async fn retire(s: &Session, slug: &str) {
 /// replacement reads as it did, and a loop in a corrupt chain ends.
 #[tokio::test]
 async fn a_replaced_decision_in_a_chain_points_at_the_one_standing_now() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thread:krusty-burger", "Krusty burger").await;
     burger_decision(
         &s,
@@ -371,8 +367,7 @@ async fn a_replaced_decision_in_a_chain_points_at_the_one_standing_now() {
 /// loops back on itself ends rather than walking for ever.
 #[tokio::test]
 async fn a_one_step_replacement_reads_as_before_and_a_loop_in_a_chain_ends() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thread:krusty-burger", "Krusty burger").await;
     burger_decision(
         &s,

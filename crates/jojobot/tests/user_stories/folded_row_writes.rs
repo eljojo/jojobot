@@ -17,8 +17,7 @@ const FOLDED: &str = "thing:handcart";
 /// is judged on the row and not on the verb.
 #[tokio::test]
 async fn an_edit_sent_to_a_folded_handle_names_the_survivor_and_the_survivor_takes_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(SURVIVOR, "Kettle").await;
     s.add(FOLDED, "Handcart").await;
     s.call(

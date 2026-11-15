@@ -78,8 +78,7 @@ async fn the_packing_list(s: &Session) {
 
 #[tokio::test]
 async fn a_capture_on_a_list_does_not_say_the_caller_sent_the_order() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_packing_list(&s).await;
 
     let plain = s
@@ -110,8 +109,7 @@ async fn a_capture_on_a_list_does_not_say_the_caller_sent_the_order() {
 
 #[tokio::test]
 async fn a_tick_does_not_say_the_caller_sent_what_the_server_recorded() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_packing_list(&s).await;
     let tent = add_entry(&s, "list:packing", "tent", None).await;
 
@@ -134,8 +132,7 @@ async fn a_tick_does_not_say_the_caller_sent_what_the_server_recorded() {
 
 #[tokio::test]
 async fn a_move_does_not_say_the_caller_sent_what_the_server_held() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_packing_list(&s).await;
     add_entry(&s, "list:packing", "tent", None).await;
     let stove = add_entry(&s, "list:packing", "stove", None).await;
@@ -155,8 +152,7 @@ async fn a_move_does_not_say_the_caller_sent_what_the_server_held() {
 
 #[tokio::test]
 async fn an_own_field_the_caller_sent_still_stays_on_the_record_and_is_told() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     the_packing_list(&s).await;
 
     let sunny = s
@@ -186,8 +182,7 @@ async fn an_own_field_the_caller_sent_still_stays_on_the_record_and_is_told() {
 /// thing a receipt reports the key as reached like any other.
 #[tokio::test]
 async fn an_order_key_on_an_ordinary_thing_is_told_as_reached() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:kettle", "Kettle").await;
 
     let set = s

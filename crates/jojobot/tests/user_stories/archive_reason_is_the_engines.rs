@@ -22,8 +22,7 @@ use super::dsl::Story;
 /// archive with a reason that reads back.
 #[tokio::test]
 async fn a_caller_cannot_send_or_clear_archive_reason_and_an_archive_still_records_one() {
-    let story = Story::begin("bot:otto").await;
-    let writer = story.session().await;
+    let (story, writer) = Story::begin_with_session("bot:otto").await;
     let other = story.as_bot("bot:assistant").await;
     writer.add("thread:deploys-alpha", "Deploys Alpha").await;
     let said = |content: &'static str| {

@@ -20,8 +20,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_guessed_message_id_reads_the_message_and_teaches_the_published_name() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let sent = s
         .call(
             "post_message",
@@ -45,8 +44,7 @@ async fn a_guessed_message_id_reads_the_message_and_teaches_the_published_name()
 
 #[tokio::test]
 async fn a_call_missing_a_required_argument_names_it_and_what_the_verb_takes() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     // Neither required argument is sent, so each one the refusal names is read
     // off what the verb takes and not echoed from the call.
@@ -77,8 +75,7 @@ async fn a_call_missing_a_required_argument_names_it_and_what_the_verb_takes() {
 
 #[tokio::test]
 async fn an_element_missing_its_required_argument_is_named_by_its_path() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     let refusal = s
         .refused(
@@ -95,8 +92,7 @@ async fn an_element_missing_its_required_argument_is_named_by_its_path() {
 
 #[tokio::test]
 async fn declaring_a_shipped_type_says_it_exists_and_where_to_read_its_keys() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     let refusal = s
         .refused(

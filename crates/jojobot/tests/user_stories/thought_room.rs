@@ -265,8 +265,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
 /// refusal is about the value and not about the key.
 #[tokio::test]
 async fn a_ceiling_that_is_not_a_number_is_refused_where_it_is_written() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
 
     for (key, value) in [
@@ -324,8 +323,7 @@ async fn a_ceiling_that_is_not_a_number_is_refused_where_it_is_written() {
 /// "the refusal got quieter" from "the refusal got honest".
 #[tokio::test]
 async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:epsilon", "Epsilon").await;
     s.add("thing:the-fern", "The Fern").await;
     s.call(
@@ -421,8 +419,7 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
 /// all the same, and the claim takes no seat there.
 #[tokio::test]
 async fn a_merge_that_would_overfill_a_room_is_refused_until_a_slot_is_free() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("bot:milhouse", "Milhouse").await;
     s.call(
@@ -841,8 +838,7 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
 /// can swap one thought out as it writes this one.
 #[tokio::test]
 async fn an_edit_into_a_room_over_its_capacity_is_told_to_archive_and_not_to_capture() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.call(
         "capture",
@@ -897,8 +893,7 @@ async fn an_edit_into_a_room_over_its_capacity_is_told_to_archive_and_not_to_cap
 /// claims still count and are still refused when the room is full.
 #[tokio::test]
 async fn a_claim_another_identity_writes_on_a_bot_takes_no_seat_in_its_room() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:milhouse", "Milhouse").await;
     s.add("bot:lisa", "Lisa").await;
     s.call(
@@ -971,8 +966,7 @@ async fn a_claim_another_identity_writes_on_a_bot_takes_no_seat_in_its_room() {
 /// testimony's and not the cap's.
 #[tokio::test]
 async fn a_shorter_edit_in_place_lands_for_a_thought_over_its_cap() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:milhouse", "Milhouse").await;
     s.call(
         "capture",
@@ -1041,8 +1035,7 @@ async fn a_shorter_edit_in_place_lands_for_a_thought_over_its_cap() {
 /// archiving the claim that sets it, as the refusal says, does.
 #[tokio::test]
 async fn a_merge_into_your_own_bot_is_refused_for_a_duplicate_carrying_the_ageing_setting() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:the-couch", "The Couch").await;
     let setting = s
         .call(

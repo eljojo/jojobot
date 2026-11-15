@@ -62,8 +62,7 @@ async fn assert_resplits(session: &Session, document: &str, sections: usize) {
 /// section lands behind words that end with no line feed.
 #[tokio::test]
 async fn a_move_behind_the_section_that_followed_it_joins_both_ways() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     put(&session, "document:homer", None, "# A\ntext").await;
     let a = addresses(&session, "document:homer").await[0].clone();
@@ -85,8 +84,7 @@ async fn a_move_behind_the_section_that_followed_it_joins_both_ways() {
 /// carries the line feeds on its own tail.
 #[tokio::test]
 async fn a_put_that_ends_without_a_line_feed_is_joined_to_the_next_section() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     put(&session, "document:homer", None, "# A\ntext\n\n## B\nx").await;
     let a = addresses(&session, "document:homer").await[0].clone();
@@ -105,8 +103,7 @@ async fn a_put_that_ends_without_a_line_feed_is_joined_to_the_next_section() {
 /// one before. One more line feed puts the spaces on a line of their own.
 #[tokio::test]
 async fn a_tail_that_ends_on_spaces_does_not_indent_the_next_heading() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     put(&session, "document:homer", None, "# A\ntext\n\n    ").await;
     let a = addresses(&session, "document:homer").await[0].clone();
@@ -127,8 +124,7 @@ async fn a_tail_that_ends_on_spaces_does_not_indent_the_next_heading() {
 /// is left as it was stored.
 #[tokio::test]
 async fn a_move_that_closes_a_gap_leaves_the_neighbours_joined() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     put(&session, "document:homer", None, "# A\ntext").await;
     let a = addresses(&session, "document:homer").await[0].clone();

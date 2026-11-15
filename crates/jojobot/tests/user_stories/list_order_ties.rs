@@ -18,8 +18,7 @@ use super::lists::{a_list_on_the_trip, read_back};
 async fn entries_with_one_order_key_read_by_claim_number_not_by_text() {
     use jojobot_domain::memory::{EntityId, NewFact};
 
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "homer-chores", json!({"tick": "sink"})).await;
     // The list's own first claim is `f1`: nine more entries make the last two
     // `f9` and `f10`.
@@ -68,8 +67,7 @@ async fn entries_with_one_order_key_read_by_claim_number_not_by_text() {
 async fn document_sections_with_one_order_key_read_by_claim_number_not_by_text() {
     use jojobot_domain::memory::{EntityId, NewFact};
 
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:homer", "Homer").await;
     let memory = story.memory_store();
     let today: jiff::civil::Date = "2026-10-01".parse().expect("a day");

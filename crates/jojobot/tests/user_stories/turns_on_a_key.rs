@@ -15,8 +15,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_key_that_comes_back_to_an_earlier_person_is_told_where_turns_live() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("thing:the-furnace", "The furnace").await;
     s.add("person:homer", "Homer").await;

@@ -66,8 +66,7 @@ fn read_on_from(read: &Answer) -> Option<u64> {
 
 #[tokio::test]
 async fn a_long_list_reads_in_parts_that_fit_and_never_repeats_one() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     put_down(&s, "list:packing", LONG).await;
 
@@ -119,8 +118,7 @@ async fn a_long_list_reads_in_parts_that_fit_and_never_repeats_one() {
 
 #[tokio::test]
 async fn how_far_along_a_long_list_is_counts_every_entry_and_not_the_page_shown() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     put_down(&s, "list:packing", LONG - 1).await;
     // The last entry is not on the first page.
@@ -146,8 +144,7 @@ async fn how_far_along_a_long_list_is_counts_every_entry_and_not_the_page_shown(
 
 #[tokio::test]
 async fn a_list_of_five_reads_whole_with_nothing_left_out() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     for n in 1..=5 {
         add_entry(&s, "list:packing", &entry_text(n), None).await;
@@ -163,8 +160,7 @@ async fn a_list_of_five_reads_whole_with_nothing_left_out() {
 
 #[tokio::test]
 async fn an_offset_past_the_last_entry_says_nothing_is_left_to_read() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     for n in 1..=5 {
         add_entry(&s, "list:packing", &entry_text(n), None).await;
@@ -204,8 +200,7 @@ fn record_texts(read: &Answer) -> Vec<String> {
 
 #[tokio::test]
 async fn a_list_read_with_its_records_pages_its_entries_and_then_its_records() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     put_down(&s, "list:packing", LONG).await;
 
@@ -243,8 +238,7 @@ async fn a_list_read_with_its_records_pages_its_entries_and_then_its_records() {
 
 #[tokio::test]
 async fn a_browse_of_lists_never_serves_a_long_list_whole_and_names_how_to_read_its_rest() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "homer-chores", json!({"tick": "sink"})).await;
     s.call(
         "add_entity",

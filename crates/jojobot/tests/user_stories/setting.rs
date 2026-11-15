@@ -24,8 +24,7 @@ fn names_the_key_and_the_change(refusal: &super::dsl::Answer, key: &str) {
 /// that was set and the claim carries it beside its own.
 #[tokio::test]
 async fn one_capture_records_a_claim_and_sets_the_thing() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:handcart", "The Handcart").await;
 
     let claim = s
@@ -67,8 +66,7 @@ async fn one_capture_records_a_claim_and_sets_the_thing() {
 /// way works: take it off, then write it under the other bag.
 #[tokio::test]
 async fn an_edit_sets_the_thing_and_a_key_stays_in_its_bag() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:handcart", "The Handcart").await;
     let claim = s
         .call(
@@ -175,8 +173,7 @@ async fn an_edit_sets_the_thing_and_a_key_stays_in_its_bag() {
 /// as one of the claim's own fields is refused by name.
 #[tokio::test]
 async fn a_thing_made_with_settings_holds_them_as_settings() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     let made = s
         .call(
@@ -300,8 +297,7 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
 /// **Paired with a call that sends everything in `sets`**, which gets no hint.
 #[tokio::test]
 async fn the_receipt_splits_what_reached_the_thing_from_what_stayed_and_hints_at_sets() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
     s.add_under("project:atlas", "work:phi", "The Wiring").await;
     s.past_first_contact().await;
@@ -400,8 +396,7 @@ async fn the_receipt_splits_what_reached_the_thing_from_what_stayed_and_hints_at
 /// a bag.
 #[tokio::test]
 async fn the_due_moment_follows_a_setting_that_moves_without_changing_bag() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
 
     let made = s
@@ -442,8 +437,7 @@ async fn the_due_moment_follows_a_setting_that_moves_without_changing_bag() {
 /// jojobot set a due moment. **Paired**, on a capture and on an edit, in one story.
 #[tokio::test]
 async fn a_day_sent_as_an_own_field_does_not_make_the_thing_fall_due() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
     s.add_under("project:atlas", "work:sigma", "The Rigging")
         .await;
@@ -556,8 +550,7 @@ async fn a_day_sent_as_an_own_field_does_not_make_the_thing_fall_due() {
 /// refusal: an own field named under `sets` moves, as it always has.
 #[tokio::test]
 async fn a_role_holding_agent_as_a_setting_is_edited_through_sets() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     story
         .call(

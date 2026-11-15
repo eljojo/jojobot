@@ -262,8 +262,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
 /// does not, beside it.
 #[tokio::test]
 async fn a_report_held_by_an_archived_bot_still_makes_its_manager_the_head() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:lisa", "Lisa").await;
     s.add("person:milhouse", "Milhouse").await;
     for bot in ["nelson", "bart", "ralph"] {

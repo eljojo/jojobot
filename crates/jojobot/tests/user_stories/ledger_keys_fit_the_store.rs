@@ -51,8 +51,7 @@ async fn visit(s: &Session, handle: &str, name: &str, with: &[(&str, &str)]) -> 
 /// the same for every long set would tell the first and never the second.
 #[tokio::test]
 async fn a_long_type_and_key_set_is_told_once_per_set_and_once_per_session() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.call(
         "declare_type",
         json!({"name": "pet-vaccination", "fields": [

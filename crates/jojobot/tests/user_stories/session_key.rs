@@ -61,8 +61,7 @@ async fn voucher_state(reader: &Session, voucher: &EntityId) -> String {
 
 #[tokio::test]
 async fn a_name_read_from_a_record_cannot_act_as_the_session_it_names() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
 
@@ -264,8 +263,7 @@ async fn a_caller_resumes_a_stopped_run_by_the_name_list_runs_gave_it() {
 /// from being a blanket on anything that looks long.
 #[tokio::test]
 async fn a_live_key_or_an_unspent_wrap_code_in_text_is_refused_and_a_digest_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("topic:widgets", "Widgets").await;
     let gamma = story.as_bot("bot:gamma").await;
@@ -415,8 +413,7 @@ async fn a_second_ask_straight_after_a_pick_up_is_turned_away() {
 /// table reads from the served list rather than from a list of names.
 #[tokio::test]
 async fn a_live_key_in_text_is_refused_on_every_verb_the_surface_serves() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let gamma = story.as_bot("bot:gamma").await;
     let (name, key) = (gamma.run().to_string(), gamma.sid().to_string());
@@ -468,8 +465,7 @@ async fn keyless_run(story: &Story, name: &str) -> jojobot_domain::session::Sess
 /// dead-end at a refusal that says only the key continues the run.
 #[tokio::test]
 async fn the_refusal_for_an_abandoned_keyless_run_points_at_a_resume_that_works() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let card = keyless_run(&story, "jm7z").await;
     story
@@ -510,8 +506,7 @@ async fn the_refusal_for_an_abandoned_keyless_run_points_at_a_resume_that_works(
 /// forgets everything; only the card can say which key is the run's.
 #[tokio::test]
 async fn a_restart_keeps_the_key_a_run_holds_and_brings_back_none_that_ended() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
     s.add("topic:widgets", "Widgets").await;

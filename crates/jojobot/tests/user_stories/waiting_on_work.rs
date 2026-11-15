@@ -25,8 +25,7 @@ async fn work(s: &super::dsl::Session, slug: &str) {
 /// handle under `depends_on`, and a bot under `waiting_on`, land.**
 #[tokio::test]
 async fn a_work_handle_under_waiting_on_is_refused_toward_depends_on() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     work(&s, "pour-the-slab").await;
     work(&s, "frame-the-walls").await;
 

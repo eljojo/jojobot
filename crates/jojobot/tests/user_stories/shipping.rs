@@ -85,8 +85,7 @@ async fn a_session_reads_one_charter_and_never_learns_which_half_shipped() {
 
 #[tokio::test]
 async fn a_bot_the_build_supplies_nothing_for_answers_with_its_own_words_alone() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     // A bot the operator stood up. Nothing is supplied for it, so what it
     // answers with is what somebody wrote — and the round trip is not a trap

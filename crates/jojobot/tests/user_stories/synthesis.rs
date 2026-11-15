@@ -213,8 +213,7 @@ async fn one_summary_stands_for_three_separate_notes() {
 /// hides an active claim because something archived once stood for it.
 #[tokio::test]
 async fn an_archived_summary_never_hides_the_active_notes_it_stood_for() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("thing:krusty-show", "Krusty show").await;
     let first = s
@@ -312,8 +311,7 @@ async fn an_archived_summary_never_hides_the_active_notes_it_stood_for() {
 /// and once the first summary's mark is archived the note can be marked.
 #[tokio::test]
 async fn a_note_that_a_summary_stands_for_cannot_become_a_summary_itself() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:krusty-show", "Krusty show").await;
     let pile = s
         .fact("thing:krusty-show", "the audience is capped at forty")

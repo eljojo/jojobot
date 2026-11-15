@@ -94,8 +94,7 @@ async fn posting_hands_back_the_reply_that_was_already_waiting() {
 /// is not handed a null to misread.
 #[tokio::test]
 async fn a_message_processed_straight_from_new_is_listed_without_taken_by() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let gamma = story.as_bot("bot:gamma").await;
 
@@ -137,8 +136,7 @@ async fn a_message_processed_straight_from_new_is_listed_without_taken_by() {
 /// the bot is counted, with the call that returns it, and stays owed.
 #[tokio::test]
 async fn a_post_does_not_ship_again_the_mail_the_bot_is_already_working() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let gamma = story.as_bot("bot:gamma").await;
 

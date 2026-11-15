@@ -36,8 +36,7 @@ fn with(mut call: serde_json::Value, extra: serde_json::Value) -> serde_json::Va
 
 #[tokio::test]
 async fn a_short_form_beside_its_full_name_lands_only_with_a_reason_and_keeps_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:bartholomew", "Bartholomew").await;
 
     let refusal = s
@@ -100,8 +99,7 @@ async fn a_short_form_beside_its_full_name_lands_only_with_a_reason_and_keeps_it
 
 #[tokio::test]
 async fn the_same_words_under_another_kind_or_beside_another_surname_are_not_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:bartholomew-simpson", "Bartholomew Simpson")
         .await;
 

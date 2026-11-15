@@ -4,8 +4,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_missed_card_number_names_the_work_item_that_holds_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("work:q-reference-link-rule", "Reference link rule")
         .await;
     s.add("person:milhouse", "Milhouse").await;
@@ -65,8 +64,7 @@ async fn a_missed_card_number_names_the_work_item_that_holds_it() {
 
 #[tokio::test]
 async fn an_existing_card_number_handle_reads_itself() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("work:q-reference-link-rule", "Reference link rule")
         .await;
     s.call("capture", json!({"subject":"work:q-reference-link-rule", "content":"numbered card", "sets":{"card":"2742"}})).await;
@@ -80,8 +78,7 @@ async fn an_existing_card_number_handle_reads_itself() {
 
 #[tokio::test]
 async fn an_archived_card_number_holder_is_not_suggested() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("work:q-reference-link-rule", "Reference link rule")
         .await;
     s.call("capture", json!({"subject":"work:q-reference-link-rule", "content":"numbered card", "sets":{"card":"2742"}})).await;
@@ -123,8 +120,7 @@ async fn an_archived_card_number_holder_is_not_suggested() {
 
 #[tokio::test]
 async fn live_card_number_holders_precede_ordinary_candidates() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("work:q-entity-lifecycle", "Entity lifecycle"),
         ("work:q-reference-link-rule", "Reference link rule"),

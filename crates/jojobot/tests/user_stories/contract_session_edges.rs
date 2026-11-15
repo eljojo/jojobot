@@ -10,8 +10,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_beat_with_a_blank_focus_is_refused_and_one_with_words_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     for blank in ["", "   "] {
         s.refused(
             "journal",
@@ -36,8 +35,7 @@ async fn a_beat_with_a_blank_focus_is_refused_and_one_with_words_lands() {
 
 #[tokio::test]
 async fn a_page_of_no_runs_is_refused_and_a_page_of_one_is_served() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.call(
         "journal",
         json!({"entry": "first beat", "focus": "the flue"}),

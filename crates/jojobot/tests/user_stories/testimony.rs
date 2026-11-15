@@ -25,8 +25,7 @@ fn said(subject: &str, content: &str, provenance: &str) -> serde_json::Value {
 /// still shows, and the corrected claim is derived from it.
 #[tokio::test]
 async fn a_later_run_cannot_rewrite_the_operators_words_in_place_and_the_route_works() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
     let red = first.fact("thing:handcart", "the handcart is red").await;
     first.wrap("wrote down what the operator said").await;
@@ -167,8 +166,7 @@ async fn a_run_rewrites_its_own_words_and_keeps_their_provenance() {
 /// it as in any other.
 #[tokio::test]
 async fn a_run_still_needs_the_operators_word_to_make_its_own_guess_testimony() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:handcart", "The Handcart").await;
     let guess = s
         .call(
@@ -218,8 +216,7 @@ async fn a_run_still_needs_the_operators_word_to_make_its_own_guess_testimony() 
 /// inference stays an inference.
 #[tokio::test]
 async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
     let guess = first
         .call(
@@ -268,8 +265,7 @@ async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
 /// lands. Each refusal sits beside the same edit made where it is allowed.
 #[tokio::test]
 async fn a_later_run_cannot_set_change_or_clear_a_value_field_on_the_operators_claim() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
     let red = first
         .call(
@@ -360,8 +356,7 @@ async fn a_later_run_cannot_set_change_or_clear_a_value_field_on_the_operators_c
 /// through would not pass.
 #[tokio::test]
 async fn a_resend_of_the_operators_words_and_fields_is_not_a_rewrite() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
     let red = first
         .call(
@@ -436,8 +431,7 @@ async fn a_resend_of_the_operators_words_and_fields_is_not_a_rewrite() {
 /// same read.
 #[tokio::test]
 async fn a_bot_editing_its_own_ceiling_on_the_operators_claim_meets_the_ceiling_first() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     let claim = s
         .call(

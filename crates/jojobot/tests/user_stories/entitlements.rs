@@ -149,8 +149,7 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
 /// reader who followed a link of its own is told where to see them.
 #[tokio::test]
 async fn a_record_that_only_mentions_a_thing_is_not_read_as_a_rule_about_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("place:moes", "Moe's").await;
     s.add("place:leftorium", "The Leftorium").await;
     s.add("thing:the-couch", "The Couch").await;
@@ -237,8 +236,7 @@ async fn held_of_the_hall(s: &super::dsl::Session) -> (String, u64) {
 /// is followed, and it returns every holder.
 #[tokio::test]
 async fn an_overflowing_block_of_related_records_names_the_walk_that_reads_them_all() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.call(
         "declare_type",
         json!({"name": "booking", "fields": [{"key": "booked_into", "holds": "reference"}]}),
@@ -272,8 +270,7 @@ async fn an_overflowing_block_of_related_records_names_the_walk_that_reads_them_
 /// regression): it names the walk along `admits`.
 #[tokio::test]
 async fn an_overflowing_block_of_admitting_records_keeps_its_own_note() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     ten_records_about_the_hall(&s, "admits").await;
     let (note, left_out) = held_of_the_hall(&s).await;
     assert!(left_out > 0, "{note}");
@@ -288,8 +285,7 @@ async fn an_overflowing_block_of_admitting_records_keeps_its_own_note() {
 /// other half of the pair): no walk is named for what nothing left out.
 #[tokio::test]
 async fn a_related_block_that_fits_says_only_that_the_records_mention_the_hall() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.call(
         "declare_type",
         json!({"name": "booking", "fields": [{"key": "booked_into", "holds": "reference"}]}),

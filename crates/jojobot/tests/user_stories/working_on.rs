@@ -23,8 +23,7 @@ async fn working_on(reader: &Session, bot: &str) -> Option<String> {
 /// paired negative is the bot before it declares: no key, not an empty one.
 #[tokio::test]
 async fn a_session_declares_what_its_bot_is_working_on() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("work:frame-the-walls", "Frame the walls").await;
     let reader = story.as_bot("bot:assistant").await;
     assert_eq!(working_on(&reader, "bot:otto").await, None);
@@ -45,8 +44,7 @@ async fn a_session_declares_what_its_bot_is_working_on() {
 /// rather than reading as an empty string.
 #[tokio::test]
 async fn a_session_clears_what_its_bot_was_working_on() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",
@@ -87,8 +85,7 @@ async fn owned_work(s: &Session, handle: &str, name: &str, owner: &str) -> Strin
 /// `journal`. The paired negative is a move to any other status.
 #[tokio::test]
 async fn capturing_owned_work_as_now_fills_working_on() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     owned_work(&otto, "work:frame-the-walls", "Frame the walls", "bot:otto").await;
     otto.call(
         "capture",
@@ -114,8 +111,7 @@ async fn capturing_owned_work_as_now_fills_working_on() {
 /// **An edit that moves owned work to `now` fills it the same way.**
 #[tokio::test]
 async fn editing_owned_work_to_now_fills_working_on() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     let address = owned_work(&otto, "work:frame-the-walls", "Frame the walls", "bot:otto").await;
     assert_eq!(working_on(&otto, "bot:otto").await, None);
 
@@ -135,8 +131,7 @@ async fn editing_owned_work_to_now_fills_working_on() {
 /// way**, and an edit that moves it to another status fills nothing.
 #[tokio::test]
 async fn editing_the_owned_thing_to_now_fills_working_on() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     owned_work(&otto, "work:frame-the-walls", "Frame the walls", "bot:otto").await;
 
     otto.call(
@@ -162,8 +157,7 @@ async fn editing_the_owned_thing_to_now_fills_working_on() {
 /// created at `now` for another owner fills nothing.
 #[tokio::test]
 async fn creating_owned_work_as_now_fills_working_on() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
 
     otto.call(
         "add_entity",
@@ -190,8 +184,7 @@ async fn creating_owned_work_as_now_fills_working_on() {
 /// itself, because it does not own the work.
 #[tokio::test]
 async fn another_bot_moving_the_work_fills_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     let address = owned_work(&otto, "work:frame-the-walls", "Frame the walls", "bot:otto").await;
     let other = story.as_bot("bot:assistant").await;
 
@@ -209,8 +202,7 @@ async fn another_bot_moving_the_work_fills_nothing() {
 /// **A rename of the thing keeps the link**, and the bot reads the new handle.
 #[tokio::test]
 async fn renaming_the_thing_keeps_working_on() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",
@@ -235,8 +227,7 @@ async fn renaming_the_thing_keeps_working_on() {
 /// before the wrap.
 #[tokio::test]
 async fn a_wrapped_session_leaves_working_on_unknown() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",
@@ -275,8 +266,7 @@ async fn a_wrapped_session_leaves_working_on_unknown() {
 /// says it is unknown after the wrap**, the same answer a `recall` gives.
 #[tokio::test]
 async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",
@@ -309,8 +299,7 @@ async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
 /// bot at nothing.
 #[tokio::test]
 async fn a_project_moved_to_now_does_not_fill_working_on() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("project:atlas", "Atlas").await;
 
     otto.call(
@@ -327,8 +316,7 @@ async fn a_project_moved_to_now_does_not_fill_working_on() {
 /// call can be sent again whole.
 #[tokio::test]
 async fn a_working_on_that_names_nothing_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
 
     otto.refused(
         "journal",
@@ -346,8 +334,7 @@ async fn a_working_on_that_names_nothing_is_refused() {
 /// nothing.
 #[tokio::test]
 async fn a_word_the_instance_maps_to_now_fills_working_on_and_no_other_word_does() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (_story, otto) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("work:frame-the-walls", "Frame the walls"),
         ("work:pour-the-slab", "Pour the slab"),
@@ -399,8 +386,7 @@ enum Writer {
 async fn a_bot_on_the_framing(writer: Writer) -> (Story, Session) {
     match writer {
         Writer::Live | Writer::Wrapped => {
-            let story = Story::begin("bot:otto").await;
-            let otto = story.session().await;
+            let (story, otto) = Story::begin_with_session("bot:otto").await;
             otto.add("work:frame-the-walls", "Frame the walls").await;
             otto.call(
                 "journal",
@@ -497,8 +483,7 @@ async fn the_filters_do_not_return_a_bot_whose_writer_was_abandoned() {
 /// where the walk stopped, so no object repeats and none is skipped.
 #[tokio::test]
 async fn a_paged_read_of_the_bots_on_a_thing_shows_each_once_past_a_bot_whose_writer_wrapped() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("work:frame-the-walls", "Frame the walls").await;
     for (handle, name) in [
         ("bot:alpha", "Alpha"),
@@ -608,8 +593,7 @@ async fn the_records_mark_a_working_on_whose_writer_was_abandoned() {
 /// The bot is on the page while its writer is live, and is not once it wrapped.
 #[tokio::test]
 async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_writer_wrapped() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",

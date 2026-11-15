@@ -50,8 +50,7 @@ const LEAN: [&str; 4] = ["content", "provenance", "standing", "recorded_at"];
 
 #[tokio::test]
 async fn a_review_names_the_keys_of_each_record_and_is_told_once_what_it_left_out() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_topic_under_review(&s).await;
 
     let lean = s
@@ -141,8 +140,7 @@ async fn a_review_names_the_keys_of_each_record_and_is_told_once_what_it_left_ou
 
 #[tokio::test]
 async fn a_record_with_no_references_carries_no_empty_list() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_topic_under_review(&s).await;
 
     let read = s
@@ -193,8 +191,7 @@ async fn a_record_with_no_references_carries_no_empty_list() {
 
 #[tokio::test]
 async fn a_page_holds_at_most_the_number_a_call_names() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_topic_under_review(&s).await;
 
     // ── several objects: `limit` counts objects, and `offset` reads on ──────
@@ -276,8 +273,7 @@ async fn a_page_holds_at_most_the_number_a_call_names() {
 /// details; the plain read it might be taken for brings no record.
 #[tokio::test]
 async fn following_the_line_that_says_how_to_read_what_was_left_out_reads_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_topic_under_review(&s).await;
 
     let lean = s

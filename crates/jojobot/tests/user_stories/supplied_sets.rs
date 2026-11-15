@@ -33,8 +33,7 @@ async fn asked_by_key(s: &Session, key: &str, kind: Option<&str>) -> Vec<String>
 
 #[tokio::test]
 async fn a_key_set_on_a_shipped_view_is_found_by_key_like_one_set_on_a_stored_view() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("view:my-bikes", "My Bikes").await;
     for subject in ["view:loops", "view:my-bikes"] {
         s.call(
@@ -65,8 +64,7 @@ async fn a_key_set_on_a_shipped_view_is_found_by_key_like_one_set_on_a_stored_vi
 /// operator made, which lands.
 #[tokio::test]
 async fn an_archive_of_a_supplied_record_is_refused_and_one_of_the_operators_own_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("view:my-bikes", "My Bikes").await;
 
     let refused = s
@@ -96,8 +94,7 @@ async fn an_archive_of_a_supplied_record_is_refused_and_one_of_the_operators_own
 /// supplies and not about the verb.
 #[tokio::test]
 async fn a_sets_only_edit_of_a_shipped_view_lands_through_the_surface_like_one_of_a_stored_view() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("view:my-bikes", "My Bikes").await;
     // **The premise of the story, read through the surface**: the listing names the
     // source of each row, and the store's row wins where both exist, so a shipped

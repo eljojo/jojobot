@@ -49,8 +49,7 @@ async fn a_list_of_three(s: &Session, setting: &str) -> Vec<String> {
 /// were done, and an entry ticked undone is where its place put it.**
 #[tokio::test]
 async fn a_sink_list_keeps_done_entries_at_the_bottom_in_the_order_done() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let at = a_list_of_three(&s, "sink").await;
     assert_eq!(
         read_states(&s, "list:packing").await,
@@ -112,8 +111,7 @@ async fn a_leave_list_lets_a_done_entry_go_and_says_so() {
 /// end in the original order.**
 #[tokio::test]
 async fn a_back_list_rotates_and_two_circuits_end_in_the_original_order() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let at = a_list_of_three(&s, "back").await;
 
     s.call("capture", ticking("list:packing", &at[0], "done"))
@@ -139,8 +137,7 @@ async fn a_back_list_rotates_and_two_circuits_end_in_the_original_order() {
 /// `undone`, and a tick on it before that is refused.
 #[tokio::test]
 async fn a_dropped_entry_reads_as_dropped_and_never_as_done() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let at = a_list_of_three(&s, "sink").await;
     s.call("capture", ticking("list:packing", &at[1], "dropped"))
         .await;
@@ -174,8 +171,7 @@ async fn a_dropped_entry_reads_as_dropped_and_never_as_done() {
 /// is a record of its own.
 #[tokio::test]
 async fn a_tick_never_edits_the_entry_it_names() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let tent = add_entry(&s, "list:packing", "tent", None).await;
 
@@ -203,8 +199,7 @@ async fn a_tick_never_edits_the_entry_it_names() {
 /// turns twice. The paired positive is a second turn under a new id, which does.
 #[tokio::test]
 async fn a_retried_tick_under_one_request_id_rotates_once() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let at = a_list_of_three(&s, "back").await;
 
     let mut turn = ticking("list:packing", &at[0], "done");
@@ -233,8 +228,7 @@ async fn a_retried_tick_under_one_request_id_rotates_once() {
 /// part: the first part says how many are left and the call that reads them.
 #[tokio::test]
 async fn the_tick_history_is_read_in_parts_newest_first() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let at = a_list_of_three(&s, "leave").await;
     for (entry, act) in [
         (0, "done"),
@@ -283,8 +277,7 @@ async fn the_tick_history_is_read_in_parts_newest_first() {
 /// nothing lands. Each refusal is paired with the call that works.
 #[tokio::test]
 async fn a_tick_that_cannot_be_recorded_is_refused_with_a_way_forward() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     let at = a_list_of_three(&s, "sink").await;
 
     s.refused(
@@ -364,8 +357,7 @@ async fn an_errands_list(s: &Session, setting: &str) -> Vec<String> {
 /// state its own list left it in.
 #[tokio::test]
 async fn ticks_follow_their_entries_when_two_lists_merge() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let packing = a_list_of_three(&s, "sink").await;
     let errands = an_errands_list(&s, "sink").await;
     s.call("capture", ticking("list:packing", &packing[1], "done"))
@@ -400,8 +392,7 @@ async fn ticks_follow_their_entries_when_two_lists_merge() {
 /// followed to it as every address of a folded claim is.
 #[tokio::test]
 async fn an_entry_address_from_before_a_merge_still_places_after_on_the_survivor() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_of_three(&s, "sink").await;
     let errands = an_errands_list(&s, "sink").await;
 
@@ -429,8 +420,7 @@ async fn an_entry_address_from_before_a_merge_still_places_after_on_the_survivor
 /// the rotation.
 #[tokio::test]
 async fn undone_revives_a_dropped_entry_on_a_back_list() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:springfield-camping", "Springfield camping")
         .await;
     let at = an_errands_list(&s, "back").await;

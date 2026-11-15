@@ -11,8 +11,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_bot_that_carries_a_role_claims_it_at_every_boot() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
 

@@ -17,8 +17,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_run_can_see_what_its_focus_was_and_what_an_entry_said_before_it_was_corrected() {
-    let story = Story::begin("bot:otto").await;
-    let run = story.session().await;
+    let (_story, run) = Story::begin_with_session("bot:otto").await;
     run.call(
         "journal",
         json!({"entry": "read the card", "focus": "reading the card"}),
@@ -114,8 +113,7 @@ async fn a_run_can_see_what_its_focus_was_and_what_an_entry_said_before_it_was_c
 
 #[tokio::test]
 async fn the_history_of_a_runs_key_says_it_changed_and_never_what_it_changed_to() {
-    let story = Story::begin("bot:otto").await;
-    let run = story.session().await;
+    let (story, run) = Story::begin_with_session("bot:otto").await;
     run.journal("a beat before the run is wrapped").await;
     let handle = format!("session:{}", run.run());
     let key = run.sid().to_string();
@@ -236,8 +234,7 @@ async fn a_run_never_handed_its_charter_says_never_told_and_one_that_read_it_say
 /// extended to the objects reached by the walk (rule 498) in the same change.
 #[tokio::test]
 async fn a_run_cannot_be_linked_to_so_no_walk_reaches_one_with_its_history() {
-    let story = Story::begin("bot:otto").await;
-    let run = story.session().await;
+    let (story, run) = Story::begin_with_session("bot:otto").await;
     run.add("person:milhouse", "Milhouse").await;
     run.call(
         "journal",
@@ -315,8 +312,7 @@ async fn a_run_cannot_be_linked_to_so_no_walk_reaches_one_with_its_history() {
 /// newest change, and the pointer it leaves moves forward to the next.
 #[tokio::test]
 async fn a_page_of_no_changes_is_refused_and_a_page_of_one_moves_forward_when_followed() {
-    let story = Story::begin("bot:otto").await;
-    let run = story.session().await;
+    let (_story, run) = Story::begin_with_session("bot:otto").await;
     for focus in ["reading the card", "writing the fix", "checking the fix"] {
         run.call("journal", json!({"entry": focus, "focus": focus}))
             .await;
@@ -371,8 +367,7 @@ async fn a_page_of_no_changes_is_refused_and_a_page_of_one_moves_forward_when_fo
 /// it.
 #[tokio::test]
 async fn the_first_page_of_wordings_holds_the_one_written_last_even_from_an_early_entry() {
-    let story = Story::begin("bot:otto").await;
-    let run = story.session().await;
+    let (_story, run) = Story::begin_with_session("bot:otto").await;
     let handle = format!("session:{}", run.run());
     // An entry of the run's, then a write that makes jojobot's own beat, then
     // a second entry that is corrected, then another write that rewrites the

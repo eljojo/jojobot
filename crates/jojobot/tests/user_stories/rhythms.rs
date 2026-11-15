@@ -26,8 +26,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn which_of_the_loops_have_gone_quiet() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     // ── the things the loops are ON ─────────────────────────────────────────
     s.add("pet:snowball", "Snowball").await;
@@ -303,8 +302,7 @@ async fn which_of_the_loops_have_gone_quiet() {
 /// send, and nothing is written.
 #[tokio::test]
 async fn a_snoozed_loop_comes_back_on_its_day_and_a_run_returns_it_to_its_cadence() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("thing:kettle", "The Kettle").await;
     s.add_under("thing:kettle", "rhythm:descale", "Descale")
@@ -424,8 +422,7 @@ async fn a_snoozed_loop_comes_back_on_its_day_and_a_run_returns_it_to_its_cadenc
 /// legitimate loop — is still made; and the half-made one is refused.
 #[tokio::test]
 async fn a_cadence_alone_takes_the_default_policy_and_a_policy_without_a_cadence_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("thing:kettle", "The Kettle").await;
     s.add_under("thing:kettle", "rhythm:descale", "Descale")
@@ -594,8 +591,7 @@ async fn a_cadence_alone_takes_the_default_policy_and_a_policy_without_a_cadence
 /// because the half it lacks is not there to read.
 #[tokio::test]
 async fn a_whole_schedule_and_its_first_check_in_land_in_one_capture() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "The Kettle").await;
     s.add_under("thing:kettle", "rhythm:descale", "Descale")
         .await;
@@ -698,8 +694,7 @@ async fn a_whole_schedule_and_its_first_check_in_land_in_one_capture() {
 /// key takes, and the good value lands beside it.
 #[tokio::test]
 async fn a_bad_advances_from_is_still_refused_and_a_good_one_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "The Kettle").await;
     s.add_under("thing:kettle", "rhythm:descale", "Descale")
         .await;

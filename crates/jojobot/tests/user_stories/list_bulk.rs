@@ -121,8 +121,7 @@ async fn twenty_three_entries_in_one_call_read_back_in_the_order_sent() {
 /// that were after it come after the run.
 #[tokio::test]
 async fn entries_with_after_place_the_whole_run_behind_that_entry_in_order() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     add_entry(&s, "list:packing", "tent", None).await;
     let second = add_entry(&s, "list:packing", "stove", None).await;
@@ -151,8 +150,7 @@ async fn entries_with_after_place_the_whole_run_behind_that_entry_in_order() {
 /// each state. An item may be `dropped`, which is not done.
 #[tokio::test]
 async fn three_ticks_in_one_call_are_three_tick_records() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let tent = add_entry(&s, "list:packing", "tent", None).await;
     add_entry(&s, "list:packing", "stove", None).await;
@@ -313,8 +311,7 @@ async fn the_single_forms_are_unchanged_and_a_batch_past_the_cap_is_refused() {
 /// the same call again, and the list holds each entry once.
 #[tokio::test]
 async fn an_item_that_fails_at_the_write_stops_there_and_the_same_id_finishes_the_rest() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let call = json!({"subject": "list:packing", "provenance": "testimony",
                       "request_id": "pack-2",
@@ -451,8 +448,7 @@ async fn a_batch_that_cannot_stand_is_refused_whole_naming_the_second_item() {
 /// judged in order too, so it lands and leaves the chore open.
 #[tokio::test]
 async fn ticks_are_judged_in_order_so_a_drop_undone_and_a_done_undone_both_land() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let (lawn, car) = homer_chores(&s).await;
     s.call(
         "capture",
@@ -490,8 +486,7 @@ async fn ticks_are_judged_in_order_so_a_drop_undone_and_a_done_undone_both_land(
 /// chore that failed alone lands it, and the list holds each chore once.
 #[tokio::test]
 async fn a_batch_that_half_landed_without_an_id_says_what_landed_and_how_to_finish() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "homer-chores", json!({"tick": "sink"})).await;
     let stopped = s
         .refused(
@@ -549,8 +544,7 @@ async fn a_batch_that_half_landed_without_an_id_says_what_landed_and_how_to_fini
 /// refusal and none of those arguments.
 #[tokio::test]
 async fn a_capture_with_no_words_on_a_list_names_the_ways_to_write_to_one() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     s.add("thing:kettle", "The Kettle").await;
 
@@ -595,8 +589,7 @@ async fn a_capture_with_no_words_on_a_list_names_the_ways_to_write_to_one() {
 /// carries the same `wrote` and the same keys on each landed item.
 #[tokio::test]
 async fn a_half_landed_batch_with_an_id_says_it_wrote_and_agrees_with_the_one_without() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "homer-chores", json!({"tick": "sink"})).await;
     let call = json!({"subject": "list:homer-chores", "provenance": "testimony",
                       "request_id": "r1",
@@ -705,8 +698,7 @@ async fn a_half_landed_batch_with_an_id_says_it_wrote_and_agrees_with_the_one_wi
 /// under the same id finishes the batch.
 #[tokio::test]
 async fn a_refused_item_under_an_id_is_the_callers_to_change_and_a_store_failure_is_a_retry() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "homer-chores", json!({"tick": "sink"})).await;
     let refused_third = json!({"subject": "list:homer-chores", "provenance": "testimony",
                                "request_id": "r1",

@@ -35,8 +35,7 @@ fn refusal_names(read: &Value, handle: &str) -> bool {
 
 #[tokio::test]
 async fn a_parent_that_names_nothing_is_refused_with_the_nearest_handles() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_shed_with_work(&s).await;
 
     // ── paired: a misspelt subject names the shed among its nearest ──────────
@@ -70,8 +69,7 @@ async fn a_parent_that_names_nothing_is_refused_with_the_nearest_handles() {
 /// board does. Paired with the shed, which holds work and answers it.
 #[tokio::test]
 async fn a_real_parent_that_holds_no_work_still_answers_empty() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_shed_with_work(&s).await;
     s.add("project:the-barn", "The barn").await;
     for call in [
@@ -101,8 +99,7 @@ async fn a_real_parent_that_holds_no_work_still_answers_empty() {
 /// `ready` take the project as an input and pass it as the parent.
 #[tokio::test]
 async fn a_view_whose_input_is_the_parent_refuses_a_misspelt_project_too() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_shed_with_work(&s).await;
     for view in ["board", "ready"] {
         let refused = s

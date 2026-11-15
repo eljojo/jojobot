@@ -149,8 +149,7 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
 /// merge description still names the verb that address works with.
 #[tokio::test]
 async fn an_address_held_from_before_a_merge_still_reaches_its_claim() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("person:nelson", "Nelson").await;
     s.add("person:milhouse", "Milhouse").await;
@@ -193,8 +192,7 @@ async fn an_address_held_from_before_a_merge_still_reaches_its_claim() {
 /// first claim and lose this one.
 #[tokio::test]
 async fn a_merge_follows_a_pointer_drawn_before_the_folded_sides_own_rename() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("person:ned-flander", "Ned Flanders").await;
     s.add("person:homer", "Homer").await;
@@ -277,8 +275,7 @@ async fn a_merge_follows_a_pointer_drawn_before_the_folded_sides_own_rename() {
 /// somebody real, not moving anything until it is answered.
 #[tokio::test]
 async fn a_rename_onto_a_spelling_that_resembles_someone_else_is_confirmed_and_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("person:barney-gumble", "Barney Gumble").await;
     s.fact("person:barney-gumble", "drinks at Moe's").await;
@@ -330,8 +327,7 @@ async fn a_rename_onto_a_spelling_that_resembles_someone_else_is_confirmed_and_l
 /// reads a full date as the difference between them, so none is refused.
 #[tokio::test]
 async fn three_dated_visits_filed_under_one_parent_are_not_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("topic:stunt-rehearsals", "Stunt rehearsals").await;
     s.add_under(
@@ -371,8 +367,7 @@ async fn three_dated_visits_filed_under_one_parent_are_not_refused() {
 /// that is no date is a number, and the numbered series below covers it.)
 #[tokio::test]
 async fn a_different_date_sets_two_entries_apart_only_under_the_same_parent() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("topic:stunt-rehearsals", "Stunt rehearsals").await;
     s.add("topic:stunt-schedule", "Stunt schedule").await;
@@ -419,8 +414,7 @@ async fn a_different_date_sets_two_entries_apart_only_under_the_same_parent() {
 /// answer the same question as the handle channel.
 #[tokio::test]
 async fn numbered_siblings_under_one_parent_are_not_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     let t = story.session().await;
 
     s.add("work:alpha-queue", "Alpha queue").await;
@@ -455,8 +449,7 @@ async fn numbered_siblings_under_one_parent_are_not_refused() {
 /// screened, and so is the same number under another parent.
 #[tokio::test]
 async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apart() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("work:alpha-queue", "Alpha queue").await;
     s.add("work:beta-queue", "Beta queue").await;
@@ -508,8 +501,7 @@ async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apa
 /// first time: `numbered_siblings_under_one_parent_are_not_refused` holds that.
 #[tokio::test]
 async fn a_numbered_root_refused_beside_another_is_told_to_make_the_series_under_one_parent() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("work:q-1001", "Queue: card 1001 on homer").await;
     let refused = s
@@ -537,8 +529,7 @@ async fn a_numbered_root_refused_beside_another_is_told_to_make_the_series_under
 /// the root still explains how to put both members under one parent.
 #[tokio::test]
 async fn a_numbered_root_with_an_added_part_is_told_to_make_the_series_under_one_parent() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("work:contract-deploy-9", "Deploy 9").await;
     let refused = s
         .refused(
@@ -562,8 +553,7 @@ async fn a_numbered_root_with_an_added_part_is_told_to_make_the_series_under_one
 /// send the caller to a parent.
 #[tokio::test]
 async fn a_root_one_letter_from_another_is_refused_without_the_series_advice() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("work:q-1001", "Queue: card 1001 on homer").await;
     let refused = s
@@ -596,8 +586,7 @@ async fn a_root_one_letter_from_another_is_refused_without_the_series_advice() {
 /// moved on the refusal, and the fold the other way lands.
 #[tokio::test]
 async fn a_thing_is_not_folded_into_its_own_descendant_and_the_refusal_names_the_way() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("org:springfield-town-council", "Town council").await;
     s.add_under(
         "org:springfield-town-council",

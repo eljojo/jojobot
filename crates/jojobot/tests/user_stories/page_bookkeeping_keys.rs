@@ -40,8 +40,7 @@ async fn an_old_bot(story: &Story, slug: &str, name: &str) {
 /// positive is an ordinary key written on the same bots.
 #[tokio::test]
 async fn a_bots_page_shows_no_row_for_the_release_notes_it_was_told() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     an_old_bot(&story, "gamma", "Gamma").await;
     let later = story.restarted().await;
@@ -76,8 +75,7 @@ async fn a_bots_page_shows_no_row_for_the_release_notes_it_was_told() {
 /// The paired positive is an ordinary key on the same thing, which the table shows.
 #[tokio::test]
 async fn a_page_shows_no_row_for_the_stamp_defrag_leaves() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.call(
         "capture",

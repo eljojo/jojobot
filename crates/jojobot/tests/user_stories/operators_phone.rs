@@ -350,8 +350,7 @@ async fn a_push_that_never_goes_out_is_logged_naming_the_message_and_the_message
 #[tokio::test]
 async fn an_instance_with_no_push_service_pushes_nothing_and_logs_nothing_about_it() {
     let (logged, _guard) = capture_logs();
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:lisa", "Lisa").await;
     s.event_with(
         "topic:instance",

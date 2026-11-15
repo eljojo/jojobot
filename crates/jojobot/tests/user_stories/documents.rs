@@ -19,8 +19,7 @@ const MANUAL: &str = "# Fryer manual\n\nRead this before the first shift.\n\n## 
 /// **The file put is the file read, and one edited part moves alone.**
 #[tokio::test]
 async fn a_manual_put_whole_is_read_back_whole_and_an_edit_moves_one_part() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
 
     let put = session
@@ -71,8 +70,7 @@ async fn a_manual_put_whole_is_read_back_whole_and_an_edit_moves_one_part() {
 /// lands there.**
 #[tokio::test]
 async fn a_second_put_must_say_where_it_goes() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     session
         .call(
@@ -124,8 +122,7 @@ async fn a_second_put_must_say_where_it_goes() {
 /// and a file put whole reads back byte for byte.
 #[tokio::test]
 async fn a_section_put_after_the_last_one_reads_as_its_own_section() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     let address_of = |facts: &serde_json::Value, n: usize| {
         facts["objects"][0]["facts"][n]["address"]
@@ -253,8 +250,7 @@ fn record_at(facts: &serde_json::Value, address: &str) -> serde_json::Value {
 /// revision count through both.
 #[tokio::test]
 async fn a_second_put_behind_a_section_that_is_no_longer_last_starts_on_its_own_line() {
-    let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("document:homer", "Fryer manual").await;
     first
         .call(
@@ -320,8 +316,7 @@ async fn a_second_put_behind_a_section_that_is_no_longer_last_starts_on_its_own_
 /// new order and the sections that stayed are the ones put.
 #[tokio::test]
 async fn a_part_is_moved_behind_another_with_one_call() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     session
         .call(
@@ -373,8 +368,7 @@ async fn a_part_is_moved_behind_another_with_one_call() {
 /// each naming the document.
 #[tokio::test]
 async fn a_search_lands_on_a_part_and_names_the_manual() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     session
         .call(
@@ -468,8 +462,7 @@ async fn a_search_lands_on_a_part_and_names_the_manual() {
 /// code and not because nothing was ever linked.
 #[tokio::test]
 async fn a_section_that_opens_with_a_code_fence_keeps_what_is_inside_it_literal() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     session.add("person:milhouse", "Milhouse").await;
     let markdown = "```text\nrun @person:milhouse and @person:nelson\n```\n\n## Notes\n\nask @person:milhouse about it\n";
@@ -582,8 +575,7 @@ fn paragraph() -> String {
 /// nothing was read.
 #[tokio::test]
 async fn a_long_sections_code_stays_literal_across_the_cut() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     session.add("document:marge", "Griddle manual").await;
 
@@ -1606,8 +1598,7 @@ async fn a_restore_sent_again_after_a_rename_finds_the_copy_it_made() {
 /// a search for the section's own words, which finds it.
 #[tokio::test]
 async fn a_section_is_found_by_its_own_words_and_not_by_the_name_of_its_document() {
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.add("document:homer", "Fryer manual").await;
     let put = session
         .call(
@@ -1649,8 +1640,7 @@ async fn a_heading_captured_onto_a_document_points_to_put_document() {
                 && sentence.contains("section")
         })
     };
-    let story = Story::begin("bot:gamma").await;
-    let session = story.session().await;
+    let (_story, session) = Story::begin_with_session("bot:gamma").await;
     session.past_first_contact().await;
     session.add("document:homer", "Fryer manual").await;
     session

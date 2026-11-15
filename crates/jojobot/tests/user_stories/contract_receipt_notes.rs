@@ -6,8 +6,7 @@ use serde_json::json;
 
 #[tokio::test]
 async fn lean_receipts_teach_read_and_revision_notes_once_per_session() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:alpha", "Alpha").await;
     let first = s
         .call(
@@ -64,8 +63,7 @@ async fn lean_receipts_teach_read_and_revision_notes_once_per_session() {
 
 #[tokio::test]
 async fn lean_receipts_replay_teaching_after_a_lost_answer() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:alpha", "Alpha").await;
     let args =
         json!({"subject":"person:alpha", "content":"plays chess", "request_id":"alpha-claim"});

@@ -22,8 +22,7 @@ const PLACEMENT_KEYS: [&str; 3] = ["order", "held_turn", "held_since"];
 /// an ordinary key in `sets`, which lands and sets it on the list.
 #[tokio::test]
 async fn a_capture_drops_a_copied_placement_key_and_the_list_keeps_no_such_field() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     add_entry(&s, "list:packing", "tent poles", None).await;
     let mut expected = vec!["tent poles".to_string()];
@@ -92,8 +91,7 @@ async fn a_capture_drops_a_copied_placement_key_and_the_list_keeps_no_such_field
 /// key reports it dropped as a capture does, so the two cannot drift.
 #[tokio::test]
 async fn an_edit_and_a_capture_report_the_same_dropped_key() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let tent = add_entry(&s, "list:packing", "tent poles", None).await;
 

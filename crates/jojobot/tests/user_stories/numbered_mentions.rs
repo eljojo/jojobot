@@ -35,8 +35,7 @@ async fn ordinances(s: &Session) {
 
 #[tokio::test]
 async fn a_posted_message_naming_a_members_number_links_the_member() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     ordinances(&s).await;
 
     s.post(
@@ -76,8 +75,7 @@ async fn a_posted_message_naming_a_members_number_links_the_member() {
 
 #[tokio::test]
 async fn a_journal_beat_naming_a_members_number_links_the_member() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     ordinances(&s).await;
 
     s.journal(&format!("read @{COLLECTION}/2 and the fines are fair"))
@@ -97,8 +95,7 @@ async fn a_journal_beat_naming_a_members_number_links_the_member() {
 /// `wrap_session` does not screen a mention.
 #[tokio::test]
 async fn a_wrap_story_naming_a_number_nobody_holds_lands_and_reads_unresolved() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     ordinances(&s).await;
 
     let wrapped = s
@@ -114,8 +111,7 @@ async fn a_wrap_story_naming_a_number_nobody_holds_lands_and_reads_unresolved() 
 
 #[tokio::test]
 async fn a_document_section_naming_a_members_number_links_the_member_or_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     ordinances(&s).await;
     s.add("document:homer", "Fryer manual").await;
 
@@ -156,8 +152,7 @@ async fn a_document_section_naming_a_members_number_links_the_member_or_is_refus
 /// wears remains an unchecked link, as in every other text a caller writes.
 #[tokio::test]
 async fn an_archive_reason_carrying_the_stored_mark_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     s.refused(
         "archive_entity",
@@ -227,8 +222,7 @@ async fn a_restore_of_a_section_naming_a_members_number_links_the_member() {
 /// Paired with the numbering collection above, where `/999` is refused.
 #[tokio::test]
 async fn a_slash_number_after_a_thing_that_numbers_nothing_is_words_in_every_text() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     s.add("document:homer", "Fryer manual").await;
 
@@ -374,8 +368,7 @@ async fn a_reason_naming_a_members_number_follows_it_through_a_rename() {
 /// reads a thing that does not exist.
 #[tokio::test]
 async fn a_slash_number_after_a_thing_that_numbers_nothing_walks_to_the_thing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     s.add("thing:teapot", "Teapot").await;
     s.call(
@@ -406,8 +399,7 @@ async fn a_slash_number_after_a_thing_that_numbers_nothing_walks_to_the_thing() 
 /// no key at all. Paired with the key that is set, in the stories above.
 #[tokio::test]
 async fn a_blank_numbering_key_numbers_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     s.add("thing:teapot", "Teapot").await;
     for (blank, name) in [("", "empty"), ("  ", "spaces")] {
@@ -499,8 +491,7 @@ async fn a_restore_of_history_naming_a_number_nobody_holds_is_refused_whole() {
 /// things that exist: the collection is offered, the marker is not.
 #[tokio::test]
 async fn a_refused_number_offers_real_candidates_only() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     ordinances(&s).await;
     s.add("thing:kettle", "Kettle").await;
     let refused = s
@@ -523,8 +514,7 @@ async fn a_refused_number_offers_real_candidates_only() {
 /// whole-number spelling reads the same on the page.
 #[tokio::test]
 async fn a_page_links_the_handle_before_digits_that_are_no_number() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "Kettle").await;
     s.add("thing:teapot", "Teapot").await;
     for digits in ["2", "007", "0"] {

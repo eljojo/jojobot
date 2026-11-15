@@ -11,8 +11,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_post_that_is_a_runs_first_write_still_names_the_run() {
-    let story = Story::begin("bot:otto").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:otto").await;
     setup.add("bot:gamma", "Gamma").await;
     setup.wrap("stood gamma up").await;
 

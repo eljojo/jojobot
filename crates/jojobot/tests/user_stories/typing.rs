@@ -255,8 +255,7 @@ async fn a_type_declared_today_finds_records_written_before_it() {
 /// "nothing is complete".
 #[tokio::test]
 async fn a_strict_question_finds_the_one_complete_thing_among_many_unfinished_ones() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.call(
         "declare_type",
         json!({

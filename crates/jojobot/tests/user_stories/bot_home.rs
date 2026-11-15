@@ -25,8 +25,7 @@ async fn parent_of(s: &Session, handle: &str) -> Option<String> {
 
 #[tokio::test]
 async fn a_bots_parentless_create_lands_under_the_bot_and_the_receipt_says_so() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:marge").await;
 
     // The plain path.
     let made = s.call("add_entity", thing("delta", "Delta")).await;
@@ -57,8 +56,7 @@ async fn a_bots_parentless_create_lands_under_the_bot_and_the_receipt_says_so() 
 
 #[tokio::test]
 async fn a_bots_parentless_create_with_sets_lands_under_the_bot_too() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:marge").await;
 
     let mut args = thing("epsilon", "Epsilon");
     args["sets"] = json!({"flavour": "pink"});
@@ -82,8 +80,7 @@ async fn a_bots_parentless_create_with_sets_lands_under_the_bot_too() {
 
 #[tokio::test]
 async fn each_bot_is_the_home_of_what_it_creates() {
-    let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let (story, marge) = Story::begin_with_session("bot:marge").await;
     marge.add("bot:nelson", "Nelson").await;
     let nelson = story.as_bot("bot:nelson").await;
 
@@ -101,8 +98,7 @@ async fn each_bot_is_the_home_of_what_it_creates() {
 
 #[tokio::test]
 async fn a_named_parent_is_kept_and_the_receipt_says_nothing_was_defaulted() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:marge").await;
     s.add("thing:kettle", "Kettle").await;
 
     let mut args = thing("brass-bell", "Brass Bell");
@@ -121,8 +117,7 @@ async fn a_named_parent_is_kept_and_the_receipt_says_nothing_was_defaulted() {
 
 #[tokio::test]
 async fn root_true_asks_for_the_root_and_is_refused_beside_a_parent() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:marge").await;
 
     let mut args = thing("fat-bike", "Fat Bike");
     args["root"] = json!(true);
@@ -149,8 +144,7 @@ async fn root_true_asks_for_the_root_and_is_refused_beside_a_parent() {
 
 #[tokio::test]
 async fn a_loop_and_a_promise_still_need_their_parent_said_out_loud() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:marge").await;
 
     for kind in ["rhythm", "promise"] {
         let refused = s
@@ -192,8 +186,7 @@ async fn the_assistant_that_holds_the_operators_life_still_creates_at_the_root()
 
 #[tokio::test]
 async fn numbered_things_under_one_bot_are_siblings_and_not_near_names() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:marge").await;
 
     for (handle, name) in [("shift-1", "Shift 1"), ("shift-2", "Shift 2")] {
         let mut args = thing(handle, name);
@@ -219,8 +212,7 @@ async fn numbered_things_under_one_bot_are_siblings_and_not_near_names() {
 /// Beside it a create at the root on purpose, which has no placement to tell.
 #[tokio::test]
 async fn a_lean_receipt_still_says_where_a_parentless_create_landed() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:marge").await;
     s.call(
         "capture",
         json!({"subject": "bot:marge", "content": "Use lean receipts",

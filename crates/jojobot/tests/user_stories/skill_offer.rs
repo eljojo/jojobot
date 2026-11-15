@@ -55,8 +55,7 @@ async fn check_in(s: &Session, on: &str) -> Answer {
 /// check-in lands either way, and the second one in the session is silent.
 #[tokio::test]
 async fn the_first_check_in_offers_the_rhythms_skill_and_the_second_does_not() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_worming_loop(&s).await;
 
     let first = check_in(&s, "gave the tablet").await;
@@ -76,8 +75,7 @@ async fn the_first_check_in_offers_the_rhythms_skill_and_the_second_does_not() {
 /// the silence mean something.
 #[tokio::test]
 async fn a_session_that_read_the_rhythms_skill_is_not_offered_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     a_worming_loop(&s).await;
     let reader = story.session_in("UTC", Some("new")).await;
     reader
@@ -105,8 +103,7 @@ async fn a_session_that_read_the_rhythms_skill_is_not_offered_it() {
 /// the session that read `rhythms` is still offered `projects`.
 #[tokio::test]
 async fn a_write_on_a_project_offers_the_projects_skill_once_and_a_person_offers_nothing() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("person:milhouse", "Milhouse").await;
     s.call("start_here", json!({ "skill": "rhythms" })).await;
 
@@ -144,8 +141,7 @@ async fn a_write_on_a_project_offers_the_projects_skill_once_and_a_person_offers
 /// third session, so neither of these two spent the offer on its creation.
 #[tokio::test]
 async fn a_session_that_read_the_projects_skill_is_not_offered_it() {
-    let story = Story::begin("bot:gamma").await;
-    let maker = story.session().await;
+    let (story, maker) = Story::begin_with_session("bot:gamma").await;
     maker.add("project:atlas", "The Campaign").await;
 
     let reader = story.session_in("UTC", Some("new")).await;

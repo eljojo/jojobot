@@ -12,8 +12,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_claim_beside_a_skill_refuses_the_call_and_claims_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:bart", "Bart").await;
 
     let (_, bart) = story.call("start_here", json!({"bot": "bart"})).await;

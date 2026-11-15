@@ -40,8 +40,7 @@ async fn chronology(story: &Story) -> String {
 
 #[tokio::test]
 async fn a_second_wrap_with_the_same_closing_story_does_not_tell_it_twice() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
+    let (story, first) = Story::begin_with_session("bot:otto").await;
     first
         .call(
             "journal",

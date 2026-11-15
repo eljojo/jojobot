@@ -87,8 +87,7 @@ fn d(y: i16, m: i8, day: i8) -> Date {
 
 #[tokio::test]
 async fn the_rent_falls_due_on_the_first_of_every_month() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     // No `advances_from` and no basis: the opening check-in supplies the basis.
     a_rhythm(
@@ -120,8 +119,7 @@ async fn the_rent_falls_due_on_the_first_of_every_month() {
 
 #[tokio::test]
 async fn the_last_day_of_the_month_by_setpos_and_by_a_negative_day() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     a_rhythm(
         &s,
@@ -158,8 +156,7 @@ async fn the_last_day_of_the_month_by_setpos_and_by_a_negative_day() {
 
 #[tokio::test]
 async fn the_first_saturday_and_the_last_friday_of_the_month() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     a_rhythm(
         &s,
@@ -190,8 +187,7 @@ async fn the_first_saturday_and_the_last_friday_of_the_month() {
 
 #[tokio::test]
 async fn a_fortnightly_thursday_keeps_its_phase_across_a_late_check_in() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     // Counted from the day it was done, so a late check-in is off the Thursdays.
     a_rhythm(
@@ -226,8 +222,7 @@ async fn a_fortnightly_thursday_keeps_its_phase_across_a_late_check_in() {
 
 #[tokio::test]
 async fn every_march_the_first() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     a_rhythm(
         &s,
@@ -251,8 +246,7 @@ async fn every_march_the_first() {
 
 #[tokio::test]
 async fn a_bare_day_thirty_one_skips_the_months_without_one() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     a_rhythm(
         &s,
@@ -275,8 +269,7 @@ async fn a_bare_day_thirty_one_skips_the_months_without_one() {
 
 #[tokio::test]
 async fn a_number_of_days_reads_as_it_always_did() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     a_rhythm(
         &s,
@@ -295,8 +288,7 @@ async fn a_number_of_days_reads_as_it_always_did() {
 
 #[tokio::test]
 async fn a_rhythm_repeats_one_way_and_a_rule_a_rhythm_cannot_use_is_refused_with_the_fix() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "rhythm:mow-the-lawn", "Mow the lawn")
         .await;
@@ -371,8 +363,7 @@ async fn a_rhythm_repeats_one_way_and_a_rule_a_rhythm_cannot_use_is_refused_with
 
 #[tokio::test]
 async fn a_snooze_never_moves_a_calendar_schedule_and_the_due_view_agrees() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     a_rhythm(
         &s,
@@ -445,8 +436,7 @@ async fn a_snooze_never_moves_a_calendar_schedule_and_the_due_view_agrees() {
 /// the cadence to send.
 #[tokio::test]
 async fn a_cadence_alone_lands_on_every_writing_verb_and_advances_from_alone_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
 
     // A new rhythm takes its cadence in its first claim.
@@ -522,8 +512,7 @@ async fn a_cadence_alone_lands_on_every_writing_verb_and_advances_from_alone_is_
 /// counted from the day it fell due it is already owed on the day of the check-in.
 #[tokio::test]
 async fn a_late_check_in_counts_from_the_default_for_its_cadence_when_none_is_named() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "rhythm:descale", "Descale the kettle")
         .await;
@@ -569,8 +558,7 @@ async fn a_late_check_in_counts_from_the_default_for_its_cadence_when_none_is_na
 /// of a schedule is not late.
 #[tokio::test]
 async fn a_loop_holding_counts_from_and_no_cadence_is_overdue_and_one_holding_nothing_is_not() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "rhythm:descale", "Descale the kettle")
         .await;
@@ -687,8 +675,7 @@ async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_over
 /// anchor alone.
 #[tokio::test]
 async fn clearing_a_snoozed_calendar_loop_names_the_anchor_and_the_snooze() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "rhythm:leap-check", "Leap check")
         .await;
@@ -822,8 +809,7 @@ async fn clearing_a_snoozed_calendar_loop_names_the_anchor_and_the_snooze() {
 /// shows the rule.
 #[tokio::test]
 async fn the_page_words_a_monthly_day_and_shows_a_monthly_weekday_as_the_rule() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     a_rhythm(
         &s,
@@ -861,8 +847,7 @@ async fn the_page_words_a_monthly_day_and_shows_a_monthly_weekday_as_the_rule() 
 
 #[tokio::test]
 async fn a_rhythm_with_no_advances_from_gets_the_default_for_its_cadence_and_says_so() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "rhythm:pay-rent", "Pay the rent")
         .await;
@@ -917,8 +902,7 @@ async fn a_rhythm_with_no_advances_from_gets_the_default_for_its_cadence_and_say
 /// lands. Nothing is left behind by the refusal.
 #[tokio::test]
 async fn a_rule_that_never_recurs_from_the_loops_own_day_is_refused_when_written() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "rhythm:leap-check", "Leap check")
         .await;
@@ -956,8 +940,7 @@ async fn a_rule_that_never_recurs_from_the_loops_own_day_is_refused_when_written
 /// a check-in on a day the rule recurs from can still open it.
 #[tokio::test]
 async fn the_check_in_claim_lands_when_its_opening_schedule_cannot_recur() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     a_rhythm(
         &s,
@@ -1018,8 +1001,7 @@ async fn the_check_in_claim_lands_when_its_opening_schedule_cannot_recur() {
 /// old day stays; a day it does recur from lands.
 #[tokio::test]
 async fn moving_the_day_a_rule_runs_from_to_a_day_it_never_recurs_from_is_refused() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "rhythm:leap-check", "Leap check")
         .await;

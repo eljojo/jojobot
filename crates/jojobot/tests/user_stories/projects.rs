@@ -70,8 +70,7 @@ async fn a_session_told_nothing_finds_the_projects_skill_from_the_boot() {
 /// different session is told again — the ledger is per session.
 #[tokio::test]
 async fn the_first_write_about_a_project_names_the_skill_once_per_session() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
 
     // Something that is not a project's work does not spend it.
     s.add("person:milhouse", "Milhouse").await;
@@ -147,8 +146,7 @@ fn names_the_ready_read(answer: &super::dsl::Answer) -> bool {
 /// again, because the ledger is per session.
 #[tokio::test]
 async fn the_first_dependency_write_names_the_ready_read_once_per_session() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
     s.add("work:phi", "Payment provider").await;
     s.add("work:sigma", "Checkout").await;
@@ -238,8 +236,7 @@ async fn the_first_dependency_write_names_the_ready_read_once_per_session() {
 /// **A slip is a new due day, and how many times it moved is a history read.**
 #[tokio::test]
 async fn how_many_times_a_milestone_moved_is_read_from_the_keys_history() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
     for day in ["2026-03-01", "2026-03-15", "2026-04-06"] {
         s.event_with(
@@ -266,8 +263,7 @@ async fn how_many_times_a_milestone_moved_is_read_from_the_keys_history() {
 /// of its own that names whose it was.**
 #[tokio::test]
 async fn a_decision_is_kept_in_the_operators_words_with_the_option_turned_down() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:visa", "The App").await;
     s.add("person:homer", "Homer").await;
     s.add("person:martin", "Martin").await;
@@ -382,8 +378,7 @@ async fn a_conclusion_from_a_quote_is_an_inference_that_points_at_the_quote() {
 /// it** — owed from the day and not before.
 #[tokio::test]
 async fn a_pause_on_a_thing_with_no_loop_is_a_promise_regarding_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
     s.add("work:handcart", "The Film").await;
     s.call(
@@ -473,8 +468,7 @@ fn home_of(question: &str) -> String {
 /// project.
 #[tokio::test]
 async fn an_open_question_carries_its_state_and_what_it_blocks() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:visa", "The App").await;
     s.add("work:handcart", "The Film").await;
     // The film is next work, the one status read a question stays out of.
@@ -547,8 +541,7 @@ async fn an_open_question_carries_its_state_and_what_it_blocks() {
 /// one key, and a status outside the project's list lands with the list named.
 #[tokio::test]
 async fn where_a_piece_of_work_stands_is_kept_on_the_keys_the_skill_names() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
     s.add_under("project:atlas", "work:phi", "Phi").await;
     s.add_under("project:atlas", "work:first-mix", "First mix")
@@ -636,8 +629,7 @@ async fn where_a_piece_of_work_stands_is_kept_on_the_keys_the_skill_names() {
 /// the thing still falls due, and `done` still finishes.
 #[tokio::test]
 async fn an_operators_own_status_word_lands_and_is_named_until_it_is_mapped() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
 
     // ── lands, and the receipt names what governs the word ──────────────────
@@ -819,8 +811,7 @@ async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_a
 /// end** — so a retrospective is read to the end before it is concluded from.
 #[tokio::test]
 async fn a_retrospective_raises_the_limit_before_it_concludes() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
     for week in 1..=25 {
         s.event_with(
@@ -852,8 +843,7 @@ async fn a_retrospective_raises_the_limit_before_it_concludes() {
 /// session reads it from the record and not from the conversation.
 #[tokio::test]
 async fn an_answer_the_operator_asked_to_keep_is_there_for_a_later_session() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
     s.event_with(
         "project:atlas",
@@ -878,8 +868,7 @@ async fn an_answer_the_operator_asked_to_keep_is_there_for_a_later_session() {
 /// it through the entity, and editing the claim that holds it.
 #[tokio::test]
 async fn each_write_that_sets_a_status_names_a_word_outside_the_set_and_only_that() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "The Campaign").await;
 
     // ── add_entity with a status ────────────────────────────────────────────
@@ -967,8 +956,7 @@ async fn each_write_that_sets_a_status_names_a_word_outside_the_set_and_only_tha
 /// is accepted and narrows the ready list.
 #[tokio::test]
 async fn the_projects_skill_answers_a_board_question_with_where() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     let body = story.skill("projects").await["skill"]["body"]
         .as_str()
         .expect("the skill serves a body")

@@ -149,8 +149,7 @@ async fn a_read_on_a_lost_handle_is_refused_while_one_with_no_handle_is_served()
 /// recovers.
 #[tokio::test]
 async fn a_write_with_no_handle_is_told_the_whole_route_to_one() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     // A run in flight, which is what turns the next boot into an offer.
     s.journal("started on something and stopped without telling its story")
@@ -218,8 +217,7 @@ async fn a_write_with_no_handle_is_told_the_whole_route_to_one() {
 /// caller that was told its bot name, which goes straight to the boot.
 #[tokio::test]
 async fn a_caller_with_no_handle_and_no_bot_name_is_sent_to_the_door_that_lists_them() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
 
     // ── the cold caller: no handle, and no name to boot with ────────────────
@@ -297,8 +295,7 @@ async fn a_caller_with_no_handle_and_no_bot_name_is_sent_to_the_door_that_lists_
 /// route, and the story follows it to a handle that opens the box.
 #[tokio::test]
 async fn a_read_of_the_box_with_no_handle_is_told_the_whole_route_to_one() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     // **Mail is waiting before the handle is lost.** A box that opens empty
     // proves the box is there and nothing about the mail, so the recovery has

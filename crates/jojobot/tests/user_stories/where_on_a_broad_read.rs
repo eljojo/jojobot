@@ -95,8 +95,7 @@ fn teaches_where(answer: &Answer) -> Vec<String> {
 /// built from the keys it just read, and the answer is the one it always was.
 #[tokio::test]
 async fn the_first_read_of_a_whole_kind_names_where_with_an_example_from_its_own_keys() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     the_shed(&s, &EIGHT).await;
 
     let read = s
@@ -134,8 +133,7 @@ async fn the_first_read_of_a_whole_kind_names_where_with_an_example_from_its_own
 /// yet, and the same session's whole read after them carries it.
 #[tokio::test]
 async fn a_read_that_already_narrows_carries_no_teaching_and_leaves_it_for_the_whole_read() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     the_shed(&s, &EIGHT).await;
 
     for (narrowed_by, args, at_least) in narrowed_reads() {
@@ -166,8 +164,7 @@ async fn a_read_that_already_narrows_carries_no_teaching_and_leaves_it_for_the_w
 /// same session is taught once the kind has grown to the threshold.
 #[tokio::test]
 async fn a_whole_read_of_a_small_kind_carries_none_and_a_larger_one_does() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     the_shed(&s, &EIGHT[..5]).await;
 
     let small = s
@@ -200,8 +197,7 @@ async fn a_whole_read_of_a_small_kind_carries_none_and_a_larger_one_does() {
 /// none.
 #[tokio::test]
 async fn a_session_is_taught_once_for_each_kind_it_reads_whole() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     the_shed(&s, &EIGHT).await;
     // Five more projects beside the shed: six in all, five holding a status.
     for (slug, status) in [

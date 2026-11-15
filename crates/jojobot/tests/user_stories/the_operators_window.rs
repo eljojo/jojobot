@@ -28,8 +28,7 @@ fn section(page: &Answer, id: &str) -> String {
 
 #[tokio::test]
 async fn the_homepage_lists_what_is_held_by_kind_and_what_is_due() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:marge").await;
     s.add("person:homer", "Homer").await;
     s.add("place:springfield", "Springfield").await;
     // A loop that went quiet long ago: it is what the due box exists to show.
@@ -77,8 +76,7 @@ async fn the_homepage_lists_what_is_held_by_kind_and_what_is_due() {
 
 #[tokio::test]
 async fn the_org_chart_puts_each_bot_under_the_bot_it_reports_to() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:marge").await;
     s.add("bot:omega", "Omega").await;
     s.add("bot:sigma", "Sigma").await;
     story
@@ -117,8 +115,7 @@ async fn the_org_chart_puts_each_bot_under_the_bot_it_reports_to() {
 
 #[tokio::test]
 async fn a_kinds_page_lists_every_thing_of_that_kind_and_no_other() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:marge").await;
     s.add("place:springfield", "Springfield").await;
     s.add("place:shelbyville", "Shelbyville").await;
     s.add("person:homer", "Homer").await;
@@ -137,8 +134,7 @@ async fn a_kinds_page_lists_every_thing_of_that_kind_and_no_other() {
 
 #[tokio::test]
 async fn the_search_box_finds_what_a_bot_wrote_and_says_when_nothing_is_found() {
-    let story = Story::begin("bot:marge").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:marge").await;
     s.add("person:homer", "Homer").await;
     s.call(
         "capture",

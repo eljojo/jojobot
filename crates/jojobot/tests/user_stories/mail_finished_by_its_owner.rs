@@ -16,8 +16,7 @@ async fn counts(s: &Session) -> Answer {
 
 #[tokio::test]
 async fn only_the_bot_a_message_was_left_for_can_finish_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
     s.wrap("stood up the two bots").await;
@@ -91,8 +90,7 @@ async fn only_the_bot_a_message_was_left_for_can_finish_it() {
 
 #[tokio::test]
 async fn a_call_naming_no_session_cannot_finish_a_bots_mail() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
     s.wrap("stood up the two bots").await;

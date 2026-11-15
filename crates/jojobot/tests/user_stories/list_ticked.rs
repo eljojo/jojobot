@@ -45,8 +45,7 @@ async fn ticked(s: &Session, list: &str) -> Value {
 
 #[tokio::test]
 async fn a_checklist_reads_how_many_of_its_entries_are_ticked_and_leaves_a_dropped_one_out() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list(&s, "list:checklist", "sink").await;
     let at = entries(&s, "list:checklist", 25).await;
 
@@ -74,8 +73,7 @@ async fn a_checklist_reads_how_many_of_its_entries_are_ticked_and_leaves_a_dropp
 
 #[tokio::test]
 async fn a_queue_reads_how_many_are_done_and_how_many_are_still_open() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list(&s, "list:errands", "leave").await;
     let at = entries(&s, "list:errands", 10).await;
     for entry in &at[..3] {
@@ -90,8 +88,7 @@ async fn a_queue_reads_how_many_are_done_and_how_many_are_still_open() {
 
 #[tokio::test]
 async fn a_rotation_reads_how_many_turns_it_has_taken_and_has_no_done() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list(&s, "list:phi-checklist", "back").await;
     let at = entries(&s, "list:phi-checklist", 3).await;
     // Three turns by a done tick and two by a rotation.
@@ -113,8 +110,7 @@ async fn a_rotation_reads_how_many_turns_it_has_taken_and_has_no_done() {
 
 #[tokio::test]
 async fn a_list_that_links_work_reads_its_ticks_and_the_works_progress_apart() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list(&s, "list:checklist", "sink").await;
     for part in ["work:pour-the-slab", "work:order-the-lumber"] {
         work(&s, part, "next").await;
@@ -148,8 +144,7 @@ async fn a_list_that_links_work_reads_its_ticks_and_the_works_progress_apart() {
 
 #[tokio::test]
 async fn a_list_that_holds_nothing_says_nothing_about_ticks() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list(&s, "list:checklist", "sink").await;
     let list = the_list(&s, "list:checklist").await;
     assert!(

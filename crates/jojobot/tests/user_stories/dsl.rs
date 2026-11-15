@@ -1510,6 +1510,14 @@ impl Story {
         }
     }
 
+    /// **Serve a fresh jojobot and open the first session on it**, the setup most
+    /// stories begin with: [`begin`](Story::begin), then [`session`](Story::session).
+    pub async fn begin_with_session(bot: &str) -> (Self, Session) {
+        let story = Self::begin(bot).await;
+        let session = story.session().await;
+        (story, session)
+    }
+
     /// A new session, on its own connection.
     pub async fn session(&self) -> Session {
         let client = self.connect().await;

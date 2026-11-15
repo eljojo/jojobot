@@ -6,8 +6,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn mail_visible_story_a_manager_reads_a_new_report_without_taking_it() {
-    let story = Story::begin("bot:homer").await;
-    let homer = story.session().await;
+    let (story, homer) = Story::begin_with_session("bot:homer").await;
     for (handle, name) in [
         ("bot:bart", "Bart"),
         ("bot:lisa", "Lisa"),
@@ -124,8 +123,7 @@ async fn mail_visible_story_a_manager_reads_a_new_report_without_taking_it() {
 /// message by the same search.
 #[tokio::test]
 async fn mail_visible_story_an_author_reads_up_without_the_notes_and_nobody_reads_above() {
-    let story = Story::begin("bot:homer").await;
-    let homer = story.session().await;
+    let (story, homer) = Story::begin_with_session("bot:homer").await;
     for (handle, name) in [
         ("bot:bart", "Bart"),
         ("bot:lisa", "Lisa"),

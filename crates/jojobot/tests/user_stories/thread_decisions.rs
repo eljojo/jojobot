@@ -80,8 +80,7 @@ async fn a_kitchen_with_two_decisions_and_ten_findings(s: &Session) {
 /// its ten findings, and nobody asked for records.
 #[tokio::test]
 async fn a_cold_read_of_a_thread_puts_its_decisions_before_its_research() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_kitchen_with_two_decisions_and_ten_findings(&s).await;
 
     let read = s.call("recall", json!({"subject": KITCHEN})).await;
@@ -118,8 +117,7 @@ async fn a_cold_read_of_a_thread_puts_its_decisions_before_its_research() {
 /// alone, with nothing added in front of it.
 #[tokio::test]
 async fn a_thread_with_no_decisions_answers_alone() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(KITCHEN, "The Simpsons' kitchen renovation").await;
     s.fact(KITCHEN, "finding 1: the old cabinets are rotten")
         .await;
@@ -147,8 +145,7 @@ async fn a_thread_with_no_decisions_answers_alone() {
 /// of findings it left out is on the thread beside the call that returns them.
 #[tokio::test]
 async fn research_past_the_ceiling_leaves_the_decisions_in_and_counts_the_research_out() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_kitchen_with_two_decisions_and_ten_findings(&s).await;
     for bulk in 1..=3 {
         let page: String = (0..1000)
@@ -218,8 +215,7 @@ async fn research_past_the_ceiling_leaves_the_decisions_in_and_counts_the_resear
 /// out, and the old decision still reads, as archived, by its own handle.
 #[tokio::test]
 async fn a_superseded_decision_reads_as_archived_and_its_replacement_leads() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     a_kitchen_with_two_decisions_and_ten_findings(&s).await;
     let old = s
         .call(
@@ -290,8 +286,7 @@ async fn a_superseded_decision_reads_as_archived_and_its_replacement_leads() {
 /// says where its research is.
 #[tokio::test]
 async fn decisions_past_the_ceiling_are_counted_and_a_browse_returns_them() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add(KITCHEN, "The Simpsons' kitchen renovation").await;
     s.fact(KITCHEN, "finding 1: the old cabinets are rotten")
         .await;

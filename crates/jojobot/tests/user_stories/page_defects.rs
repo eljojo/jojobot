@@ -10,8 +10,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_key_with_reserved_characters_opens_its_own_history() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("topic:widgets", "Widgets").await;
     s.call(
         "capture",
@@ -42,8 +41,7 @@ async fn a_key_with_reserved_characters_opens_its_own_history() {
 
 #[tokio::test]
 async fn the_canonical_redirect_keeps_the_query() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "topic:widgets", "Widgets")
         .await;

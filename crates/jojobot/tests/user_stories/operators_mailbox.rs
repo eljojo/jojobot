@@ -174,8 +174,7 @@ async fn tries_every_way_to_read_it(
 
 #[tokio::test]
 async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:lisa", "Lisa").await;
     s.add("bot:sigma", "Sigma").await;
 

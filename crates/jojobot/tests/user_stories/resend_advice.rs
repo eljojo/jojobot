@@ -29,8 +29,7 @@ fn change_naming_the_rule(sent: &Answer) {
 
 #[tokio::test]
 async fn a_charter_whose_change_record_was_refused_is_told_to_change_and_not_to_resend() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
     let args = json!({
@@ -55,8 +54,7 @@ async fn a_charter_whose_change_record_was_refused_is_told_to_change_and_not_to_
 
 #[tokio::test]
 async fn a_restore_whose_history_claim_was_refused_is_told_to_change() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     s.call(
         "archive_entity",
@@ -76,8 +74,7 @@ async fn a_restore_whose_history_claim_was_refused_is_told_to_change() {
 
 #[tokio::test]
 async fn a_rename_whose_box_was_refused_is_told_to_change() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let args = json!({ "handle": "bot:delta", "to": "bot:epsilon", "request_id": "rename-9" });
 
@@ -89,8 +86,7 @@ async fn a_rename_whose_box_was_refused_is_told_to_change() {
 
 #[tokio::test]
 async fn a_rename_whose_reason_was_refused_is_told_to_change() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("org:moes-tavern", "Moes Tavern").await;
     s.add("place:moes", "Moe's").await;
     s.add("place:gorge-spot", "The back room").await;
@@ -114,8 +110,7 @@ async fn a_rename_whose_reason_was_refused_is_told_to_change() {
 
 #[tokio::test]
 async fn a_post_whose_delivery_was_refused_is_told_to_change() {
-    let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let (story, gamma) = Story::begin_with_session("bot:gamma").await;
     gamma.add("bot:delta", "Delta").await;
     let delta = story.as_bot("bot:delta").await;
     delta
@@ -134,8 +129,7 @@ async fn a_post_whose_delivery_was_refused_is_told_to_change() {
 
 #[tokio::test]
 async fn a_capture_whose_due_moment_could_not_come_off_is_told_to_change() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:standing-desk", "Standing desk").await;
     s.call(
         "capture",
@@ -163,8 +157,7 @@ const MANUAL: &str = "# Fryer manual\n\nRead this before the first shift.\n\n## 
 
 #[tokio::test]
 async fn a_document_put_whose_second_section_was_refused_is_told_to_change() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:homer", "Fryer manual").await;
     let args = json!({
         "document": "document:homer", "markdown": MANUAL, "request_id": "put-9",
@@ -185,8 +178,7 @@ async fn a_document_put_whose_second_section_was_refused_is_told_to_change() {
 
 #[tokio::test]
 async fn a_beat_whose_focus_was_refused_is_told_to_change() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.journal("opened the run").await;
     let handle = format!("session:{}", s.run());
     let args = json!({
@@ -202,8 +194,7 @@ async fn a_beat_whose_focus_was_refused_is_told_to_change() {
 
 #[tokio::test]
 async fn a_beat_whose_working_on_was_refused_is_told_to_change() {
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("work:sigma", "Sigma").await;
     let args = json!({
         "entry": "picked up sigma", "working_on": "work:sigma", "request_id": "beat-8",
@@ -221,8 +212,7 @@ fn paragraph() -> String {
 
 #[tokio::test]
 async fn a_section_move_whose_first_piece_was_refused_is_told_to_change() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:homer", "Fryer manual").await;
     let mut text = String::from("# A\n\nalpha.\n\n# B\n\n");
     for _ in 0..60 {

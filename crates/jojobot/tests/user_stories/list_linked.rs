@@ -73,8 +73,7 @@ async fn a_queue_with_blocked_work_at_its_head(s: &Session) -> String {
 /// which points at nothing, carries no such block.
 #[tokio::test]
 async fn a_linked_head_reads_first_with_the_works_status_owner_and_blocker() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_queue_with_blocked_work_at_its_head(&s).await;
 
     let read = entries(&s, "list:packing").await;
@@ -102,8 +101,7 @@ async fn a_linked_head_reads_first_with_the_works_status_owner_and_blocker() {
 /// finished it reads done.
 #[tokio::test]
 async fn the_linked_state_follows_the_work_and_is_never_a_copy() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_queue_with_blocked_work_at_its_head(&s).await;
 
     s.call(
@@ -136,8 +134,7 @@ async fn the_linked_state_follows_the_work_and_is_never_a_copy() {
 /// on one of them.
 #[tokio::test]
 async fn the_linked_verdict_is_the_one_the_ready_view_gives() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "leave"})).await;
     work(&s, "work:pour-the-slab", "next", None).await;
     work(
@@ -198,8 +195,7 @@ async fn the_linked_verdict_is_the_one_the_ready_view_gives() {
 /// that is finished, whose receipt says so.
 #[tokio::test]
 async fn ticking_a_linked_entry_says_whether_the_work_is_still_open_and_leaves_it_alone() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     let head = a_queue_with_blocked_work_at_its_head(&s).await;
 
     let ticked: Answer = s

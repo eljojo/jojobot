@@ -38,8 +38,7 @@ fn work_under(slug: &str, name: &str, parent: &str, sets: serde_json::Value) -> 
 
 #[tokio::test]
 async fn what_can_be_started_and_what_stops_the_rest() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.call(
         "add_entity",
@@ -126,8 +125,7 @@ async fn what_can_be_started_and_what_stops_the_rest() {
 /// ask after the pieces one at a time.
 #[tokio::test]
 async fn the_whole_plan_and_what_stops_each_piece_come_in_one_call() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:the-shed", "The shed").await;
     let piece = |slug: &str, name: &str, sets: serde_json::Value| {
         work_under(slug, name, "project:the-shed", sets)
@@ -209,8 +207,7 @@ async fn the_whole_plan_and_what_stops_each_piece_come_in_one_call() {
 /// names does narrow.
 #[tokio::test]
 async fn the_ready_answer_says_where_narrows_it_and_an_ordinary_read_does_not() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.call(
         "add_entity",
         work("pour-the-slab", "Pour the slab", json!({"status": "done"})),
@@ -281,8 +278,7 @@ async fn the_ready_answer_says_where_narrows_it_and_an_ordinary_read_does_not() 
 /// says why; the same piece of work before it was archived was ready.
 #[tokio::test]
 async fn an_archived_piece_of_work_is_not_ready_when_named_and_says_why() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.call(
         "add_entity",
         work("paint-the-door", "Paint the door", json!({"status": "now"})),
@@ -326,8 +322,7 @@ async fn an_archived_piece_of_work_is_not_ready_when_named_and_says_why() {
 /// skill teaches beside the named read.
 #[tokio::test]
 async fn the_ready_view_narrows_to_one_project_and_a_walk_lists_what_it_unblocks() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:the-shed", "The shed").await;
     s.add("project:kitchen-floor", "The kitchen floor").await;
     s.call(
@@ -401,8 +396,7 @@ async fn the_ready_view_narrows_to_one_project_and_a_walk_lists_what_it_unblocks
 /// subject for it either.
 #[tokio::test]
 async fn the_ready_view_turns_a_person_away_and_still_answers_for_work() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("person:kenny", "Kenny").await;
     s.call(
         "add_entity",

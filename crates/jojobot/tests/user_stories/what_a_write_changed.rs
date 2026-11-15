@@ -18,8 +18,7 @@ const VISIT: &str = "2026-10-12";
 
 #[tokio::test]
 async fn a_receipt_says_what_the_write_changed_with_no_second_read() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add(DOG, OLD_NAME).await;
 
@@ -71,8 +70,7 @@ async fn a_receipt_says_what_the_write_changed_with_no_second_read() {
 
 #[tokio::test]
 async fn a_receipt_names_what_the_write_changed_beside_its_own_thing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     // A new colleague: the bot, and the box that opens with it.
     let added = s

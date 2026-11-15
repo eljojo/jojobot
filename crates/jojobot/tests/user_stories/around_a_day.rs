@@ -12,8 +12,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn what_was_recorded_around_a_day() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("person:milhouse", "Milhouse").await;
     s.add("org:springfield-town-council", "Springfield Town Council")

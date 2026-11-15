@@ -24,8 +24,7 @@ fn spelled(n: usize) -> String {
 
 #[tokio::test]
 async fn a_topic_of_sixty_decisions_stays_under_the_ceiling_and_says_how_to_read_on() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("topic:rules-shelbyville", "Shelbyville rules").await;
     s.call(
         "capture",

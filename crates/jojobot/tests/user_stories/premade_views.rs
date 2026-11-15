@@ -24,8 +24,7 @@ fn listed(answer: &super::dsl::Answer) -> Vec<String> {
 
 #[tokio::test]
 async fn a_session_reads_the_board_of_one_project_by_name() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("project:the-shed", "The shed").await;
     s.add("project:kitchen-floor", "The kitchen floor").await;
@@ -152,8 +151,7 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
 #[tokio::test]
 async fn a_project_with_no_work_has_an_empty_board_and_a_misspelt_order_is_still_caught_where_work_exists()
  {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("project:backyard-shed", "The backyard shed").await;
     s.add("project:the-shed", "The shed").await;
@@ -231,8 +229,7 @@ async fn a_project_with_no_work_has_an_empty_board_and_a_misspelt_order_is_still
 
 #[tokio::test]
 async fn the_plan_view_takes_a_project_and_lists_only_its_plan() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.add("project:the-shed", "The shed").await;
     s.add("project:kitchen-floor", "The kitchen floor").await;
@@ -322,8 +319,7 @@ async fn the_plan_view_takes_a_project_and_lists_only_its_plan() {
 
 #[tokio::test]
 async fn a_session_asks_which_things_are_of_a_type_and_is_told_what_each_lacks() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     s.call(
         "declare_type",

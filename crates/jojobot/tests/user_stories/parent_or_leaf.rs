@@ -11,8 +11,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_project_says_it_has_parts_and_a_leaf_says_nothing() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "Atlas").await;
     for (handle, name) in [
         ("work:sigma", "Sigma"),

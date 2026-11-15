@@ -33,8 +33,7 @@ async fn verbs_named(session: &Session, refusal: &Answer) -> Vec<String> {
 /// the server to place an entry through the verbs that publish it.
 #[tokio::test]
 async fn copied_places_are_dropped_and_moves_use_the_verbs_that_take_after() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let first = s
         .call(
@@ -112,8 +111,7 @@ async fn copied_places_are_dropped_and_moves_use_the_verbs_that_take_after() {
 /// `update_fact` with `after`, which lands.
 #[tokio::test]
 async fn a_refused_edges_names_update_fact_for_a_move_and_put_document_for_a_new_section() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("document:homer", "Fryer manual").await;
     s.call(
         "put_document",

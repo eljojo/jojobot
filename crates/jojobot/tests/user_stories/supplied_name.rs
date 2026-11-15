@@ -15,8 +15,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_name_put_on_a_shipped_view_is_listed_and_survives_a_restart() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     s.call(
         "update_entity",

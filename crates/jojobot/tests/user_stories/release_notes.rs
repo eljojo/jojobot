@@ -268,8 +268,7 @@ async fn an_old_bot(story: &Story, slug: &str, name: &str) {
 
 #[tokio::test]
 async fn a_bot_holds_messages_from_the_system_listing_what_shipped_and_who_to_ask() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     an_old_bot(&story, "moe", "Moe").await;
     an_old_bot(&story, "marge", "Marge").await;
     an_old_bot(&story, "bart", "Bart").await;
@@ -458,8 +457,7 @@ async fn told_ids(session: &Session, handle: &str) -> Vec<String> {
 /// paired positive is the old bot beside it, which is sent the note.
 #[tokio::test]
 async fn a_bot_made_now_is_told_every_shipped_note_and_sent_none() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     an_old_bot(&story, "gamma", "Gamma").await;
 
@@ -486,8 +484,7 @@ async fn a_bot_made_now_is_told_every_shipped_note_and_sent_none() {
 async fn a_note_shipped_after_a_bot_was_made_reaches_it_at_the_next_start_alone() {
     use jojobot_domain::memory::review::is_release_notes_record;
     use jojobot_domain::memory::{EntityId, FactPatch};
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     s.add("bot:gamma", "Gamma").await;
 
@@ -560,8 +557,7 @@ async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
         .filter(|note| note.folder == "deploy-9")
         .map(|note| note.id)
         .collect();
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     s.add("bot:gamma", "Gamma").await;
     let delta = EntityId("bot:delta".into());
@@ -654,8 +650,7 @@ async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
 /// positive is the bot's own ordinary record, which reads.
 #[tokio::test]
 async fn the_record_of_what_a_bot_was_told_is_out_of_an_ordinary_recall() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     let later = story.restarted().await;
     let delta = later.as_bot("bot:delta").await;
@@ -710,8 +705,7 @@ async fn the_record_of_what_a_bot_was_told_is_out_of_an_ordinary_recall() {
 /// record, which is its one rule.
 #[tokio::test]
 async fn the_record_of_what_a_bot_was_told_is_no_rule_of_the_bot() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     let later = story.restarted().await;
     later
@@ -753,8 +747,7 @@ async fn the_record_of_what_a_bot_was_told_is_no_rule_of_the_bot() {
 /// the same query with the argument.
 #[tokio::test]
 async fn a_search_leaves_the_record_of_what_a_bot_was_told_out_until_asked() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     let later = story.restarted().await;
     let delta = later.as_bot("bot:delta").await;
@@ -799,8 +792,7 @@ async fn a_search_leaves_the_record_of_what_a_bot_was_told_out_until_asked() {
 /// an ordinary key on the same bot, which each verb takes.
 #[tokio::test]
 async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     let later = story.restarted().await;
     let delta = later.as_bot("bot:delta").await;
@@ -890,8 +882,7 @@ async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
 #[tokio::test]
 async fn archiving_a_bots_first_claim_leaves_its_ledger_and_it_is_sent_nothing() {
     use jojobot_domain::memory::{EntityId, RELEASE_NOTES_TOLD};
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     let made = s
         .call(
             "add_entity",
@@ -948,8 +939,7 @@ async fn archiving_a_bots_first_claim_leaves_its_ledger_and_it_is_sent_nothing()
 async fn a_start_that_sends_a_note_leaves_a_reviewed_bot_reviewed() {
     use jojobot_domain::memory::review::is_release_notes_record;
     use jojobot_domain::memory::{EntityId, FactPatch};
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     let defrag = story.as_bot("bot:defrag").await;
     defrag

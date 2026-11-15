@@ -70,8 +70,7 @@ pub(super) async fn issue_through_the_store(story: &Story, voucher: &EntityId) -
 
 #[tokio::test]
 async fn a_bot_that_writes_a_voucher_is_refused_and_nothing_is_stored() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     s.add("bot:patty", "Patty").await;
     s.add("topic:widgets", "Widgets").await;
@@ -145,8 +144,7 @@ async fn a_bot_that_writes_a_voucher_is_refused_and_nothing_is_stored() {
 /// challenge and never the code.
 #[tokio::test]
 async fn a_refused_voucher_write_names_the_door_that_issues_one() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     an_instance_with_an_operator(&s).await;
     let marge = story.as_bot("bot:marge").await;
 
@@ -189,8 +187,7 @@ async fn a_refused_voucher_write_names_the_door_that_issues_one() {
 /// it was issued.
 #[tokio::test]
 async fn a_voucher_the_engine_issued_is_not_edited_renamed_or_taken_back_by_a_bot() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     s.add("bot:patty", "Patty").await;
     let marge = story.as_bot("bot:marge").await;
@@ -261,8 +258,7 @@ async fn a_voucher_the_engine_issued_is_not_edited_renamed_or_taken_back_by_a_bo
 /// depends on**: the same verbs land on a bot.
 #[tokio::test]
 async fn a_bot_cannot_rename_merge_or_archive_a_voucher_nor_rename_into_one() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     s.add("bot:patty", "Patty").await;
     s.add("bot:nelson", "Nelson").await;
@@ -409,8 +405,7 @@ pub(super) async fn ask_and_read(story: &Story, bot: &str) -> (String, String) {
 /// operator. The code is spent on first use.
 #[tokio::test]
 async fn a_code_goes_to_the_operator_alone_and_a_boot_that_presents_it_is_given_a_voucher() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     an_instance_with_an_operator(&s).await;
 
     let (challenge, code) = ask_and_read(&story, "marge").await;
@@ -716,8 +711,7 @@ async fn a_pending_code_is_not_replaced_and_three_wrong_codes_void_a_challenge()
 /// no longer matches, and the answer says to ask again.
 #[tokio::test]
 async fn a_code_is_dead_after_its_window_and_after_a_restart() {
-    let story = Story::begin("bot:otto").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:otto").await;
     an_instance_with_an_operator(&setup).await;
 
     // ── a later day: the window is over, and no try is counted ──────────────
@@ -769,8 +763,7 @@ async fn a_code_is_dead_after_its_window_and_after_a_restart() {
 /// whatever the verb.
 #[tokio::test]
 async fn no_code_is_made_without_an_operator_or_a_bot_and_no_bot_writes_a_challenge() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
 
     // ── nobody is the operator yet: nothing is made ─────────────────────────
@@ -849,8 +842,7 @@ async fn no_code_is_made_without_an_operator_or_a_bot_and_no_bot_writes_a_challe
 /// not spent, and no root is given to a run that is already over.
 #[tokio::test]
 async fn a_wrap_code_reopening_takes_no_code_and_spends_none() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     an_instance_with_an_operator(&s).await;
 
     // ── marge boots and wraps; a wrap code comes back ───────────────────────

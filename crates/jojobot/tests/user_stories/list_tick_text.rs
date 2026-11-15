@@ -32,8 +32,7 @@ fn setting_for(text: &str, noun: &str) -> String {
 
 #[tokio::test]
 async fn the_text_that_makes_a_list_says_which_setting_fits_and_how_to_tick() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     // ── what the text says ──────────────────────────────────────────────────
     let kind = s.argument_description("add_entity", "kind").await;

@@ -220,8 +220,7 @@ async fn lean_receipts_keep_derivations_and_changed_keys_without_echoes() {
 
 #[tokio::test]
 async fn lean_receipts_sets_only_edits_do_not_repeat_claim_labels() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:handcart", "The Handcart").await;
     let captured = s
         .call(
@@ -251,8 +250,7 @@ async fn lean_receipts_sets_only_edits_do_not_repeat_claim_labels() {
 
 #[tokio::test]
 async fn lean_receipts_details_only_edits_do_not_repeat_claim_labels() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:handcart", "The Handcart").await;
     let captured = s
         .call(
@@ -282,8 +280,7 @@ async fn lean_receipts_details_only_edits_do_not_repeat_claim_labels() {
 
 #[tokio::test]
 async fn lean_receipts_show_generated_claims_only_when_asked() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     let plain = s.call("add_entity", json!({"kind":"thing", "handle":"kettle", "name":"The Kettle", "source":"user-named", "sets":{"colour":"white"}})).await.json();
     assert!(plain.get("first_claim").is_none(), "{plain}");
     assert_eq!(plain["address"], "thing:kettle#f1", "{plain}");
@@ -342,8 +339,7 @@ async fn lean_receipts_show_generated_claims_only_when_asked() {
 
 #[tokio::test]
 async fn lean_receipts_review_derivations_name_mentions_without_echoing_refs() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     for (handle, name) in [
         ("person:alpha", "Alpha"),
         ("person:beta", "Beta"),
@@ -399,8 +395,7 @@ async fn lean_receipts_review_derivations_name_mentions_without_echoing_refs() {
 
 #[tokio::test]
 async fn lean_receipts_review_derivations_warn_only_at_or_over_capacity() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
     s.add("thing:jukebox", "The Jukebox").await;
     s.call(
@@ -456,8 +451,7 @@ async fn lean_receipts_review_derivations_warn_only_at_or_over_capacity() {
 
 #[tokio::test]
 async fn lean_receipts_keep_archived_source_warnings_on_normal_writes() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:alpha", "Alpha").await;
     s.add("person:beta", "Beta").await;
     let source = s

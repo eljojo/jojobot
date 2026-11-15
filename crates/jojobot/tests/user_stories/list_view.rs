@@ -92,8 +92,7 @@ fn the<'a>(answer: &'a Value, handle: &str) -> &'a Value {
 /// says the day it was last ticked.
 #[tokio::test]
 async fn the_lists_view_answers_every_list_with_how_far_along_it_is() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     three_lists(&s).await;
 
     let answer = s.call("recall", json!({"view": "lists"})).await.json();
@@ -127,8 +126,7 @@ async fn the_lists_view_answers_every_list_with_how_far_along_it_is() {
 /// alone, and the paired negative: the other two lists are not in it.
 #[tokio::test]
 async fn the_lists_view_under_a_parent_answers_only_the_lists_hung_on_it() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     three_lists(&s).await;
 
     let answer = s
@@ -147,8 +145,7 @@ async fn the_lists_view_under_a_parent_answers_only_the_lists_hung_on_it() {
 /// and the lists that stand still answer.
 #[tokio::test]
 async fn an_archived_list_is_left_out_of_the_lists_view_and_counted() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     three_lists(&s).await;
     s.call(
         "archive_entity",
@@ -238,8 +235,7 @@ async fn a_list_read_that_names_keys_gets_only_the_blocks_it_names() {
 /// count and the last day, and nothing of the entries.
 #[tokio::test]
 async fn the_lists_view_carries_no_entries() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     three_lists(&s).await;
 
     let answer = s.call("recall", json!({"view": "lists"})).await.json();
@@ -292,8 +288,7 @@ fn numbers_in(cell: &str) -> Vec<u64> {
 /// page of a view that selects no list carries neither column.
 #[tokio::test]
 async fn the_lists_page_shows_how_far_along_each_list_is_as_recall_does() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     three_lists(&s).await;
     a_list(&s, "list:checklist", "person:homer", "sink").await;
 

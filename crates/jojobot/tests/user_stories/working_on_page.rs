@@ -119,8 +119,7 @@ async fn the_past_list_dates_a_run_in_the_instances_zone() {
         .find(|(_, there)| *there != day_in("UTC"))
         .expect("one of the widest zones is on another day than UTC");
 
-    let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let (story, otto) = Story::begin_with_session("bot:otto").await;
     otto.add("project:atlas", "Atlas").await;
     otto.add_under("project:atlas", "work:sigma", "Sigma").await;
     otto.event_with(

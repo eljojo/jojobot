@@ -11,8 +11,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_message_the_board_took_is_answered_as_done_when_the_index_cannot_take_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     // ── the assistant has dealt with the release notes the start left it ────
     // They come first in the box and fill the answer ceiling, so the message

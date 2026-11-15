@@ -24,8 +24,7 @@ use super::dsl::Story;
 /// Equal term coverage does not make a weak match win merely because it is newer.
 #[tokio::test]
 async fn a_default_search_keeps_text_relevance_ahead_of_recency() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     let older = s
         .call(

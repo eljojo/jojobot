@@ -15,8 +15,7 @@ fn only_id_and_derivations(body: &Value) {
 async fn lean_receipts_derivations_survive_the_changed_count_limit() {
     let mut failures = Vec::new();
     for saving in [false, true] {
-        let story = Story::begin("bot:otto").await;
-        let s = story.session().await;
+        let (_story, s) = Story::begin_with_session("bot:otto").await;
         if saving {
             s.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
         }
@@ -44,8 +43,7 @@ async fn lean_receipts_derivations_survive_the_changed_count_limit() {
 async fn lean_receipts_derivations_survive_an_elided_old_list_value() {
     let mut failures = Vec::new();
     for saving in [false, true] {
-        let story = Story::begin("bot:otto").await;
-        let s = story.session().await;
+        let (_story, s) = Story::begin_with_session("bot:otto").await;
         s.call(
             "declare_type",
             json!({"name":"thing", "fields":[
@@ -100,8 +98,7 @@ async fn lean_receipts_derivations_survive_an_elided_old_list_value() {
 
 #[tokio::test]
 async fn lean_receipts_token_saving_setting_covers_the_four_single_writes() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
     let made = s.call("add_entity", json!({"kind":"thing", "handle":"kettle", "name":"The Kettle", "source":"user-named", "sets":{"runs_out":"2026-10-26"}})).await.json();
     only_id_and_derivations(&made);
@@ -163,8 +160,7 @@ async fn lean_receipts_token_saving_setting_covers_the_four_single_writes() {
 
 #[tokio::test]
 async fn lean_receipts_token_saving_defers_teaching_until_a_normal_receipt() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     let setting = story.session().await;
     s.add("person:alpha", "Alpha").await;
     setting.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
@@ -205,8 +201,7 @@ async fn lean_receipts_token_saving_defers_teaching_until_a_normal_receipt() {
 
 #[tokio::test]
 async fn lean_receipts_token_saving_leaves_unseen_session_notices_for_the_next_answer() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     let setting = story.session().await;
     s.add("person:alpha", "Alpha").await;
     let first = s
@@ -259,8 +254,7 @@ async fn lean_receipts_token_saving_leaves_unseen_session_notices_for_the_next_a
 
 #[tokio::test]
 async fn lean_receipts_token_saving_setting_defaults_off_and_belongs_to_the_caller() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     let other = story.as_bot("bot:assistant").await;
     let unset = s
         .call(
@@ -304,8 +298,7 @@ async fn lean_receipts_token_saving_setting_defaults_off_and_belongs_to_the_call
 
 #[tokio::test]
 async fn lean_receipts_token_saving_old_argument_is_unpublished_and_refused_on_all_four_writes() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thing:kettle", "The Kettle").await;
     let captured = s
         .call(

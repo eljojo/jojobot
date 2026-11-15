@@ -17,8 +17,7 @@ const CORRECTED: &str = "The corrected reasoning.\n\nSecond paragraph of the cor
 
 #[tokio::test]
 async fn a_rules_reasoning_keeps_its_paragraphs_from_the_write_to_the_page() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("bot:gamma", "Gamma").await;
     s.add("thing:handcart", "The Handcart").await;

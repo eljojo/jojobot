@@ -44,8 +44,7 @@ async fn said(s: &Session, content: &str) -> String {
 
 #[tokio::test]
 async fn an_archive_with_a_reason_keeps_the_details_the_claim_held() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thread:deploys-alpha", "Deploys Alpha").await;
 
     // The positive: an archive that sends no details changes none.
@@ -79,8 +78,7 @@ async fn an_archive_with_a_reason_keeps_the_details_the_claim_held() {
 
 #[tokio::test]
 async fn a_read_that_leaves_details_out_names_the_records_it_left_them_out_of() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("thread:deploys-alpha", "Deploys Alpha").await;
     let with = said(&s, "Marge said the picnic is on").await;
     s.fact("thread:deploys-alpha", "Homer brought the cooler")

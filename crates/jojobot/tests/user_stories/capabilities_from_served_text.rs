@@ -38,8 +38,7 @@ async fn skill_body(story: &Story) -> String {
 
 #[tokio::test]
 async fn a_cold_session_numbers_ordinances_and_recalls_one_by_its_number() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     // ── the key that numbers a collection is in the text a session reads
     // where it sets keys, on both verbs that set them ────────────────────────
@@ -85,8 +84,7 @@ async fn a_cold_session_numbers_ordinances_and_recalls_one_by_its_number() {
 
 #[tokio::test]
 async fn a_cold_session_declares_a_view_that_takes_a_project_and_runs_it() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
 
     // ── the views that ship, and the keys a view takes, are all in the text
     // that teaches views ─────────────────────────────────────────────────────
@@ -187,8 +185,7 @@ async fn times_said(s: &super::dsl::Session, subject: &str, content: &str) -> us
 
 #[tokio::test]
 async fn a_cold_session_sends_a_request_id_on_the_first_call_and_a_repeat_writes_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     // The argument is published on the write the story uses, with a description
     // for a reader to find it by.
@@ -228,8 +225,7 @@ async fn a_cold_session_sends_a_request_id_on_the_first_call_and_a_repeat_writes
 /// verb is named for a view; `read_document` and `put_document` are verbs.
 #[tokio::test]
 async fn a_capability_arrives_as_an_argument_and_the_document_verbs_are_served_verbs() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     // The argument a view arrives as is published by the verb that reads.
     let view = s.argument_description("recall", "view").await;
@@ -267,8 +263,7 @@ async fn a_cold_session_with_a_plan_too_long_for_a_claim_finds_the_document_verb
 {
     use jojobot_domain::text::ANSWER_CEILING;
 
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("project:atlas", "Atlas").await;
 
     // ── the text that meets a document's keys, its archived count and the

@@ -23,8 +23,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn a_session_asks_a_shipped_view_and_its_own_by_name_through_one_read() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
 
     // ── the directory, which nobody declared ────────────────────────────────
     //
@@ -119,8 +118,7 @@ async fn a_session_asks_a_shipped_view_and_its_own_by_name_through_one_read() {
 #[tokio::test]
 async fn the_colleagues_view_says_who_each_bot_reports_to_and_a_second_call_says_who_reports_to_it()
 {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("bot:omega", "Omega").await;
     s.add("bot:sigma", "Sigma").await;
     s.add("bot:psi", "Psi").await;
@@ -210,8 +208,7 @@ async fn the_colleagues_view_says_who_each_bot_reports_to_and_a_second_call_says
 /// both reach them.
 #[tokio::test]
 async fn the_colleagues_view_leaves_operational_keys_out_and_names_what_it_left_out() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("bot:omega", "Omega").await;
     s.add("bot:sigma", "Sigma").await;
     s.event_with(
@@ -444,8 +441,7 @@ async fn a_session_told_nothing_finds_the_view_path_and_composes_a_real_question
 /// satisfy "the refusal is gone" and lose the link.
 #[tokio::test]
 async fn a_claim_can_point_at_a_view_the_software_ships() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
 
     s.add("person:milhouse", "Milhouse").await;
 
@@ -508,8 +504,7 @@ fn booted_names_the_skill(booted: &serde_json::Value) {
 /// rests on — an answer that was empty either way would pass the second half.
 #[tokio::test]
 async fn a_callers_fields_beside_a_view_replace_the_views_own_whole() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("view:my-people", "My People").await;
     s.event_with(
         "view:my-people",
@@ -567,8 +562,7 @@ async fn a_callers_fields_beside_a_view_replace_the_views_own_whole() {
 /// and with the same view asked beside a kind, which answers.
 #[tokio::test]
 async fn a_view_holding_nothing_that_narrows_is_made_and_refused_only_when_asked() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("thing:omega", "Omega").await;
 
     // ── declared with keys that narrow nothing: it lands, and the receipt says
@@ -659,8 +653,7 @@ async fn a_view_holding_nothing_that_narrows_is_made_and_refused_only_when_asked
 /// once the input is sent.
 #[tokio::test]
 async fn a_view_that_asks_what_is_ready_needs_no_kind_and_an_unsent_input_narrows_nothing() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("person:kenny", "Kenny").await;
     s.add("project:atlas", "Atlas").await;
     s.call(
@@ -726,8 +719,7 @@ async fn a_view_that_asks_what_is_ready_needs_no_kind_and_an_unsent_input_narrow
 /// go red.
 #[tokio::test]
 async fn a_views_page_answers_what_recall_answers_and_refuses_what_recall_refuses() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("project:atlas", "Atlas").await;
     s.add("project:the-move", "The Move").await;
     for (slug, parent) in [("sigma", "project:atlas"), ("phi", "project:the-move")] {
@@ -780,8 +772,7 @@ async fn a_views_page_answers_what_recall_answers_and_refuses_what_recall_refuse
 /// and not a person who stands on the same board.
 #[tokio::test]
 async fn a_views_page_asks_what_is_ready_of_work_as_recall_does() {
-    let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("person:kenny", "Kenny").await;
     s.call(
         "add_entity",

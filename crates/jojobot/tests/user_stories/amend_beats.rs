@@ -36,8 +36,7 @@ async fn captures(s: &Session, content: &str) {
 
 #[tokio::test]
 async fn a_rewrite_changes_the_runs_own_entry_and_leaves_the_line_jojobot_wrote() {
-    let story = Story::begin("bot:gamma").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:gamma").await;
     setup.add("person:lisa", "Lisa").await;
     let s = story.as_bot("bot:gamma").await;
 
@@ -65,8 +64,7 @@ async fn a_rewrite_changes_the_runs_own_entry_and_leaves_the_line_jojobot_wrote(
 
 #[tokio::test]
 async fn a_run_with_only_jojobots_lines_has_nothing_to_rewrite_and_is_told_what_can_be() {
-    let story = Story::begin("bot:gamma").await;
-    let setup = story.session().await;
+    let (story, setup) = Story::begin_with_session("bot:gamma").await;
     setup.add("person:lisa", "Lisa").await;
     let s = story.as_bot("bot:gamma").await;
 
