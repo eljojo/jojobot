@@ -2359,54 +2359,42 @@ mod tests {
         contract::an_unreadable_compaction_counts_for_nothing(&store, &run).await;
     }
 
-    /// **A second claimant is refused while the lease is fresh** — told no,
-    /// and told who holds it and until when.
+    /// **A lease reads held, stale or free, and that decides who may claim it.**
+    /// A fresh lease refuses a second claimant, telling who holds it and until
+    /// when, and never refuses the claimant that holds it. A stale or a free
+    /// lease is claimable by anyone. The threshold is 300 seconds.
     #[test]
-    fn a_second_claimant_is_refused_while_the_lease_is_fresh() {
-        let claimed_at = contract::epoch();
-        let now = claimed_at + jiff::SignedDuration::from_secs(30);
+    fn a_lease_reads_held_stale_or_free_and_decides_who_may_claim_it() {
+        use LeaseVerdict::{Free, Held, Stale};
         let threshold = jiff::SignedDuration::from_secs(300);
-        let decision = claim_role("delta", Some("gamma"), Some(claimed_at), now, threshold);
-        assert_eq!(
-            decision,
-            LeaseClaim::Refused {
-                holder: "gamma".into(),
-                until: claimed_at + threshold,
-            },
-            "a fresh holder must not lose the role to a second claimant"
-        );
-    }
-
-    /// **The same claimant renewing is not refused.** A lease is a claim
-    /// against everyone else, not a lock its own holder must fight back into.
-    #[test]
-    fn the_same_claimant_renewing_is_not_refused() {
-        let claimed_at = contract::epoch();
-        let now = claimed_at + jiff::SignedDuration::from_secs(30);
-        let threshold = jiff::SignedDuration::from_secs(300);
-        let decision = claim_role("gamma", Some("gamma"), Some(claimed_at), now, threshold);
-        assert_eq!(
-            decision,
-            LeaseClaim::Taken,
-            "the holder renewing its own claim"
-        );
-    }
-
-    /// **A lease past the threshold reads `stale` and is claimable.**
-    #[test]
-    fn a_lease_past_the_threshold_reads_stale_and_is_claimable() {
-        let claimed_at = contract::epoch();
-        let threshold = jiff::SignedDuration::from_secs(300);
-        let now = claimed_at + jiff::SignedDuration::from_secs(301);
-        assert_eq!(
-            lease_verdict(Some(claimed_at), now, threshold),
-            LeaseVerdict::Stale
-        );
-        assert_eq!(
-            claim_role("delta", Some("gamma"), Some(claimed_at), now, threshold),
-            LeaseClaim::Taken,
-            "a stale lease is claimable by anyone"
-        );
+        // The claimant, the holder (none when empty, and then never claimed),
+        // seconds after the epoch now, the verdict, and whether the claim is
+        // refused. A lease that is claimed was claimed at the epoch.
+        let rows = [
+            ("fresh", "delta", "gamma", 30, Held, true),
+            ("renewing", "gamma", "gamma", 30, Held, false),
+            ("stale", "delta", "gamma", 301, Stale, false),
+            ("inside", "delta", "gamma", 299, Held, true),
+            ("unclaimed", "gamma", "", 0, Free, false),
+        ];
+        for (name, claimant, holder, secs, verdict, refused) in rows {
+            let holder = (!holder.is_empty()).then_some(holder);
+            let claimed_at = holder.map(|_| contract::epoch());
+            let now = contract::epoch() + jiff::SignedDuration::from_secs(secs);
+            assert_eq!(lease_verdict(claimed_at, now, threshold), verdict, "{name}");
+            let wanted = match holder {
+                Some(holder) if refused => LeaseClaim::Refused {
+                    holder: holder.into(),
+                    until: contract::epoch() + threshold,
+                },
+                _ => LeaseClaim::Taken,
+            };
+            assert_eq!(
+                claim_role(claimant, holder, claimed_at, now, threshold),
+                wanted,
+                "{name}"
+            );
+        }
     }
 
     /// **A renewal is due at the renewal age and not before it.** The edges
@@ -2448,30 +2436,6 @@ mod tests {
             LEASE_RENEWS_AFTER.as_secs() * 10,
             LEASE_FRESHNESS.as_secs(),
             "the renewal age is a tenth of the lease"
-        );
-    }
-
-    /// **A lease inside the threshold reads `held`.**
-    #[test]
-    fn a_lease_inside_the_threshold_reads_held() {
-        let claimed_at = contract::epoch();
-        let threshold = jiff::SignedDuration::from_secs(300);
-        let now = claimed_at + jiff::SignedDuration::from_secs(299);
-        assert_eq!(
-            lease_verdict(Some(claimed_at), now, threshold),
-            LeaseVerdict::Held
-        );
-    }
-
-    /// **Nobody has ever claimed it reads `free`, and is claimable.**
-    #[test]
-    fn an_unclaimed_lease_reads_free_and_is_claimable() {
-        let now = contract::epoch();
-        let threshold = jiff::SignedDuration::from_secs(300);
-        assert_eq!(lease_verdict(None, now, threshold), LeaseVerdict::Free);
-        assert_eq!(
-            claim_role("gamma", None, None, now, threshold),
-            LeaseClaim::Taken
         );
     }
 
