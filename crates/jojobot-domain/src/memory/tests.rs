@@ -933,14 +933,36 @@ fn a_folded_or_archived_entity_is_not_browsable_and_a_live_one_is() {
 /// **The cutoff counts back the number of runs it is given**, not a fixed
 /// twenty: three runs age on a setting of three and answer the oldest of them,
 /// and the same three runs answer nothing on the default.
+/// 🚨 **Fewer runs than the threshold asks no question at all** — a
+/// true absence looks exactly like this: `None`, not a cutoff computed
+/// from whatever runs do exist. A cutoff answered from too few runs
+/// would age a thought no bot has had the chance to even reach.
+/// **Exactly the threshold answers the oldest of them** — the run that,
+/// counting back from today, is the [`AGES_AFTER_RUNS`]th.
+/// 🚨 **More than the threshold answers the Nth-newest, never the
+/// oldest of all of them** — extra runs beyond the window do not push
+/// the cutoff back further, or a bot that has run for years would never
+/// age anything.
 #[test]
-fn the_cutoff_counts_back_the_number_of_runs_it_is_given() {
-    let starts: Vec<jiff::Timestamp> = (0..3)
-        .map(|i| at(&format!("2026-04-{:02}T00:00:00Z", i + 1)))
-        .collect();
-    assert_eq!(aging_cutoff(&starts, 3), Some(starts[0]), "{starts:?}");
-    assert_eq!(aging_cutoff(&starts, 2), Some(starts[1]), "{starts:?}");
-    assert_eq!(aging_cutoff(&starts, AGES_AFTER_RUNS), None, "{starts:?}");
+fn aging_cutoff_counts_threshold_runs_and_answers_the_nth_newest() {
+    for (count, threshold, month, repeated, expected) in [
+        (3, 3, 4, false, Some(0)),
+        (3, 2, 4, false, Some(1)),
+        (3, AGES_AFTER_RUNS, 4, false, None),
+        (AGES_AFTER_RUNS - 1, AGES_AFTER_RUNS, 1, true, None),
+        (AGES_AFTER_RUNS, AGES_AFTER_RUNS, 1, false, Some(0)),
+        (AGES_AFTER_RUNS + 5, AGES_AFTER_RUNS, 2, false, Some(5)),
+    ] {
+        let stamp = |day| at(&format!("2026-{month:02}-{day:02}T00:00:00Z"));
+        let starts: Vec<jiff::Timestamp> = (0..count)
+            .map(|i| stamp(if repeated { 1 } else { i + 1 }))
+            .collect();
+        let cutoff = aging_cutoff(&starts, threshold);
+        assert_eq!(cutoff, expected.map(|i| starts[i]), "{starts:?}");
+        if count > AGES_AFTER_RUNS {
+            assert_ne!(cutoff, Some(starts[0]), "{starts:?}");
+        }
+    }
 }
 
 /// **A setting that is not a whole number above zero reads as no setting**,
@@ -1005,53 +1027,6 @@ fn thought(id: &str, pointer: &str) -> Fact {
         stale_after: None,
         receipt: None,
     }
-}
-
-/// 🚨 **Fewer runs than the threshold asks no question at all** — a
-/// true absence looks exactly like this: `None`, not a cutoff computed
-/// from whatever runs do exist. A cutoff answered from too few runs
-/// would age a thought no bot has had the chance to even reach.
-#[test]
-fn fewer_runs_than_the_threshold_answers_no_cutoff() {
-    let starts: Vec<_> = (0..AGES_AFTER_RUNS - 1)
-        .map(|_| at("2026-01-01T00:00:00Z"))
-        .collect();
-    assert_eq!(aging_cutoff(&starts, AGES_AFTER_RUNS), None, "{starts:?}");
-}
-
-/// **Exactly the threshold answers the oldest of them** — the run that,
-/// counting back from today, is the [`AGES_AFTER_RUNS`]th.
-#[test]
-fn exactly_the_threshold_answers_the_oldest_run() {
-    let starts: Vec<jiff::Timestamp> = (0..AGES_AFTER_RUNS)
-        .map(|i| at(&format!("2026-01-{:02}T00:00:00Z", i + 1)))
-        .collect();
-    let oldest = starts[0];
-    assert_eq!(
-        aging_cutoff(&starts, AGES_AFTER_RUNS),
-        Some(oldest),
-        "{starts:?}"
-    );
-}
-
-/// 🚨 **More than the threshold answers the Nth-newest, never the
-/// oldest of all of them** — extra runs beyond the window do not push
-/// the cutoff back further, or a bot that has run for years would never
-/// age anything.
-#[test]
-fn more_than_the_threshold_answers_the_nth_newest_not_the_oldest() {
-    let extra = 5;
-    let starts: Vec<jiff::Timestamp> = (0..AGES_AFTER_RUNS + extra)
-        .map(|i| at(&format!("2026-02-{:02}T00:00:00Z", i + 1)))
-        .collect();
-    let nth_newest = starts[extra];
-    let oldest = starts[0];
-    let cutoff = aging_cutoff(&starts, AGES_AFTER_RUNS).expect("more than enough runs");
-    assert_eq!(cutoff, nth_newest, "{starts:?}");
-    assert_ne!(
-        cutoff, oldest,
-        "the extra runs must not push the cutoff back: {starts:?}"
-    );
 }
 
 /// 🚨 **A room is counted once, and "over" means over the ceiling, not at it.**
