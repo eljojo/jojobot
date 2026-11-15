@@ -5405,9 +5405,19 @@ mod indeterminate_declarations;
 /// how the corruption becomes permanent.
 ///
 /// Never a failure, never a drop: the fact is still indexed and still found.
-#[tokio::test]
-async fn a_scan_counts_and_logs_a_subject_that_names_no_entity() {
+async fn an_orphan_scan_reports_itself(noise: bool) {
     let logged = log_sink();
+    if noise {
+        // A sibling test in this binary logging the same family of warning, about
+        // another doc whose subject is spelled like this case's own well-formed one.
+        tracing::warn!(
+            doc = "outline-uuid-a-sibling-test",
+            entity = "person:alpha",
+            count = 1,
+            subjects = ?["person:alpha"],
+            "fact rows name a subject that is no known entity"
+        );
+    }
 
     let orphan = Fact {
         subject: EntityId::person("person:alphaa"),
@@ -5416,10 +5426,14 @@ async fn a_scan_counts_and_logs_a_subject_that_names_no_entity() {
     // Its own doc id, unique in this binary. The sink is the binary's — one
     // subscriber shared by every test in it — so anything counted over its
     // text has to be counted by something no other test can log.
-    const REPORTED_DOC: &str = "outline-uuid-orphan-report";
+    let reported_doc = if noise {
+        "outline-uuid-noisy-orphan"
+    } else {
+        "outline-uuid-orphan-report"
+    };
     let store = Arc::new(
         IndexedMemory::new(Scanned::new(vec![scan(
-            REPORTED_DOC,
+            reported_doc,
             Some(entity("person:alpha", "Alpha")),
             "",
             vec![
@@ -5431,9 +5445,15 @@ async fn a_scan_counts_and_logs_a_subject_that_names_no_entity() {
     );
     store.rebuild().await.expect("rebuild");
 
-    let text = logged.text();
+    // Only the lines about this case's own doc: the rest of the sink is other tests'.
+    let text = logged
+        .text()
+        .lines()
+        .filter(|line| line.contains(reported_doc))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        text.contains(REPORTED_DOC),
+        text.contains(reported_doc),
         "the log must say which doc: {text}"
     );
     assert!(text.contains("person:alphaa"), "…and which subject: {text}");
@@ -5456,10 +5476,22 @@ async fn a_scan_counts_and_logs_a_subject_that_names_no_entity() {
     // That read re-scanned the store, and re-scanning is not re-reporting.
     // The report is a reading of the corpus; one per answer would bury it.
     assert_eq!(
-        logged.text().matches(REPORTED_DOC).count(),
+        logged.text().matches(reported_doc).count(),
         1,
         "a read refreshes the index without repeating the report"
     );
+}
+
+#[tokio::test]
+async fn a_scan_counts_and_logs_a_subject_that_names_no_entity() {
+    an_orphan_scan_reports_itself(false).await;
+}
+
+/// **The same case, with another test's warning in the shared sink.** The sink is the
+/// binary's one subscriber, so what this case counts has to be its own lines.
+#[tokio::test]
+async fn a_scan_report_is_counted_over_its_own_doc_whatever_else_the_binary_logs() {
+    an_orphan_scan_reports_itself(true).await;
 }
 
 /// **The count survives the incremental path too.** A boot scan is not the
