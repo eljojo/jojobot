@@ -557,6 +557,20 @@ fn targeted_dispatch_plan_reads_a_long_list_from_a_file_in_the_repository() {
     fs::write(dir.join("list.txt"), long.join("\n") + "\n").unwrap();
     fs::write(dir.join("empty.txt"), "\n\n").unwrap();
     fs::write(dir.join("unsafe.txt"), "fine\n$(command)\n").unwrap();
+    // Each of these is one line a list file must not carry into GITHUB_ENV or make.
+    for (name, text) in [
+        ("comment.txt", "fine\n# a comment\n"),
+        ("crlf.txt", "fine\r\nalso\r\n"),
+        ("semicolon.txt", "fine;other\n"),
+        ("assignment.txt", "fine\nNAME=value\n"),
+    ] {
+        fs::write(dir.join(name), text).unwrap();
+    }
+    // A link inside the checkout that points outside it, to a file that would be a
+    // good list: only the path check refuses it, and no item does.
+    let elsewhere = scratch();
+    fs::write(elsewhere.join("list.txt"), "fine\n").unwrap();
+    std::os::unix::fs::symlink(elsewhere.join("list.txt"), dir.join("outside.txt")).unwrap();
     let plan = |filter: &str, list: &str| {
         let env = dir.join("github_env");
         let _ = fs::remove_file(&env);
@@ -585,6 +599,11 @@ fn targeted_dispatch_plan_reads_a_long_list_from_a_file_in_the_repository() {
         ("", "missing.txt"),
         ("", "empty.txt"),
         ("", "unsafe.txt"),
+        ("", "comment.txt"),
+        ("", "crlf.txt"),
+        ("", "semicolon.txt"),
+        ("", "assignment.txt"),
+        ("", "outside.txt"),
     ] {
         let (ok, env) = plan(filter, list);
         assert!(!ok && env.is_empty(), "{filter:?}, {list:?}: {env:?}");
@@ -593,6 +612,7 @@ fn targeted_dispatch_plan_reads_a_long_list_from_a_file_in_the_repository() {
     assert!(ok);
     assert_eq!(env.lines().next(), Some("TARGETED_FILTER=one two"));
     fs::remove_dir_all(dir).unwrap();
+    fs::remove_dir_all(elsewhere).unwrap();
 }
 
 /// **The deployed-store fixture is prepared when ANY item of the list appears in the
