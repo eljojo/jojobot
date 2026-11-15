@@ -699,6 +699,31 @@ async fn live_agent_journey(jojobot: &Jojobot) {
         .await
         .expect("the live run");
 
+    // **A call that carries the live run's own key keeps the refusal**: the exception is for
+    // the report that has no key to say whose it is. The refused call changes nothing.
+    let keyed = boot_args(
+        jojobot,
+        serde_json::json!({
+            "bot":"delta", "compacted":true, "agent":"shared-agent",
+            "sid": sid_of(&live).expect("the live run's key"),
+        }),
+    )
+    .await;
+    assert_eq!(keyed["status"], "blocked", "{keyed}");
+    assert!(
+        keyed.to_string().contains("end the turn and do nothing"),
+        "{keyed}"
+    );
+    assert_eq!(
+        jojobot
+            .sessions
+            .read_session(&run)
+            .await
+            .expect("the live run"),
+        before,
+        "a refused call changed the live run"
+    );
+
     let answer = boot_args(
         jojobot,
         serde_json::json!({"bot":"delta", "compacted":true, "agent":"shared-agent"}),
@@ -710,14 +735,19 @@ async fn live_agent_journey(jojobot: &Jojobot) {
         "an active run was told it is finished: {answer}"
     );
     assert_ne!(answer["status"], "blocked", "{answer}");
-    assert_ne!(
-        jojobot
-            .sessions
-            .read_session(&run)
-            .await
-            .expect("the live run"),
-        before,
-        "the compaction was not reported on the live run the agent hosts"
+    let after = jojobot
+        .sessions
+        .read_session(&run)
+        .await
+        .expect("the live run");
+    assert_eq!(
+        answer["session"]["run"], live["session"]["run"],
+        "the report answered for another run: {answer}"
+    );
+    assert_eq!(
+        after.entries.len(),
+        before.entries.len() + 1,
+        "the compaction mark was not appended to the live run: {after:?}"
     );
     assert_eq!(
         jojobot
