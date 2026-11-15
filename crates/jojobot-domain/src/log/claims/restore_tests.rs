@@ -17,10 +17,16 @@ fn stamped(index: usize, payload: ClaimEvent) -> Event<ClaimEvent> {
     event
 }
 
+/// **The position an event holds in the log**, the next after the one before it: every entry of
+/// the State that keeps the place of its event keeps a position no default can stand in for.
+fn at(index: usize) -> Position {
+    Position(index as u64 + 1)
+}
+
 fn replay_stamped(events: &[ClaimEvent]) -> State {
     let mut state = State::default();
     for (index, event) in events.iter().enumerate() {
-        state.apply(&stamped(index, event.clone()));
+        state.apply_at(&stamped(index, event.clone()), at(index));
     }
     state
 }
@@ -217,8 +223,8 @@ fn a_restored_state_is_the_state_the_events_built_and_goes_on_as_it_does() {
     let mut built = built;
     let after = all.len();
     for (index, event) in tail().into_iter().enumerate() {
-        built.apply(&stamped(after + index, event.clone()));
-        restored.apply(&stamped(after + index, event));
+        built.apply_at(&stamped(after + index, event.clone()), at(after + index));
+        restored.apply_at(&stamped(after + index, event), at(after + index));
         same(&restored, &built, &format!("after tail event {index}"));
     }
 }
@@ -296,6 +302,30 @@ fn empty_parts(state: &State) -> Vec<String> {
     });
     if !aged {
         empty.push("held_fields.things.*.keys.*.age (no held key carries an age)".into());
+    }
+    // **Every position the State keeps is the place of an event**: the walk finds each `position`
+    // field anywhere in the State, and a State that holds none, or one at the default, leaves a
+    // lost position invisible.
+    fn positions(value: &serde_json::Value, found: &mut Vec<u64>) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (name, part) in fields {
+                    match (name.as_str(), part.as_u64()) {
+                        ("position", Some(held)) => found.push(held),
+                        _ => positions(part, found),
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| positions(item, found)),
+            _ => {}
+        }
+    }
+    let mut held_positions = Vec::new();
+    positions(&json, &mut held_positions);
+    if held_positions.is_empty() {
+        empty.push("position (no entry of the State keeps the position of its event)".into());
+    } else if held_positions.contains(&0) {
+        empty.push("position (an entry keeps the default position, which no batch holds)".into());
     }
     let dated =
         things.is_some_and(|things| things.values().any(|thing| !thing["newest"].is_null()));
