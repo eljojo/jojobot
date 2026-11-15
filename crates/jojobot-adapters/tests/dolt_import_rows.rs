@@ -9,10 +9,9 @@
 use std::collections::BTreeSet;
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::log::ObjectId;
 use jojobot_domain::log::claims::FieldValue;
 use jojobot_domain::log::claims::State;
@@ -87,11 +86,7 @@ async fn stored(pool: &sqlx::MySqlPool, table: &str) -> i64 {
 /// names it and never drops it.
 #[tokio::test]
 async fn a_metadata_row_is_read_with_its_claim_and_the_import_refuses_it_by_name() {
-    let scratch = Scratch::new("import-metadata");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "importmetadata")
+    let pool = shared_database("importmetadata")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -126,16 +121,11 @@ async fn a_metadata_row_is_read_with_its_claim_and_the_import_refuses_it_by_name
         ),
         "the import refuses the row by name"
     );
-    server.stop().await;
 }
 
 #[tokio::test]
 async fn a_shared_stored_row_keeps_both_former_owners_histories() {
-    let scratch = Scratch::new("import-shared-write");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "sharedwrite")
+    let pool = shared_database("sharedwrite")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -291,16 +281,11 @@ async fn a_shared_stored_row_keeps_both_former_owners_histories() {
         physical.len() + 1,
         "only the shared row fans out"
     );
-    server.stop().await;
 }
 
 #[tokio::test]
 async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
-    let scratch = Scratch::new("import-rows");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "importrows")
+    let pool = shared_database("importrows")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -774,7 +759,6 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
             .any(|row| row.filed_under == "person:bart" && row.ordinal == 98),
         "a row under a live handle keeps its stored spelling beside its finding"
     );
-    server.stop().await;
 }
 
 /// **A key write whose claim no row holds is skipped and named**, and the rows
@@ -783,11 +767,7 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
 /// write of a claim that is held is read with it.
 #[tokio::test]
 async fn a_key_write_whose_claim_no_row_holds_is_skipped_and_named() {
-    let scratch = Scratch::new("import-orphan-write");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "orphanwrite")
+    let pool = shared_database("orphanwrite")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -831,7 +811,6 @@ async fn a_key_write_whose_claim_no_row_holds_is_skipped_and_named() {
         "the write of a held claim is read"
     );
     import::import(&read.rows).expect("the rows left map through the import");
-    server.stop().await;
 }
 
 /// A legacy write names its run by the public sid, and that run still names
@@ -843,13 +822,7 @@ async fn an_imported_write_keeps_the_bot_behind_its_public_run_name() {
     use jojobot_domain::log::RunId;
     use jojobot_domain::log::claims::{ClaimEvent, State};
 
-    let scratch = Scratch::new("import-writer");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store");
-    let pool = migrated_database(&server, "importwriter")
-        .await
-        .expect("a database");
+    let pool = shared_database("importwriter").await.expect("a database");
     migrate::run(&pool).await.expect("the schema");
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory)
@@ -937,5 +910,4 @@ async fn an_imported_write_keeps_the_bot_behind_its_public_run_name() {
             Some("kept")
         );
     }
-    server.stop().await;
 }

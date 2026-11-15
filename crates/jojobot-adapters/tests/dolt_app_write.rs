@@ -9,18 +9,15 @@
 use std::sync::Arc;
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::fold::Folded;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::app::{
     AppOutcome, AppPrincipal, AppSpec, DeployEvent, authorize, hash_token, mint_token,
 };
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity};
-
-use jojobot_adapters::testing::Scratch;
 
 async fn booted(pool: &sqlx::MySqlPool) {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
@@ -33,11 +30,7 @@ async fn booted(pool: &sqlx::MySqlPool) {
 /// writer opened, never from a plain store.
 #[tokio::test]
 async fn dolt_satisfies_the_app_contract_when_folded() {
-    let scratch = Scratch::new("contract-folded");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "appcontractfolded")
+    let pool = shared_database("appcontractfolded")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -47,8 +40,6 @@ async fn dolt_satisfies_the_app_contract_when_folded() {
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_app(&folded).await;
-
-    store.stop().await;
 }
 
 fn principal() -> AppPrincipal {
@@ -95,11 +86,7 @@ fn event_for(attempt: &str) -> jojobot_domain::app::AppEvent {
 /// lands (the control: the new writer is not simply refusing).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_attempt_sent_again_after_a_restart_writes_once() {
-    let scratch = Scratch::new("restart");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "app_restart")
+    let pool = shared_database("app_restart")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -153,8 +140,6 @@ async fn an_attempt_sent_again_after_a_restart_writes_once() {
             .len(),
         2
     );
-
-    server.stop().await;
 }
 
 /// **Calls racing on one attempt land one event**, and every call is answered
@@ -162,11 +147,7 @@ async fn an_attempt_sent_again_after_a_restart_writes_once() {
 /// handle, so the only thing that can stop the second is the attempt's row.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn calls_racing_on_one_attempt_land_one_event() {
-    let scratch = Scratch::new("race");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "app_race")
+    let pool = shared_database("app_race")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -223,6 +204,4 @@ async fn calls_racing_on_one_attempt_land_one_event() {
             "round {round}: one event per attempt"
         );
     }
-
-    server.stop().await;
 }

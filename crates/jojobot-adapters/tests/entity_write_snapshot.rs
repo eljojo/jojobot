@@ -8,7 +8,7 @@
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::{free_port, migrated_database, shared_database};
 use jojobot_domain::memory::{EntityId, EntityPatch, Memory, NewEntity, kinds};
 
 use jojobot_adapters::testing::Scratch;
@@ -59,14 +59,7 @@ fn version(
 /// read at the end is the last version: the entity row is still the projection.
 #[tokio::test]
 async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay() {
-    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
-        "jojobot-entity-write-snapshot",
-    ));
-    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "entity_write_snapshot")
+    let pool = shared_database("entity_write_snapshot")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -147,7 +140,6 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
         .into_iter()
         .find(|entity| entity.id == moved)
         .expect("the entity is there");
-    store.stop().await;
 
     let prose = "A two-wheeled cart.";
     assert_eq!(

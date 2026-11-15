@@ -8,11 +8,10 @@
 
 use jiff::Timestamp;
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::{
     MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
@@ -20,8 +19,6 @@ use jojobot_domain::mailbox::{
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::push::Outbox;
 use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
-
-use jojobot_adapters::testing::Scratch;
 
 fn at(raw: &str) -> Timestamp {
     raw.parse().expect("a moment")
@@ -48,14 +45,7 @@ fn run(sid: &str, started_at: Timestamp) -> NewSession {
 #[tokio::test]
 async fn the_newest_stamp_from_a_day_is_read_across_tables_and_leaves_out_the_day_before_the_ledger_and_the_pass_record()
  {
-    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
-        "jojobot-newest-stamp",
-    ));
-    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "newest_stamp")
+    let pool = shared_database("newest_stamp")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -122,7 +112,6 @@ async fn the_newest_stamp_from_a_day_is_read_across_tables_and_leaves_out_the_da
         .await
         .expect("the store answers");
 
-    store.stop().await;
     assert_eq!(newest, Some(at("2026-06-01T11:00:00.5Z")));
 }
 
@@ -132,14 +121,7 @@ async fn the_newest_stamp_from_a_day_is_read_across_tables_and_leaves_out_the_da
 /// is the answer when nothing is later.
 #[tokio::test]
 async fn a_stamp_on_a_later_day_is_the_newest_and_a_store_with_only_the_day_answers_with_the_day() {
-    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
-        "jojobot-newest-stamp-later",
-    ));
-    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "newest_stamp_later")
+    let pool = shared_database("newest_stamp_later")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -160,7 +142,6 @@ async fn a_stamp_on_a_later_day_is_the_newest_and_a_store_with_only_the_day_answ
         .await
         .expect("the store answers");
 
-    store.stop().await;
     assert_eq!(only_the_day, Some(at("2026-06-01T10:00:00Z")));
     assert_eq!(with_a_later_day, Some(at("2026-06-02T01:00:00Z")));
 }
@@ -169,14 +150,7 @@ async fn a_stamp_on_a_later_day_is_the_newest_and_a_store_with_only_the_day_answ
 /// cases above: the store holds stamps, and none is on or after this day.
 #[tokio::test]
 async fn a_store_stamped_only_before_the_day_has_no_newest_stamp() {
-    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
-        "jojobot-newest-stamp-none",
-    ));
-    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "newest_stamp_none")
+    let pool = shared_database("newest_stamp_none")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -190,7 +164,6 @@ async fn a_store_stamped_only_before_the_day_has_no_newest_stamp() {
         .await
         .expect("the store answers");
 
-    store.stop().await;
     assert_eq!(newest, None);
 }
 
@@ -214,14 +187,7 @@ impl OwnerIndex for AnyOwner {
 /// scan still reads the table it sits in.
 #[tokio::test]
 async fn a_push_row_stamped_on_the_wall_clock_is_not_a_stamp_of_the_stated_day() {
-    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
-        "jojobot-newest-stamp-push",
-    ));
-    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "newest_stamp_push")
+    let pool = shared_database("newest_stamp_push")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -276,7 +242,6 @@ async fn a_push_row_stamped_on_the_wall_clock_is_not_a_stamp_of_the_stated_day()
         .await
         .expect("the store answers");
 
-    store.stop().await;
     assert_eq!(rows, (1, 2), "the case wrote the rows it is about");
     assert_eq!(newest, Some(at("2026-06-01T10:00:00Z")));
 }
