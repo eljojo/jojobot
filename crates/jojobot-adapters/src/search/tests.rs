@@ -4743,11 +4743,12 @@ impl Scanned {
     }
 }
 
-#[async_trait]
+#[jojobot_domain::forward(
+    jojobot_domain::forward_memory,
+    unimplemented = "this double only scans",
+    required_only
+)]
 impl Memory for Scanned {
-    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
-        unimplemented!("this double only scans")
-    }
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(MemoryError::Store("the store cannot be read".into()));
@@ -4813,41 +4814,6 @@ impl Memory for Scanned {
         Ok(Guarded::Written(stored))
     }
 
-    async fn add_entity(&self, _: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        unimplemented!("this double only scans")
-    }
-    async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
-        unimplemented!("this double only scans")
-    }
-    async fn declare_type(
-        &self,
-        _: DeclaredType,
-        _: Option<&str>,
-    ) -> Result<DeclaredType, MemoryError> {
-        unimplemented!("this double only scans")
-    }
-    async fn declare_kind(
-        &self,
-        _: &str,
-        _: jojobot_domain::memory::types::Origin,
-        _: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<bool, MemoryError> {
-        unimplemented!("this double only scans")
-    }
-
-    async fn declared_kinds(
-        &self,
-    ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
-        unimplemented!("this double only scans")
-    }
-
-    async fn reclaim_kind(&self, _: &str) -> Result<(), MemoryError> {
-        unimplemented!("this double only scans")
-    }
-
-    async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
-        unimplemented!("this double only scans")
-    }
     /// Rename the entity on the page that declares it. **No guard**, for the
     /// same reason `capture` has none: what is under test is what the
     /// decorator does after a write lands, not whether the write was allowed.
@@ -4931,15 +4897,6 @@ impl Memory for Scanned {
         }
         Ok(Guarded::Written(entity.clone()))
     }
-    async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        unimplemented!("this double only scans")
-    }
-    async fn history(&self, _: &EntityId, _: &str) -> Result<Vec<FieldWrite>, MemoryError> {
-        unimplemented!("this double only scans")
-    }
-    async fn claim_history(&self, _: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
-        unimplemented!("this double only scans")
-    }
     /// **This double holds no write substrate, only a flat snapshot.** The
     /// default impl would reach `recall`/`claim_history`, neither of which
     /// this double has — so this is truthful rather than a workaround: a
@@ -4949,9 +4906,6 @@ impl Memory for Scanned {
         _: &EntityId,
     ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
         Ok(std::collections::HashMap::new())
-    }
-    async fn fields(&self, _: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
-        unimplemented!("this double only scans")
     }
     /// Replace the prose on the page that declares this entity. **No
     /// guard**, for the reason `capture` has none.
@@ -4968,36 +4922,6 @@ impl Memory for Scanned {
             .ok_or_else(|| MemoryError::Store("this double edits pages it holds".into()))?;
         doc.prose = prose.trim().to_string();
         Ok(doc.prose.clone())
-    }
-    async fn update_fact(
-        &self,
-        _: &FactAddress,
-        _: FactPatch,
-        _: &EntityId,
-    ) -> Result<Guarded<Fact>, MemoryError> {
-        unimplemented!("this double only scans")
-    }
-
-    async fn retract(
-        &self,
-        _: &FactAddress,
-        _: Option<&str>,
-        _: Date,
-        _: &EntityId,
-        _: Option<&str>,
-    ) -> Result<Retraction, MemoryError> {
-        unimplemented!("this double only scans")
-    }
-    async fn merge(
-        &self,
-        _: &EntityId,
-        _: &EntityId,
-        _: Option<&str>,
-        _: Date,
-        _: &EntityId,
-        _: Option<&str>,
-    ) -> Result<Merge, MemoryError> {
-        unimplemented!("this double only scans")
     }
 }
 

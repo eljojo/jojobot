@@ -36,17 +36,10 @@ use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
 use tantivy::schema::{FAST, Field, IndexRecordOption, STORED, STRING, Schema, Value};
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
-#[cfg(test)]
-use jiff::civil::Date;
 use jojobot_domain::mailbox::visibility::MailScope;
 use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
 use std::collections::{BTreeMap, HashSet};
 
-#[cfg(test)]
-use jojobot_domain::memory::{
-    ClaimWrite, EntityKind, EntityPatch, FactPatch, FieldWrite, FormerHandle, Guarded, Merge,
-    Retraction,
-};
 use jojobot_domain::memory::{
     Edge, EdgeShape, Entity, EntityId, Fact, FactAddress, FactId, FactStatus, Memory, MemoryError,
     WriteSummary,
@@ -58,6 +51,8 @@ use jojobot_domain::memory::{
     },
     types::DeclaredType,
 };
+#[cfg(test)]
+use jojobot_domain::memory::{EntityKind, EntityPatch, FactPatch, Guarded};
 
 mod decorators;
 mod distinct;

@@ -73,11 +73,8 @@ fn store(e: MemoryError) -> MailboxError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jojobot_domain::memory::NewEntity;
     use jojobot_domain::memory::testing::InMemoryMemory;
-    use jojobot_domain::memory::{
-        Entity, EntityKind, EntityPatch, Fact, FactAddress, FactPatch, Guarded, NewEntity, NewFact,
-        Retraction, search,
-    };
 
     /// A Memory holding exactly these handles, each named after its own slug.
     async fn roster(handles: &[&str]) -> Arc<dyn Memory> {
@@ -155,148 +152,17 @@ mod tests {
         /// and a call to one is the test's own bug.
         struct Down;
 
-        #[async_trait]
+        #[jojobot_domain::forward(
+            jojobot_domain::forward_memory,
+            unimplemented = "the owner index only reads the index",
+            required_only
+        )]
         impl Memory for Down {
-            async fn former_handles(
-                &self,
-            ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
             async fn list_entities(
                 &self,
                 _: Option<EntityKind>,
             ) -> Result<Vec<Entity>, MemoryError> {
                 Err(MemoryError::Store("the entity world is down".into()))
-            }
-            async fn add_entity(&self, _: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn declare_type(
-                &self,
-                _: jojobot_domain::memory::types::DeclaredType,
-                _: Option<&str>,
-            ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn declared_types(
-                &self,
-            ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn declare_kind(
-                &self,
-                _: &str,
-                _: jojobot_domain::memory::types::Origin,
-                _: Vec<jojobot_domain::memory::types::Field>,
-            ) -> Result<bool, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn declared_kinds(
-                &self,
-            ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError>
-            {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn reclaim_kind(&self, _: &str) -> Result<(), MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn update_entity(
-                &self,
-                _: &EntityId,
-                _: EntityPatch,
-            ) -> Result<Guarded<Entity>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn rename_entity(
-                &self,
-                _: &EntityId,
-                _: &EntityId,
-                _: Option<EntityId>,
-                _: jiff::civil::Date,
-                _: jojobot_domain::memory::Override<'_>,
-                _session: Option<&str>,
-            ) -> Result<Guarded<Entity>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn archive_entity(
-                &self,
-                _: &EntityId,
-                _: &str,
-                _session: Option<&str>,
-            ) -> Result<Entity, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn restore_entity(
-                &self,
-                _: &EntityId,
-                _session: Option<&str>,
-            ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn history(
-                &self,
-                _: &EntityId,
-                _: &str,
-            ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn claim_history(
-                &self,
-                _: &jojobot_domain::memory::FactAddress,
-            ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn fields(
-                &self,
-                _: &EntityId,
-            ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn update_fact(
-                &self,
-                _: &FactAddress,
-                _: FactPatch,
-                _: &EntityId,
-            ) -> Result<Guarded<Fact>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn retract(
-                &self,
-                _: &FactAddress,
-                _: Option<&str>,
-                _: jiff::civil::Date,
-                _: &EntityId,
-                _: Option<&str>,
-            ) -> Result<Retraction, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn merge(
-                &self,
-                _: &EntityId,
-                _: &EntityId,
-                _: Option<&str>,
-                _: jiff::civil::Date,
-                _: &EntityId,
-                _: Option<&str>,
-            ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn set_prose(
-                &self,
-                _: &EntityId,
-                _: &str,
-                _session: Option<&str>,
-            ) -> Result<String, MemoryError> {
-                unimplemented!("the owner index only reads the index")
-            }
-            async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
-                unimplemented!("the owner index only reads the index")
             }
         }
 
