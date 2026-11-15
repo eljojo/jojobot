@@ -469,7 +469,8 @@ fn targeted_dispatch_requires_a_crate_and_a_filter_list_and_never_full_proof() {
             && !text.contains("  pull_request:"),
         "{text}"
     );
-    for input in ["crate", "FILTER"] {
+    // The crate is required; the list is a FILTER or a LIST file, so neither is.
+    for (input, wanted) in [("crate", true), ("FILTER", false), ("LIST", false)] {
         let heading = format!("      {input}:");
         let required = text
             .lines()
@@ -477,16 +478,18 @@ fn targeted_dispatch_requires_a_crate_and_a_filter_list_and_never_full_proof() {
             .skip(1)
             .take_while(|line| line.starts_with("        "))
             .any(|line| line.trim() == "required: true");
-        assert!(required, "{input}: {text}");
+        assert_eq!(required, wanted, "{input}: {text}");
     }
     assert!(
-        text.contains("-- plan targeted \"$CRATE\" \"$FILTER\""),
+        text.contains("-- plan targeted \"$CRATE\" \"$FILTER\" \"$LIST\""),
         "{text}"
     );
+    // The run takes the list the plan resolved, not the raw input.
     assert!(
-        text.contains("make narrow CRATE=\"$CRATE\" FILTER=\"$FILTER\""),
+        text.contains("make narrow CRATE=\"$CRATE\" FILTER=\"$TARGETED_FILTER\""),
         "{text}"
     );
+    assert!(text.contains("\"$TARGETED_FIXTURE\" = true"), "{text}");
     assert!(
         !text.contains("make report")
             && !text.contains("make nix-build")
@@ -500,7 +503,8 @@ fn targeted_dispatch_requires_a_crate_and_a_filter_list_and_never_full_proof() {
     assert!(
         group.contains("forgejo.ref")
             && group.contains("inputs.crate")
-            && group.contains("inputs.FILTER"),
+            && group.contains("inputs.FILTER")
+            && group.contains("inputs.LIST"),
         "{group}"
     );
 }
@@ -536,6 +540,110 @@ fn targeted_dispatch_plan_takes_a_list_of_filters_and_refuses_an_unsafe_one() {
             );
         }
     }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// **A targeted run takes a list from a file in the repository when the dispatch names
+/// one**, because the forge refuses a FILTER input of about 250 characters or more.
+/// The file's lines are the items; the plan hands the later steps the one list they
+/// run, and refuses a path that leaves the repository, a file that is missing or
+/// empty, an item that is unsafe, and a dispatch that gives a FILTER as well.
+#[test]
+fn targeted_dispatch_plan_reads_a_long_list_from_a_file_in_the_repository() {
+    let dir = scratch();
+    let long: Vec<String> = (0..30)
+        .map(|n| format!("a_case_with_a_long_name_{n}"))
+        .collect();
+    fs::write(dir.join("list.txt"), long.join("\n") + "\n").unwrap();
+    fs::write(dir.join("empty.txt"), "\n\n").unwrap();
+    fs::write(dir.join("unsafe.txt"), "fine\n$(command)\n").unwrap();
+    let plan = |filter: &str, list: &str| {
+        let env = dir.join("github_env");
+        let _ = fs::remove_file(&env);
+        let mut command = bar(
+            &dir,
+            &["plan", "targeted", "jojobot-adapters", filter, list],
+        );
+        command.env("GITHUB_ENV", &env);
+        let out = support::output_fenced(&mut command).unwrap();
+        (
+            out.status.success(),
+            fs::read_to_string(&env).unwrap_or_default(),
+        )
+    };
+    let (ok, env) = plan("", "list.txt");
+    assert!(ok);
+    assert_eq!(
+        env.lines().next(),
+        Some(format!("TARGETED_FILTER={}", long.join(" ")).as_str())
+    );
+    assert!(long.join(" ").len() > 250);
+    for (filter, list) in [
+        ("one", "list.txt"),
+        ("", "../list.txt"),
+        ("", "/etc/passwd"),
+        ("", "missing.txt"),
+        ("", "empty.txt"),
+        ("", "unsafe.txt"),
+    ] {
+        let (ok, env) = plan(filter, list);
+        assert!(!ok && env.is_empty(), "{filter:?}, {list:?}: {env:?}");
+    }
+    let (ok, env) = plan("one two", "");
+    assert!(ok);
+    assert_eq!(env.lines().next(), Some("TARGETED_FILTER=one two"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// **The deployed-store fixture is prepared when ANY item of the list appears in the
+/// gate's sources**, and only for the server crate. The workflow reads the plan's
+/// answer, so a list of several items is judged item by item and not as one string.
+#[test]
+fn targeted_dispatch_plan_says_the_fixture_is_needed_when_any_item_names_a_gate_case() {
+    let dir = scratch();
+    let gate = dir.join("crates/jojobot/tests/upgrade_gate");
+    fs::create_dir_all(&gate).unwrap();
+    fs::write(
+        gate.join("recorded.rs"),
+        "fn a_gate_case_of_the_last_release() {}\n",
+    )
+    .unwrap();
+    let fixture = |krate: &str, filter: &str| {
+        let env = dir.join("github_env");
+        let _ = fs::remove_file(&env);
+        let mut command = bar(&dir, &["plan", "targeted", krate, filter]);
+        command.env("GITHUB_ENV", &env);
+        assert!(
+            support::output_fenced(&mut command)
+                .unwrap()
+                .status
+                .success()
+        );
+        fs::read_to_string(&env)
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("TARGETED_FIXTURE=").map(str::to_string))
+    };
+    assert_eq!(
+        fixture("jojobot", "a_gate_case_of_the_last_release").as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        fixture(
+            "jojobot",
+            "an_unrelated_case a_gate_case_of_the_last_release"
+        )
+        .as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        fixture("jojobot", "an_unrelated_case another_one").as_deref(),
+        Some("false")
+    );
+    assert_eq!(
+        fixture("jojobot-adapters", "a_gate_case_of_the_last_release").as_deref(),
+        Some("false")
+    );
     fs::remove_dir_all(dir).unwrap();
 }
 

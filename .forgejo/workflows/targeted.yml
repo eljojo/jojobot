@@ -2,7 +2,9 @@
 # POST actions/workflows/targeted.yml/dispatches with:
 # {"ref":"<branch-or-sha>","inputs":{"crate":"jojobot-adapters","FILTER":"<case-substring> [<case-substring> ...]"}}
 # FILTER is a list of test-name substrings separated by spaces. The run is the union
-# of the items, and an item that selects no test refuses the run, naming it.
+# of the items, and an item that selects no test refuses the run, naming it. The forge
+# refuses a FILTER of about 250 characters or more: give "LIST":"<path>" instead, a file
+# in the repository on the ref, one substring a line, and no FILTER.
 # This workflow is never a proof of the release gate.
 name: targeted
 
@@ -14,10 +16,13 @@ on:
         required: true
       FILTER:
         description: 'Test-name substrings separated by spaces (letters, digits, _ or :)'
-        required: true
+        required: false
+      LIST:
+        description: 'Instead of FILTER, a file in the repository on this ref, one substring a line; for a list the forge refuses as a FILTER (about 250 characters)'
+        required: false
 
 concurrency:
-  group: targeted-${{ forgejo.ref }}-${{ forgejo.event.inputs.crate }}-${{ forgejo.event.inputs.FILTER }}
+  group: targeted-${{ forgejo.ref }}-${{ forgejo.event.inputs.crate }}-${{ forgejo.event.inputs.FILTER }}${{ forgejo.event.inputs.LIST }}
   cancel-in-progress: true
 
 jobs:
@@ -27,6 +32,7 @@ jobs:
     env:
       CRATE: ${{ forgejo.event.inputs.crate }}
       FILTER: ${{ forgejo.event.inputs.FILTER }}
+      LIST: ${{ forgejo.event.inputs.LIST }}
     steps:
       - name: Runner cleanup
         run: |
@@ -40,23 +46,22 @@ jobs:
       - name: Job plan
         run: |
           mkdir -p target/bar
-          nix develop -c cargo run -q --locked -p jojobot-bar -- plan targeted "$CRATE" "$FILTER" 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
+          nix develop -c cargo run -q --locked -p jojobot-bar -- plan targeted "$CRATE" "$FILTER" "$LIST" 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
       # **The deployed-store cases need the fixture, and narrow skips them without it.**
-      # A FILTER that appears in the gate's sources or in narrow's list of fixture
-      # cases (a case name, `deaths::`, `kitchen_sink::`) records the same last
+      # A list with ANY item that appears in the gate's sources records the same last
       # deployed store the check job downloads, with the same cache, and narrow
-      # then runs those cases. Any other FILTER prepares nothing and runs as before.
+      # then runs those cases. The plan judges each item and writes the answer
+      # (TARGETED_FIXTURE); any other list prepares nothing and runs as before.
       # The cases do not read BOOT_STORE_DIR, so the grown store is not built.
       - name: Last deployed store
         run: |
-          if [ "$CRATE" = jojobot ] && grep -rqF -- "$FILTER" \
-              crates/jojobot-bar/src/local_upgrade.rs crates/jojobot/tests/upgrade_gate.rs crates/jojobot/tests/upgrade_gate/; then
+          if [ "$TARGETED_FIXTURE" = true ]; then
             UPGRADE_FIXTURE_DIR="$PWD/target/upgrade-fixture" nix develop -c python3 scripts/prepare-upgrade-fixture
             echo "UPGRADE_FIXTURE_DIR=$PWD/target/upgrade-fixture" >> "$GITHUB_ENV"
           else
-            echo 'FILTER selects no deployed-store case: no fixture prepared'
+            echo 'the list selects no deployed-store case: no fixture prepared'
           fi
-      - run: nix develop -c make narrow CRATE="$CRATE" FILTER="$FILTER"
+      - run: nix develop -c make narrow CRATE="$CRATE" FILTER="$TARGETED_FILTER"
       - if: ${{ !cancelled() }}
         continue-on-error: true
         uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
