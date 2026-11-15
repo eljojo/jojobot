@@ -26,14 +26,6 @@ async fn chronology(s: &Session) -> String {
         .to_string()
 }
 
-async fn captures(s: &Session, content: &str) {
-    s.call(
-        "capture",
-        json!({"subject": "person:lisa", "content": content, "provenance": "testimony"}),
-    )
-    .await;
-}
-
 #[tokio::test]
 async fn a_rewrite_changes_the_runs_own_entry_and_leaves_the_line_jojobot_wrote() {
     let (story, setup) = Story::begin_with_session("bot:gamma").await;
@@ -41,7 +33,7 @@ async fn a_rewrite_changes_the_runs_own_entry_and_leaves_the_line_jojobot_wrote(
     let s = story.as_bot("bot:gamma").await;
 
     s.journal("plan A").await;
-    captures(&s, "orders the pie").await;
+    s.fact("person:lisa", "orders the pie").await;
     let before = chronology(&s).await;
     let entries: Vec<&str> = before.split("\n\n").collect();
     assert_eq!(
@@ -69,7 +61,7 @@ async fn a_run_with_only_jojobots_lines_has_nothing_to_rewrite_and_is_told_what_
     let s = story.as_bot("bot:gamma").await;
 
     // The first write of the run is a capture, so the only entry is jojobot's.
-    captures(&s, "orders the pie").await;
+    s.fact("person:lisa", "orders the pie").await;
     let before = chronology(&s).await;
     assert!(!before.contains("\n\n"), "one entry, jojobot's: {before}");
 
