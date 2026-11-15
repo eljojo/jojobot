@@ -1055,6 +1055,22 @@ impl Mentioning {
                     Beside::Before(newest.content.as_str()),
                 ),
             };
+            // **The replacement is read where it will sit**, in the served text after the
+            // edit and beside the other field as stored, so a handle outside code only
+            // there is named too. A refusal of the edit itself is raised below.
+            let (served, _) = rendered_mapped_beside(current, beside, &known);
+            if let Ok((after, _)) = super::text_edit::apply_text_edit(address, &served, edit) {
+                let after_words = match edit.field {
+                    TextField::Content => words_text(&after, newest.details.as_deref()),
+                    TextField::Details => words_text(newest.content.as_str(), Some(&after)),
+                };
+                let after_words: Vec<&str> = after_words.iter().map(String::as_str).collect();
+                for entity in known_among(&*self.beneath, &after_words).await? {
+                    if !known.iter().any(|held| held.id == entity.id) {
+                        known.push(entity);
+                    }
+                }
+            }
             let text = match edited_stored(address, current, beside, edit, &known)? {
                 Ok(text) => text,
                 Err(handle) => {

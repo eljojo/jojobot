@@ -969,3 +969,53 @@ async fn a_handle_outside_code_only_when_content_and_details_are_read_together_i
         .written()
         .expect("the details alone are read beside the stored content");
 }
+
+/// **A find and replace reads its replacement where it will sit**: beside the other
+/// field as stored. The replacement is outside code there and inside code when read
+/// alone, so a gather over the replacement alone leaves a handle that exists unnamed,
+/// and the edit is refused as naming nothing.
+#[tokio::test]
+async fn a_replacement_outside_code_only_beside_the_stored_content_is_named() {
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::text_edit::{TextEdit, TextField};
+    use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
+
+    let (layer, _, _) = the_mention_stack().await;
+    let (about, named) = (spelled_thing(1), spelled_thing(2));
+    for id in [&about, &named] {
+        layer
+            .add_entity(NewEntity::new(id.clone(), &id.0, "fold-image"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let fence = "`".repeat(3);
+    let mut fact = state(NewFact::about(
+        about.clone(),
+        format!("{fence}text"),
+        jiff::civil::date(2026, 9, 2),
+    ));
+    fact.session = Some("fold-image".into());
+    fact.details = Some("nothing here".into());
+    let stored = layer
+        .capture(fact)
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    let patch = FactPatch {
+        text_edit: Some(TextEdit {
+            field: TextField::Details,
+            find: "nothing here".into(),
+            replace: format!("{fence}\n@{}\n{fence}\n{fence}\n{fence}", named.0),
+        }),
+        ..Default::default()
+    };
+    layer
+        .update_fact(&stored.address(), patch, &EntityId("bot:sigma".into()))
+        .await
+        .expect("edited")
+        .written()
+        .expect("the replacement is outside code beside the stored content");
+}
