@@ -48,15 +48,14 @@ pub struct SnapshotKeeper {
 }
 
 impl SnapshotKeeper {
-    /// Start from the newest snapshot the log holds, if any.
-    pub async fn open(log: Arc<dyn LogStore>, cadence: Cadence) -> Result<Self, LogError> {
-        // A snapshot of another build is returned when this build has none; it
-        // covers nothing here, or this build would never publish its own.
-        let covered = log
-            .load_snapshot()
-            .await?
-            .filter(crate::log_snapshot::is_this_builds)
-            .map_or(Position(0), |snapshot| snapshot.covered_position);
+    /// Start from the position the boot's snapshot covered, as
+    /// [`crate::log_snapshot::credited`] reads it off the boot: zero when the boot
+    /// restored from none, so a snapshot the boot refused is replaced and not counted.
+    pub async fn open(
+        log: Arc<dyn LogStore>,
+        cadence: Cadence,
+        covered: Position,
+    ) -> Result<Self, LogError> {
         Ok(Self {
             log,
             cadence,
@@ -169,8 +168,11 @@ pub struct ServingSnapshots {
 }
 
 impl ServingSnapshots {
-    pub async fn open(log: Arc<crate::writer_log::WriterLog>) -> Result<Self, LogError> {
-        let keeper = SnapshotKeeper::open(log.clone(), CADENCE).await?;
+    pub async fn open(
+        log: Arc<crate::writer_log::WriterLog>,
+        covered: Position,
+    ) -> Result<Self, LogError> {
+        let keeper = SnapshotKeeper::open(log.clone(), CADENCE, covered).await?;
         Ok(Self { keeper, log })
     }
 

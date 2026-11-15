@@ -178,9 +178,20 @@ fn skipped(skip: Skip, nothing_to_replay: bool) {
     }
 }
 
+/// **The position a boot's snapshot covers for the keeper**, or zero when the boot
+/// did not restore from one. A snapshot the boot refuses, for whatever reason, is
+/// no coverage: the boot replayed the log, so the keeper must publish a snapshot
+/// the next boot can use.
+pub(crate) fn credited(report: &BootReport) -> Position {
+    if report.from_snapshot {
+        Position(report.restored_at)
+    } else {
+        Position(0)
+    }
+}
+
 /// **Whether `snapshot` is of the shape this build reads.** The one place the
-/// rule is written: the boot refuses a snapshot that fails it, and the keeper
-/// counts no coverage from one.
+/// rule is written: the boot refuses a snapshot that fails it.
 pub(crate) fn is_this_builds(snapshot: &ValidatedSnapshot) -> bool {
     snapshot.projection_version == PROJECTION_FINGERPRINT
 }

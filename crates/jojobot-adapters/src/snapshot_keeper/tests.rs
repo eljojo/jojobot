@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::log_snapshot::take_snapshot;
+
 use jojobot_domain::log::testing::InMemoryLog;
 use jojobot_domain::log::{Append, BatchId, SealedBatch};
 use jojobot_domain::teaching::events::{RunId, TeachingEvent};
@@ -47,10 +49,16 @@ fn at(second: i64) -> jiff::Timestamp {
     jiff::Timestamp::from_second(second).unwrap()
 }
 
+/// A keeper opened as the serving boot opens it: from what a boot of the log restored.
 async fn keeper(log: &InMemoryLog, cadence: Cadence) -> SnapshotKeeper {
-    SnapshotKeeper::open(Arc::new(log.clone()), cadence)
-        .await
-        .unwrap()
+    let report = crate::log_snapshot::boot(log).await.unwrap().report;
+    SnapshotKeeper::open(
+        Arc::new(log.clone()),
+        cadence,
+        crate::log_snapshot::credited(&report),
+    )
+    .await
+    .unwrap()
 }
 
 /// **The decision, one row per case.** Nothing past the snapshot is never due;
@@ -158,6 +166,43 @@ async fn a_foreign_snapshot_does_not_suppress_this_builds_own() {
             .unwrap()
             .projection_version,
         crate::log_snapshot::PROJECTION_FINGERPRINT
+    );
+}
+
+/// **A snapshot the boot refuses covers nothing.** It is this build's by
+/// fingerprint but its blob does not read, so the boot replays the whole log. The
+/// keeper then holds no coverage, publishes a snapshot of the head with no new
+/// write, and the next boot restores from it instead of replaying again.
+#[tokio::test]
+async fn a_snapshot_the_boot_refuses_is_not_coverage() {
+    use sha2::{Digest, Sha256};
+    let log = InMemoryLog::default();
+    let head = append(&log, "alpha", 2).await;
+    take_snapshot(&log, at(1)).await.unwrap();
+    let mut refused = log.load_snapshot().await.unwrap().expect("published");
+    refused.blob = b"not a state".to_vec();
+    refused.serialized_length = refused.blob.len() as u64;
+    refused.checksum = Sha256::digest(&refused.blob).into();
+    log.replace_snapshot(Some(refused));
+    assert!(
+        !crate::log_snapshot::boot(&log)
+            .await
+            .unwrap()
+            .report
+            .from_snapshot,
+        "the control: the boot refuses this snapshot"
+    );
+
+    let restarted = keeper(&log, SMALL).await;
+    assert_eq!(restarted.covered(), Position(0));
+    assert_eq!(restarted.flush(head, at(2)).await.unwrap(), Some(head));
+    assert!(
+        crate::log_snapshot::boot(&log)
+            .await
+            .unwrap()
+            .report
+            .from_snapshot,
+        "the next boot restores from the snapshot the keeper published"
     );
 }
 

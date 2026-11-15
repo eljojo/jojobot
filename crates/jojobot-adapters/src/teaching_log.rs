@@ -58,16 +58,21 @@ pub async fn serving_kept(
             .await
             .map_err(unavailable)?,
     );
+    // **One boot serves every family**: the writer's seam restored the whole State when the
+    // log opened, and the teaching ledger takes its half instead of booting again. The
+    // snapshot keeper counts coverage from that same boot.
+    let seam = writer.seam();
+    let covered = seam.as_ref().map_or(Position::default(), |seam| {
+        crate::log_snapshot::credited(seam.boot_report())
+    });
     let snapshots = Arc::new(
-        crate::snapshot_keeper::ServingSnapshots::open(log.clone())
+        crate::snapshot_keeper::ServingSnapshots::open(log.clone(), covered)
             .await
             .map_err(unavailable)?,
     );
     let was_empty = log.head() == Some(Position::default());
     let marks = import_marks(pool).await?;
-    // **One boot serves every family**: the writer's seam restored the whole State when the
-    // log opened, and the teaching ledger takes its half instead of booting again.
-    let restored = writer.seam().and_then(|seam| seam.take_teaching());
+    let restored = seam.and_then(|seam| seam.take_teaching());
     let ledger = LoggedTeachings::open_from(log, &marks, restored).await?;
     if was_empty {
         snapshots.after_import().await;

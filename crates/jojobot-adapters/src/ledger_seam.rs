@@ -133,9 +133,8 @@ pub(crate) struct Seam {
     /// moves with later commits and recovery, and a State paired with a cursor past it would
     /// start beyond an event it never applied.
     teaching: Mutex<Option<(jojobot_domain::teaching::events::State, Position)>>,
-    /// What the boot that opened the seam did. Read by the cases that hold a boot to what it
-    /// must not replay.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// What the boot that opened the seam did. The snapshot keeper counts coverage from it,
+    /// and the cases that hold a boot to what it must not replay read it.
     boot: crate::log_snapshot::BootReport,
     /// How many batches `catch_up` has read and applied: a seam that booted to the log's head
     /// reads none at its open, and a cursor that restarted at zero would read the whole prefix.
@@ -340,7 +339,6 @@ impl Seam {
     }
 
     /// What the boot that opened the seam did.
-    #[cfg(test)]
     pub(crate) fn boot_report(&self) -> &crate::log_snapshot::BootReport {
         &self.boot
     }
