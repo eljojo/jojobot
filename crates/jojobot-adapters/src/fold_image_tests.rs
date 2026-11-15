@@ -224,84 +224,57 @@ async fn declaring_a_new_type_reads_the_store_only_for_the_declaration() {
 /// **A declaration that changes how a held key reads reads nothing again, and
 /// the thing is served under it.** A counter changes what a thing holds, and a
 /// reference changes how its value is served; the State builds both when a read
-/// asks, so the store is reached for the declaration alone.
+/// asks, so the store is reached for the declaration alone. **Re-declaring a held
+/// key as a list reads no thing again either.** The store splits the value of a
+/// list of references per item; the State builds the value under the declaration
+/// in force when a read asks, so the store is reached for the declaration alone,
+/// for a reference and for a text key alike.
 #[tokio::test]
 async fn declaring_what_changes_how_a_held_key_reads_no_thing_again() {
     use jojobot_domain::memory::Memory;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 
-    for (name, field) in [
-        ("fold-sums-held", Field::summing("weight")),
+    // (name, the declaration the key is held under first, the declaration that changes it)
+    let rows: [(&str, Option<Field>, Field); 4] = [
+        ("fold-sums-held", None, Field::summing("weight")),
         (
             "fold-points-held",
+            None,
             Field::new("weight", ValueType::Reference),
         ),
-    ] {
-        let store = Arc::new(InMemoryMemory::booted());
-        let counted = Arc::new(Counted::new(store.clone()));
-        let folded = Folded::new(counted.clone());
-        folded.rebuild().await.expect("the fold loads");
-        thing_holding(&folded, "thing:delta", "weight", "3").await;
-
-        counted.reset();
-        folded
-            .declare_type(DeclaredType::new(name, vec![field]), None)
-            .await
-            .expect("declared");
-        assert_eq!(
-            counted.seen(),
-            std::collections::BTreeMap::from([("declare_type", 1)]),
-            "{name} changes how a held key reads and a thing was read again"
-        );
-        let delta = jojobot_domain::memory::EntityId("thing:delta".into());
-        assert_eq!(
-            folded.fields(&delta).await.expect("the fold reads"),
-            store.fields(&delta).await.expect("the store reads"),
-            "{name}: the fold serves the thing as the store does"
-        );
-    }
-}
-
-/// **Re-declaring a held key as a list reads no thing again.** The store splits
-/// the value of a list of references per item; the State builds the value under
-/// the declaration in force when a read asks, so the store is reached for the
-/// declaration alone, for a reference and for a text key alike.
-#[tokio::test]
-async fn re_declaring_a_held_key_as_a_list_reads_no_thing_again() {
-    use jojobot_domain::memory::Memory;
-    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
-
-    for (name, first, second) in [
         (
             "list-points-held",
-            Field::new("weight", ValueType::Reference),
+            Some(Field::new("weight", ValueType::Reference)),
             Field::listing("weight", ValueType::Reference),
         ),
         (
             "list-text-held",
-            Field::new("weight", ValueType::Text),
+            Some(Field::new("weight", ValueType::Text)),
             Field::listing("weight", ValueType::Text),
         ),
-    ] {
+    ];
+    for (name, first, second) in rows {
         let store = Arc::new(InMemoryMemory::booted());
         let counted = Arc::new(Counted::new(store.clone()));
         let folded = Folded::new(counted.clone());
         folded.rebuild().await.expect("the fold loads");
         thing_holding(&folded, "thing:delta", "weight", "3").await;
-        folded
-            .declare_type(DeclaredType::new(name, vec![first]), None)
-            .await
-            .expect("declared first");
+        if let Some(first) = first {
+            folded
+                .declare_type(DeclaredType::new(name, vec![first]), None)
+                .await
+                .expect("declared first");
+        }
 
         counted.reset();
         folded
             .declare_type(DeclaredType::new(name, vec![second]), None)
             .await
-            .expect("declared again");
+            .expect("declared");
         assert_eq!(
             counted.seen(),
             std::collections::BTreeMap::from([("declare_type", 1)]),
-            "{name}: a thing was read again after the key became a list"
+            "{name}: a thing was read again after the declaration"
         );
         let delta = jojobot_domain::memory::EntityId("thing:delta".into());
         assert_eq!(
