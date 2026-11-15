@@ -9443,7 +9443,13 @@ async fn a_capture_on_a_member_of_a_large_numbered_collection_runs_a_bounded_num
  {
     use jojobot_domain::memory::{Guarded, guard};
     const MEMBERS: u32 = 64;
-    let pool = shared_database("numberedcost")
+    // **A server of its own**: the count is the server's global statement counter, and
+    // a case on a shared server would count the statements of every case beside it.
+    let scratch = Scratch::new("numbered-cost");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "numberedcost")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -9542,6 +9548,8 @@ async fn a_capture_on_a_member_of_a_large_numbered_collection_runs_a_bounded_num
         "a capture on one of {MEMBERS} members ran {on_member} statements against {on_plain} \
          on a plain thing: {per_member:.2} per member, more than {STATEMENTS_PER_MEMBER}"
     );
+
+    store.stop().await;
 }
 
 /// **The operator's name and aliases on a supplied record, over the real store.**

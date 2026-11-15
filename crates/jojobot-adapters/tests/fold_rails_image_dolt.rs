@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use jojobot_adapters::counted_rails::{CountedMailboxes, CountedSessions};
+use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
@@ -19,7 +20,7 @@ use jojobot_adapters::fold::sessions::FoldedSessions;
 use jojobot_adapters::fold_rails_battery::{
     MailRails, SessionRails, walk_every_kind_of_mail_write, walk_every_kind_of_session_write,
 };
-use jojobot_adapters::testing::shared_database;
+use jojobot_adapters::testing::{Scratch, free_port, migrated_database, shared_database};
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
 use jojobot_domain::memory::EntityId;
@@ -67,7 +68,20 @@ impl OwnerIndex for AnyOwner {
 }
 
 async fn database(what: &str) -> sqlx::MySqlPool {
-    let pool = shared_database(what).await.expect("a database of its own");
+    prepared(shared_database(what).await.expect("a database of its own")).await
+}
+
+/// A database on a server of the case's own, for a case that stops the server.
+async fn database_on(server: &Dolt, what: &str) -> sqlx::MySqlPool {
+    prepared(
+        migrated_database(server, what)
+            .await
+            .expect("a database of its own"),
+    )
+    .await
+}
+
+async fn prepared(pool: sqlx::MySqlPool) -> sqlx::MySqlPool {
     migrate::run(&pool).await.expect("the schema");
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
@@ -309,7 +323,11 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
     use jojobot_domain::mailbox::{
         Acting, MailboxName, Mailboxes, MessageEventKind, MessageState, NewMessage, TakenBy,
     };
-    let pool = database("history_boot").await;
+    let scratch = Scratch::new("history-boot");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = database_on(&server, "history_boot").await;
     let writer = jojobot_adapters::writer::Writer::default();
     let store = Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)).with_writer(writer.clone()));
     let at = |second: i64| {
@@ -372,6 +390,7 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
             store.message_history(id).await.expect("the store answers"),
         ));
     }
+    server.stop().await;
     counted.calls.reset();
 
     for (id, from_store) in &asked {
@@ -422,7 +441,11 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
 async fn a_boot_over_history_already_stored_answers_every_run_with_the_store_gone() {
     use jojobot_domain::session::history::ChangeKind;
     use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
-    let pool = database("run_history_boot").await;
+    let scratch = Scratch::new("run-history-boot");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = database_on(&server, "run_history_boot").await;
     let stamp = WriteStamp::new();
     let writer = jojobot_adapters::writer::Writer::default();
     let store = Arc::new(
@@ -471,6 +494,7 @@ async fn a_boot_over_history_already_stored_answers_every_run_with_the_store_gon
         .journal_history(&run.id, &entry.id)
         .await
         .expect("the store answers");
+    server.stop().await;
     counted.calls.reset();
 
     assert_eq!(
