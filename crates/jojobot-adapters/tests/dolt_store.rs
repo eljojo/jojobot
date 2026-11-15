@@ -1208,7 +1208,13 @@ async fn gives_up_within(pool: &sqlx::MySqlPool, within: std::time::Duration) ->
 /// enforces, two runs begun on the same words, and then a store that is gone.
 #[tokio::test]
 async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
-    let pool = shared_database("session_refused_write")
+    // **A server of its own**: the case stops it before the last read, and a shared server
+    // cannot be stopped.
+    let scratch = Scratch::new("session-refused-write");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "session_refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1247,6 +1253,7 @@ async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
         ),
     }
 
+    store.stop().await;
     let gone = sessions_store.sessions_of(&bot).await;
     assert!(
         matches!(gone, Err(SessionError::Store(_))),
@@ -1259,7 +1266,13 @@ async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
 /// and then a store that is gone.
 #[tokio::test]
 async fn a_refused_mailbox_write_is_not_reported_as_an_unreachable_store() {
-    let pool = shared_database("mailbox_refused_write")
+    // **A server of its own**: the case stops it before the last read, and a shared server
+    // cannot be stopped.
+    let scratch = Scratch::new("mailbox-refused-write");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "mailbox_refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1306,6 +1319,7 @@ async fn a_refused_mailbox_write_is_not_reported_as_an_unreachable_store() {
         ),
     }
 
+    store.stop().await;
     let gone = mailboxes_store.list_mailboxes().await;
     assert!(
         matches!(gone, Err(MailboxError::Store(_))),
@@ -1423,7 +1437,13 @@ async fn a_merge_that_would_leave_a_bot_above_itself_is_refused_in_every_shape()
 /// "refused" for everything would pass the first half alone.
 #[tokio::test]
 async fn a_refused_write_is_not_reported_as_an_unreachable_store() {
-    let pool = shared_database("refused_write")
+    // **A server of its own**: the case stops it before the last read, and a shared server
+    // cannot be stopped.
+    let scratch = Scratch::new("refused-write");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1475,6 +1495,7 @@ async fn a_refused_write_is_not_reported_as_an_unreachable_store() {
     }
 
     // The positive beside it: a store that is gone is still an unreachable store.
+    store.stop().await;
     let gone = memory.list_entities(None).await;
     assert!(
         matches!(gone, Err(MemoryError::Store(_))),
