@@ -5408,11 +5408,12 @@ mod indeterminate_declarations;
 async fn an_orphan_scan_reports_itself(noise: bool) {
     let logged = log_sink();
     if noise {
-        // A sibling test in this binary logging the same family of warning, about
-        // another doc whose subject is spelled like this case's own well-formed one.
+        // A sibling test in this binary logging the same family of warning, about a doc
+        // whose id begins with this case's own and whose subject is spelled like its
+        // own well-formed one.
         tracing::warn!(
-            doc = "outline-uuid-a-sibling-test",
-            entity = "person:alpha",
+            doc = %"outline-uuid-noisy-orphan-2",
+            entity = %"person:alpha",
             count = 1,
             subjects = ?["person:alpha"],
             "fact rows name a subject that is no known entity"
@@ -5445,19 +5446,23 @@ async fn an_orphan_scan_reports_itself(noise: bool) {
     );
     store.rebuild().await.expect("rebuild");
 
-    // Only the lines about this case's own doc: the rest of the sink is other tests'.
+    // Only the lines whose `doc` field is this case's own id, matched as a whole word:
+    // the rest of the sink is other tests', and an id that merely starts with this one
+    // is not this one.
+    let own_doc = format!("doc={reported_doc}");
+    let names_own_doc = |line: &str| line.split_whitespace().any(|word| word == own_doc);
     let text = logged
         .text()
         .lines()
-        .filter(|line| line.contains(reported_doc))
+        .filter(|line| names_own_doc(line))
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(
-        text.contains(reported_doc),
-        "the log must say which doc: {text}"
-    );
+    assert!(names_own_doc(&text), "the log must say which doc: {text}");
     assert!(text.contains("person:alphaa"), "…and which subject: {text}");
-    assert!(text.contains("count=1"), "…and how many: {text}");
+    assert!(
+        text.split_whitespace().any(|word| word == "count=1"),
+        "…and how many: {text}"
+    );
     assert!(
         !text.contains("person:alpha\""),
         "the doc's own well-formed subject is not an orphan: {text}"
@@ -5476,7 +5481,11 @@ async fn an_orphan_scan_reports_itself(noise: bool) {
     // That read re-scanned the store, and re-scanning is not re-reporting.
     // The report is a reading of the corpus; one per answer would bury it.
     assert_eq!(
-        logged.text().matches(reported_doc).count(),
+        logged
+            .text()
+            .lines()
+            .filter(|line| names_own_doc(line))
+            .count(),
         1,
         "a read refreshes the index without repeating the report"
     );
