@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use jojobot_adapters::counted_rails::{CountedMailboxes, CountedSessions};
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
@@ -20,7 +19,7 @@ use jojobot_adapters::fold::sessions::FoldedSessions;
 use jojobot_adapters::fold_rails_battery::{
     MailRails, SessionRails, walk_every_kind_of_mail_write, walk_every_kind_of_session_write,
 };
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
 use jojobot_domain::memory::EntityId;
@@ -56,8 +55,6 @@ const SWITCHED_MAIL: &[&str] = &[
     "message_history",
 ];
 
-use jojobot_adapters::testing::Scratch;
-
 /// Every well-formed owner resolves: the walk is about the board, not about who
 /// may own a box.
 struct AnyOwner;
@@ -69,10 +66,8 @@ impl OwnerIndex for AnyOwner {
     }
 }
 
-async fn database(server: &Dolt, what: &str) -> sqlx::MySqlPool {
-    let pool = migrated_database(server, what)
-        .await
-        .expect("a database of its own");
+async fn database(what: &str) -> sqlx::MySqlPool {
+    let pool = shared_database(what).await.expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
@@ -82,11 +77,7 @@ async fn database(server: &Dolt, what: &str) -> sqlx::MySqlPool {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_session_image_answers_as_the_real_store_does_after_every_kind_of_write() {
-    let scratch = Scratch::new("sessions");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = database(&server, "sessions").await;
+    let pool = database("sessions").await;
     let stamp = WriteStamp::new();
     let writer = jojobot_adapters::writer::Writer::default();
     let store = Arc::new(
@@ -104,16 +95,11 @@ async fn the_session_image_answers_as_the_real_store_does_after_every_kind_of_wr
         switched: SWITCHED_SESSIONS,
     };
     walk_every_kind_of_session_write(&rails).await;
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_mail_image_answers_as_the_real_store_does_after_every_kind_of_write() {
-    let scratch = Scratch::new("mail");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = database(&server, "mail").await;
+    let pool = database("mail").await;
     let writer = jojobot_adapters::writer::Writer::default();
     let store = Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)).with_writer(writer.clone()));
     let counted = Arc::new(CountedMailboxes::new(store.clone()));
@@ -126,7 +112,6 @@ async fn the_mail_image_answers_as_the_real_store_does_after_every_kind_of_write
         switched: SWITCHED_MAIL,
     };
     walk_every_kind_of_mail_write(&rails).await;
-    server.stop().await;
 }
 
 /// **A message taken before deliveries were recorded has no way of being taken
@@ -137,11 +122,7 @@ async fn the_mail_image_answers_as_the_real_store_does_after_every_kind_of_write
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it_was_taken() {
     use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage, TakenBy};
-    let scratch = Scratch::new("legacy-read");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = database(&server, "legacy_read").await;
+    let pool = database("legacy_read").await;
     let writer = jojobot_adapters::writer::Writer::default();
     let store =
         Arc::new(DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(writer.clone()));
@@ -247,7 +228,6 @@ async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it
         format!("{:?}", store.scan_messages().await),
         "and the board still records none for it"
     );
-    server.stop().await;
 }
 
 /// **A card the store cannot read is named by its box, and stays named after the
@@ -257,11 +237,7 @@ async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_damaged_card_stays_named_by_its_box_while_the_board_moves() {
     use jojobot_domain::mailbox::{MailboxName, Mailboxes};
-    let scratch = Scratch::new("damaged-card");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = database(&server, "damaged_card").await;
+    let pool = database("damaged_card").await;
     let writer = jojobot_adapters::writer::Writer::default();
     let store =
         Arc::new(DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(writer.clone()));
@@ -321,7 +297,6 @@ async fn a_damaged_card_stays_named_by_its_box_while_the_board_moves() {
         format!("{:?}", store.message_history(&damaged).await),
         "the account of a card the store cannot read is the store's"
     );
-    server.stop().await;
 }
 
 /// **A boot reads the events a store already holds, and a history then answers
@@ -334,11 +309,7 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
     use jojobot_domain::mailbox::{
         Acting, MailboxName, Mailboxes, MessageEventKind, MessageState, NewMessage, TakenBy,
     };
-    let scratch = Scratch::new("history-boot");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = database(&server, "history_boot").await;
+    let pool = database("history_boot").await;
     let writer = jojobot_adapters::writer::Writer::default();
     let store = Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)).with_writer(writer.clone()));
     let at = |second: i64| {
@@ -401,7 +372,6 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
             store.message_history(id).await.expect("the store answers"),
         ));
     }
-    server.stop().await;
     counted.calls.reset();
 
     for (id, from_store) in &asked {
@@ -452,11 +422,7 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
 async fn a_boot_over_history_already_stored_answers_every_run_with_the_store_gone() {
     use jojobot_domain::session::history::ChangeKind;
     use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
-    let scratch = Scratch::new("run-history-boot");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = database(&server, "run_history_boot").await;
+    let pool = database("run_history_boot").await;
     let stamp = WriteStamp::new();
     let writer = jojobot_adapters::writer::Writer::default();
     let store = Arc::new(
@@ -505,7 +471,6 @@ async fn a_boot_over_history_already_stored_answers_every_run_with_the_store_gon
         .journal_history(&run.id, &entry.id)
         .await
         .expect("the store answers");
-    server.stop().await;
     counted.calls.reset();
 
     assert_eq!(
@@ -568,11 +533,7 @@ async fn a_boot_over_history_already_stored_answers_every_run_with_the_store_gon
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_run_the_store_cannot_read_leaves_no_image_and_the_reads_go_to_the_store() {
     use jojobot_domain::session::Sessions;
-    let scratch = Scratch::new("damaged-run");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = database(&server, "damaged_run").await;
+    let pool = database("damaged_run").await;
     sqlx::query(
         "INSERT INTO session (id, sid, bot, focus, started_at, state)
          VALUES ('damaged', NULL, 'bot:gamma', 'what it was doing', '2026-01-01T00:00:00Z', 'garbage')",
@@ -605,5 +566,4 @@ async fn a_run_the_store_cannot_read_leaves_no_image_and_the_reads_go_to_the_sto
         "with no image the read reaches the store: {:?}",
         counted.calls.seen()
     );
-    server.stop().await;
 }
