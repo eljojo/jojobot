@@ -2109,6 +2109,24 @@ async fn a_type_filter_governs_the_pinned_hits_too() {
     );
 }
 
+/// **What a search names, of the one kind `class` picks out, is exactly one.** The
+/// five cases below each scan one thing in two docs or writes and ask the same
+/// question of the answer; only the kind, the index and the words differ.
+fn answers_once(
+    index: &FullTextIndex,
+    query: &SearchQuery,
+    class: impl Fn(&Hit) -> Option<String>,
+    why: &str,
+) {
+    let found: Vec<String> = index
+        .search(query)
+        .expect("search ok")
+        .iter()
+        .filter_map(class)
+        .collect();
+    assert_eq!(found.len(), 1, "{why}: {found:?}");
+}
+
 /// **Deduped by identity, not by the whole hit.** The same claim can be
 /// sitting in two docs at once — a correction has landed and one doc's
 /// re-index has not caught up with it yet — and both answer the same
@@ -2135,20 +2153,14 @@ async fn one_fact_scanned_into_two_docs_answers_once() {
         scan("doc-b-fresh", None, "", vec![fresh]),
     ]);
 
-    let found: Vec<String> = index
-        .search(&SearchQuery::text("quimby-forty"))
-        .expect("search ok")
-        .iter()
-        .filter_map(|hit| match hit {
+    answers_once(
+        &index,
+        &SearchQuery::text("quimby-forty"),
+        |hit| match hit {
             Hit::Fact { fact, .. } => Some(fact.address().to_string()),
             _ => None,
-        })
-        .collect();
-
-    assert_eq!(
-        found.len(),
-        1,
-        "one claim sitting in two docs must answer once, not once per doc: {found:?}",
+        },
+        "one claim sitting in two docs must answer once, not once per doc",
     );
 }
 
@@ -2176,20 +2188,14 @@ async fn one_entity_scanned_into_two_docs_answers_once() {
         ),
     ]);
 
-    let found: Vec<String> = index
-        .search(&SearchQuery::text("quimby-forty"))
-        .expect("search ok")
-        .iter()
-        .filter_map(|hit| match hit {
+    answers_once(
+        &index,
+        &SearchQuery::text("quimby-forty"),
+        |hit| match hit {
             Hit::Entity { entity, .. } => Some(entity.id.to_string()),
             _ => None,
-        })
-        .collect();
-
-    assert_eq!(
-        found.len(),
-        1,
-        "one entity sitting in two docs must answer once, not once per doc: {found:?}",
+        },
+        "one entity sitting in two docs must answer once, not once per doc",
     );
 }
 
@@ -2216,20 +2222,14 @@ async fn one_pages_prose_scanned_into_two_docs_answers_once() {
         ),
     ]);
 
-    let found: Vec<String> = index
-        .search(&SearchQuery::text("quimby-forty"))
-        .expect("search ok")
-        .iter()
-        .filter_map(|hit| match hit {
+    answers_once(
+        &index,
+        &SearchQuery::text("quimby-forty"),
+        |hit| match hit {
             Hit::Prose { doc_id, .. } => Some(doc_id.clone()),
             _ => None,
-        })
-        .collect();
-
-    assert_eq!(
-        found.len(),
-        1,
-        "one page's prose written twice must answer once, not once per write: {found:?}",
+        },
+        "one page's prose written twice must answer once, not once per write",
     );
 }
 
@@ -2261,20 +2261,14 @@ async fn one_message_scanned_into_two_writes_answers_once() {
         ])
         .expect("ingest mail");
 
-    let found: Vec<String> = index
-        .search(&asking_for_mail("quimby-forty"))
-        .expect("search ok")
-        .iter()
-        .filter_map(|hit| match hit {
+    answers_once(
+        &index,
+        &asking_for_mail("quimby-forty"),
+        |hit| match hit {
             Hit::Message { message, .. } => Some(format!("{}/{}", message.mailbox, message.id)),
             _ => None,
-        })
-        .collect();
-
-    assert_eq!(
-        found.len(),
-        1,
-        "one message written twice must answer once, not once per write: {found:?}",
+        },
+        "one message written twice must answer once, not once per write",
     );
 }
 
@@ -2319,25 +2313,18 @@ async fn one_beat_scanned_into_two_writes_of_a_run_answers_once() {
         .ingest_sessions(&[stale, fresh])
         .expect("sessions ingested");
 
-    let found: Vec<String> = index
-        .search(&SearchQuery {
+    answers_once(
+        &index,
+        &SearchQuery {
             text: Some("quimby-forty".into()),
             asked_by: Some(EntityId("bot:milhouse".into())),
             ..SearchQuery::default()
-        })
-        .expect("search ok")
-        .iter()
-        .filter_map(|hit| match hit {
+        },
+        |hit| match hit {
             Hit::Session { session, .. } => Some(session.0.clone()),
             _ => None,
-        })
-        .collect();
-
-    assert_eq!(
-        found.len(),
-        1,
-        "one beat written twice by two overlapping reads of one run must answer once: \
-             {found:?}",
+        },
+        "one beat written twice by two overlapping reads of one run must answer once",
     );
 }
 

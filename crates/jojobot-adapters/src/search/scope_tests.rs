@@ -97,18 +97,8 @@ fn the_readable_mail_is_found_and_the_unreadable_is_not_in_the_same_read() {
         MessageState::New,
     ));
     index.ingest_mail(&mail).expect("ingest");
-    let hits = index
-        .search(&alpha_asking("scopeneedle"))
-        .expect("search ok");
-    let found: BTreeSet<String> = hits
-        .iter()
-        .filter_map(|hit| match hit {
-            Hit::Message { message, .. } => Some(message.id.as_str().to_string()),
-            _ => None,
-        })
-        .collect();
     assert_eq!(
-        found,
+        found_by(&index, &alpha_asking("scopeneedle")),
         BTreeSet::from(["pm-0".into(), "inbox-0".into(), "authored".into()])
     );
 }
