@@ -426,72 +426,46 @@ mod tests {
         assert!(lands(ask(thread(), &held(&[]), &live[..2], 1, false)));
     }
 
-    /// The reserve lands one record over a full thing, once.
+    /// **What a thing admits, by its kind, its setting, the records it holds, how
+    /// many the write adds and whether the reserve is offered.** A thread with no
+    /// setting holds three. The reserve lands one record over a full thing, once,
+    /// and never for a write that adds several. A thing over its ceiling admits
+    /// nothing that adds. Another kind has no default and takes its own setting.
     #[test]
-    fn the_reserve_admits_one_over_a_full_thread_and_no_second() {
-        let none = held(&[]);
-        assert!(matches!(
-            ask(thread(), &none, &active(3), 1, true),
-            Admission::Borrowed { live: 4, limit: 3 }
-        ));
-        assert!(
-            matches!(
-                ask(thread(), &none, &active(4), 1, true),
-                Admission::Refused(_)
-            ),
-            "a thread already over its ceiling has spent the reserve"
-        );
-        assert!(
-            lands(ask(thread(), &none, &active(2), 1, true)),
-            "a reserve nobody needed is not spent"
-        );
-    }
-
-    /// A write that brings several records has no reserve to spend.
-    #[test]
-    fn a_write_that_adds_several_cannot_borrow() {
-        assert!(matches!(
-            ask(thread(), &held(&[]), &active(3), 2, true),
-            Admission::Refused(_)
-        ));
-        assert!(matches!(
-            ask(thread(), &held(&[]), &active(1), 3, false),
-            Admission::Refused(_)
-        ));
-        assert!(lands(ask(thread(), &held(&[]), &active(1), 2, false)));
-    }
-
-    /// A thing over its ceiling admits nothing that adds a record, and a retype
-    /// that adds none is refused for it too.
-    #[test]
-    fn a_thing_over_its_ceiling_admits_no_write() {
-        let none = held(&[]);
-        assert!(matches!(
-            ask(thread(), &none, &active(5), 0, false),
-            Admission::Refused(_)
-        ));
-        assert!(matches!(
-            ask(thread(), &none, &active(5), 1, false),
-            Admission::Refused(_)
-        ));
-    }
-
-    /// Another kind has no default, and takes the setting when it carries one.
-    #[test]
-    fn a_thing_of_another_kind_is_bound_only_by_its_own_setting() {
-        let topic = Some(EntityKind::TOPIC);
-        assert!(lands(ask(topic, &held(&[]), &active(40), 1, false)));
-        assert!(matches!(
-            ask(
-                topic,
-                &held(&[(RECORD_CAPACITY, "4")]),
-                &active(4),
-                1,
-                false
-            ),
-            Admission::Refused(_)
-        ));
-        assert!(lands(ask(None, &held(&[]), &active(40), 1, false)));
+    fn admission_follows_kind_setting_count_and_the_reserve() {
+        // Kind (empty is no kind), the setting (empty reads as none), live
+        // records, records added, whether the reserve is offered, and what is
+        // admitted.
+        let rows = [
+            ("thread", "", 3, 1, true, "borrowed 4/3"),
+            ("thread", "", 4, 1, true, "refused"),
+            ("thread", "", 2, 1, true, "lands"),
+            ("thread", "", 3, 2, true, "refused"),
+            ("thread", "", 1, 3, false, "refused"),
+            ("thread", "", 1, 2, false, "lands"),
+            ("thread", "", 5, 0, false, "refused"),
+            ("thread", "", 5, 1, false, "refused"),
+            ("topic", "", 40, 1, false, "lands"),
+            ("topic", "4", 4, 1, false, "refused"),
+            ("", "", 40, 1, false, "lands"),
+        ];
+        for (kind, setting, live, adding, borrow, wanted) in rows {
+            let kind = match kind {
+                "thread" => thread(),
+                "topic" => Some(EntityKind::TOPIC),
+                _ => None,
+            };
+            let fields = held(&[(RECORD_CAPACITY, setting)]);
+            let got = match ask(kind, &fields, &active(live), adding, borrow) {
+                Admission::Lands => "lands".to_string(),
+                Admission::Refused(_) => "refused".to_string(),
+                Admission::Borrowed { live, limit } => format!("borrowed {live}/{limit}"),
+            };
+            assert_eq!(
+                got, wanted,
+                "{kind:?} {setting:?} {live} +{adding} {borrow}"
+            );
+        }
     }
 
     /// A setting that is not a whole number above zero reads as no setting.
