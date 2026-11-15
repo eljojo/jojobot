@@ -345,8 +345,11 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         key: &str,
     ) -> Result<String, MemoryError> {
+        // **No limit on the length of a chain of merges**: a walk that stopped early named a
+        // thing that was itself folded away. A loop among the merges is the walk's error.
         let mut at = key.to_string();
-        for _ in 0..64 {
+        let mut visited = std::collections::HashSet::from([at.clone()]);
+        loop {
             let next: Option<String> = sqlx::query_scalar(
                 "SELECT survivor FROM merge_event WHERE ordinal = 0 AND folded = ?
                  ORDER BY merge_no DESC LIMIT 1",
@@ -356,11 +359,15 @@ impl DoltMemory {
             .await
             .map_err(store)?;
             match next {
-                Some(next) => at = next,
-                None => break,
+                Some(next) if visited.insert(next.clone()) => at = next,
+                Some(_) => {
+                    return Err(MemoryError::Store(format!(
+                        "the merges of {key} loop back on themselves"
+                    )));
+                }
+                None => return Ok(at),
             }
         }
-        Ok(at)
     }
 
     /// Whether any merge folded a thing into this key.
@@ -427,7 +434,8 @@ impl DoltMemory {
         local: &str,
     ) -> Result<(String, String), MemoryError> {
         let mut at = (home.to_string(), local.to_string());
-        for _ in 0..64 {
+        let mut visited = std::collections::HashSet::from([at.clone()]);
+        loop {
             let next: Option<(String, String)> = sqlx::query_as(
                 "SELECT survivor, survivor_id FROM merge_event
                  WHERE folded = ? AND folded_id = ? AND ordinal > 0
@@ -439,11 +447,15 @@ impl DoltMemory {
             .await
             .map_err(store)?;
             match next {
-                Some(next) => at = next,
-                None => break,
+                Some(next) if visited.insert(next.clone()) => at = next,
+                Some(_) => {
+                    return Err(MemoryError::Store(format!(
+                        "the merges of {home}/{local} loop back on themselves"
+                    )));
+                }
+                None => return Ok(at),
             }
         }
-        Ok(at)
     }
 
     /// **The record a claim is held in, named by the row it is stored in.** An

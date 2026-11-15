@@ -806,6 +806,29 @@ async fn a_write_after_a_merge_leaves_the_held_fields_what_a_fold_makes() {
         );
     }
     check(&world, "the captures");
+    // **What the State holds of the survivor's `mood`**, so a write that never reached the
+    // State shows: the state is read for the value, the stream and the newest moment.
+    let mood_of_alpha = |world: &World| {
+        let seam = world.writer.seam().expect("the seam opened");
+        seam.read_claims(|state| {
+            let object = state
+                .resolve(alpha.as_str())
+                .cloned()
+                .expect("alpha is held");
+            let declared = state.declared_types_shared();
+            (
+                state.fields(&object, &declared).get("mood").cloned(),
+                state
+                    .key_trails(&object)
+                    .history
+                    .get("mood")
+                    .map_or(0, Vec::len),
+                state.newest_change(&object),
+            )
+        })
+    };
+    let (_, writes_before_merge, _) = mood_of_alpha(&world);
+    assert_eq!(writes_before_merge, 1, "alpha wrote one mood");
 
     {
         let (memory, beta, alpha) = (memory.clone(), beta.clone(), alpha.clone());
@@ -826,6 +849,16 @@ async fn a_write_after_a_merge_leaves_the_held_fields_what_a_fold_makes() {
             .expect("the merge lands");
     }
     check(&world, "the merge");
+    let (held_mood, writes_after_merge, newest_after_merge) = mood_of_alpha(&world);
+    assert_eq!(
+        writes_after_merge, 2,
+        "the folded thing's mood joined alpha's stream"
+    );
+    assert_eq!(
+        held_mood.as_deref(),
+        Some("tense"),
+        "the folded write is the newer"
+    );
 
     // A claim written under the handle that was folded away.
     let late = {
@@ -837,6 +870,20 @@ async fn a_write_after_a_merge_leaves_the_held_fields_what_a_fold_makes() {
         "a write under the folded handle lands: {late:?}"
     );
     check(&world, "a write to the folded handle");
+    let (held_mood, writes, newest) = mood_of_alpha(&world);
+    assert_eq!(
+        writes, 3,
+        "the write under the folded handle is in alpha's stream"
+    );
+    assert_eq!(
+        held_mood.as_deref(),
+        Some("late"),
+        "alpha holds the late mood"
+    );
+    assert!(
+        newest > newest_after_merge,
+        "the write moved alpha's newest change"
+    );
 
     // The claim the merge moved, revised under the address it had before the merge.
     let moved = written[1].address();
@@ -863,6 +910,13 @@ async fn a_write_after_a_merge_leaves_the_held_fields_what_a_fold_makes() {
         "a revision of the moved claim under its old address lands: {revised:?}"
     );
     check(&world, "a revision of the moved claim");
+    let (held_mood, writes, _) = mood_of_alpha(&world);
+    assert_eq!(writes, 4, "the revision is a write of alpha's stream");
+    assert_eq!(
+        held_mood.as_deref(),
+        Some("cross"),
+        "alpha holds the revised mood"
+    );
 
     // A claim written on the survivor.
     {
@@ -875,6 +929,143 @@ async fn a_write_after_a_merge_leaves_the_held_fields_what_a_fold_makes() {
             .expect("not blocked");
     }
     check(&world, "a write on the survivor");
+    let (held_mood, writes, _) = mood_of_alpha(&world);
+    assert_eq!(writes, 5, "the survivor's own write is in its stream");
+    assert_eq!(
+        held_mood.as_deref(),
+        Some("steady"),
+        "alpha holds its latest mood"
+    );
+    world.writer.drain().await;
+    world.server.stop().await;
+}
+
+/// **A claim revised after its thing was folded into another sixty-five times lands under the
+/// last survivor.** The emitter followed at most sixty-four merges and stopped at the
+/// sixty-fifth thing, so the write named a thing that was itself folded away; the State put the
+/// stream under that name and counted the moment on the survivor, and what it held was not what
+/// a fold of the writes makes. A chain of merges has no length limit, and the walk has none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_claim_revised_after_sixty_five_merges_lands_under_the_last_survivor() {
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{FactPatch, Guarded, NewFact};
+    use std::collections::BTreeMap;
+
+    const MERGES: usize = 65;
+    let mut world = world("folded-write-chain").await;
+    let memory = world.memory.clone();
+    let letters = |n: usize| {
+        format!(
+            "{}{}",
+            (b'a' + (n / 26) as u8) as char,
+            (b'a' + (n % 26) as u8) as char
+        )
+    };
+    let things: Vec<EntityId> = (0..=MERGES)
+        .map(|n| id(&format!("person:{}", letters(n))))
+        .collect();
+    for (n, handle) in things.iter().enumerate() {
+        let (memory, mut new) = (
+            memory.clone(),
+            NewEntity::new(handle.clone(), letters(n), "fixture"),
+        );
+        let first = {
+            let (memory, new) = (memory.clone(), new.clone());
+            world.job(async move { memory.add_entity(new).await }).await
+        };
+        match first.expect("add") {
+            Guarded::Written(_) => {}
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => {
+                new.override_token = Some(jojobot_domain::memory::guard::override_token(
+                    &attempted,
+                    &candidates,
+                ));
+                new.override_reason = Some("a different thing".into());
+                world
+                    .job(async move { memory.add_entity(new).await })
+                    .await
+                    .expect("add")
+                    .written()
+                    .expect("the override lifts the refusal");
+            }
+        }
+    }
+    let held = {
+        let (memory, fact) = (
+            memory.clone(),
+            state(NewFact {
+                fields: BTreeMap::from([("mood".to_string(), "calm".to_string())]),
+                ..NewFact::about(things[0].clone(), "calm at first", date(2026, 9, 1))
+            }),
+        );
+        world
+            .job(async move { memory.capture(fact).await })
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked")
+            .address()
+    };
+    for pair in things.windows(2) {
+        let (memory, folded, survivor) = (memory.clone(), pair[0].clone(), pair[1].clone());
+        world
+            .job(async move {
+                memory
+                    .merge(
+                        &folded,
+                        &survivor,
+                        Some("one more"),
+                        date(2026, 9, 3),
+                        &EntityId(jojobot_domain::memory::ASSISTANT.into()),
+                        Some("run-a"),
+                    )
+                    .await
+            })
+            .await
+            .expect("the merge lands");
+    }
+    let revised = {
+        let memory = memory.clone();
+        world
+            .job(async move {
+                memory
+                    .update_fact(
+                        &held,
+                        FactPatch {
+                            fields: BTreeMap::from([("mood".to_string(), "cross".to_string())]),
+                            sets: ["mood".to_string()].into(),
+                            ..FactPatch::default()
+                        },
+                        &EntityId(jojobot_domain::memory::ASSISTANT.into()),
+                    )
+                    .await
+            })
+            .await
+    };
+    assert!(
+        matches!(revised, Ok(Guarded::Written(_))),
+        "the revision lands: {revised:?}"
+    );
+    let seam = world.writer.seam().expect("the seam opened");
+    if let Err(differs) = seam.read_claims(|state| state.held_fields_are_what_a_fold_makes()) {
+        panic!("after a revision past {MERGES} merges: {differs}");
+    }
+    let last = things[MERGES].clone();
+    let mood = seam.read_claims(|state| {
+        let object = state.resolve(last.as_str()).cloned()?;
+        state
+            .fields(&object, &state.declared_types_shared())
+            .get("mood")
+            .cloned()
+    });
+    assert_eq!(
+        mood.as_deref(),
+        Some("cross"),
+        "the survivor holds the revised mood"
+    );
     world.writer.drain().await;
     world.server.stop().await;
 }

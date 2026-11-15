@@ -720,13 +720,17 @@ impl State {
             }
             // **A write names the survivor, never a thing that was folded away.** Every
             // producer says so: the capture path resolves its subject through the merges
-            // (`prepare`), the Dolt emitter files the writes of a merged thing under its
-            // survivor and numbers them among the survivor's (`emitting`), and the import
-            // carries a folded thing's writes on the survivor. A write through the verbs under
-            // the folded handle lands as the survivor's (the case in entity_events_tests). An
-            // event built by hand that names a folded subject puts its stream where
-            // `streams_of(survivor)` does not read, and the thing's newest change counts a
-            // moment its own writes do not make.
+            // (`prepare`), the Dolt emitter walks the whole chain of merges to the last
+            // survivor, whatever its length, and numbers the write among the survivor's
+            // (`emitting`), the numbering of a bot request's generation writes under the
+            // survivor of the subject it touched (`generation`), and the import carries a
+            // folded thing's writes on the survivor. A write through the verbs under the
+            // folded handle lands as the survivor's (the cases in entity_events_tests, one of
+            // them past sixty-five merges). An event built by hand that names a folded subject
+            // puts its stream where `streams_of(survivor)` does not read, and the thing's
+            // newest change counts a moment its own writes do not make. Replaying an old event
+            // that names a folded subject is safe only when the event predates its merge, which
+            // joins the stream.
             ClaimEvent::FieldWritten {
                 record,
                 subject,
