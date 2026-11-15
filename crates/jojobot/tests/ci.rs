@@ -702,12 +702,26 @@ fn a_newer_push_cancels_the_same_branchs_older_run_and_no_protected_ref_is_pushe
             group.contains(keyed_on),
             "{workflow}'s group is not keyed on {keyed_on}: {group}"
         );
+        // **A release trunk is the one head that is never cancelled**: its group
+        // carries the head sha and the cancel flag is off for a `-carry` head, so
+        // every landed head runs to a verdict. Every other head still cancels.
+        let cancels = concurrency
+            .iter()
+            .any(|line| line.trim() == "cancel-in-progress: true");
+        let cancels_but_a_trunk = concurrency.iter().any(|line| {
+            line.trim()
+                == "cancel-in-progress: ${{ !endsWith(forgejo.event.pull_request.head.ref, '-carry') }}"
+        });
         assert!(
-            concurrency
-                .iter()
-                .any(|line| line.trim() == "cancel-in-progress: true"),
+            cancels || (workflow == "pull-request" && cancels_but_a_trunk),
             "{workflow} does not cancel a superseded run: {concurrency:?}"
         );
+        if workflow == "pull-request" {
+            assert!(
+                group.contains("forgejo.event.pull_request.head.sha"),
+                "a trunk's group is not keyed on the head sha: {group}"
+            );
+        }
     }
     for workflow in ["branch", "pull-request"] {
         let yaml = forgejo_workflow(workflow);

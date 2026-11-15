@@ -35,9 +35,14 @@ on:
 # will land. The group is keyed on the pull request number: on this event the
 # ref does not name the pull request, so two pull requests would share a group.
 # Dispatches use their ref and event, and cannot cancel a pull-request run.
+# The exception is a release trunk (a head branch named `*-carry`): lines land
+# on it all day, and cancelling on every landing meant no run of its tip ever
+# finished, so the release gate had no green verdict to read. A trunk's group
+# carries the head sha and nothing cancels it: every landed head runs to its
+# verdict, queued behind the runner cap.
 concurrency:
-  group: pull-request-${{ forgejo.event_name }}-${{ forgejo.event.pull_request.number }}-${{ forgejo.ref }}
-  cancel-in-progress: true
+  group: pull-request-${{ forgejo.event_name }}-${{ forgejo.event.pull_request.number }}-${{ forgejo.ref }}${{ endsWith(forgejo.event.pull_request.head.ref, '-carry') && format('-{0}', forgejo.event.pull_request.head.sha) || '' }}
+  cancel-in-progress: ${{ !endsWith(forgejo.event.pull_request.head.ref, '-carry') }}
 
 # The checkout path every job of one run shows to its command. The run's id
 # makes it the same in every job and different between two runs on one host.
