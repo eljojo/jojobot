@@ -188,6 +188,7 @@ fn restored_from(state: &State) -> State {
     serde_json::from_slice::<State>(&serde_json::to_vec(state).expect("the State serializes"))
         .expect("the serialized State reads back")
         .restored()
+        .expect("the serialized State is one a log built")
 }
 
 /// **The comparison no equality makes**: `State`'s equality leaves the folded fields out, and
@@ -227,6 +228,59 @@ fn a_restored_state_is_the_state_the_events_built_and_goes_on_as_it_does() {
         restored.apply_at(&stamped(after + index, event), at(after + index));
         same(&restored, &built, &format!("after tail event {index}"));
     }
+}
+
+/// **A State that carries the position zero is refused when it is read back.** Every entry that
+/// keeps the place of its event keeps a position a log batch holds, and zero is the position of
+/// no batch: a State with one was not built from a log, and a boot that restored it would take the
+/// claims as covering history they do not hold. Each place a position is kept is zeroed in turn.
+#[test]
+fn a_state_carrying_the_position_zero_is_refused_on_load() {
+    fn zero_first(value: &mut serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Object(fields) => {
+                if fields
+                    .get("position")
+                    .is_some_and(serde_json::Value::is_u64)
+                {
+                    fields.insert("position".into(), serde_json::json!(0));
+                    return true;
+                }
+                fields.values_mut().any(zero_first)
+            }
+            serde_json::Value::Array(items) => items.iter_mut().any(zero_first),
+            _ => false,
+        }
+    }
+    let json = serde_json::to_value(replay_stamped(&events())).expect("the State serializes");
+    // The places an entry keeps the position of its event, and the one map of positions.
+    for field in ["observed", "versions", "records", "streams"] {
+        let mut zeroed = json.clone();
+        assert!(
+            zero_first(&mut zeroed[field]),
+            "{field}: the fixture keeps no position here, so the case proves nothing"
+        );
+        let loaded: State = serde_json::from_value(zeroed).expect("a zero is a number");
+        assert!(
+            loaded.restored().is_err(),
+            "{field}: a State with an entry at position zero was accepted"
+        );
+    }
+    let mut zeroed = json.clone();
+    let positions = zeroed["merge_positions"]
+        .as_object_mut()
+        .expect("merge_positions is a map");
+    let folded = positions
+        .keys()
+        .next()
+        .cloned()
+        .expect("the fixture merges a thing, so the map holds a position");
+    positions.insert(folded, serde_json::json!(0));
+    let loaded: State = serde_json::from_value(zeroed).expect("a zero is a number");
+    assert!(
+        loaded.restored().is_err(),
+        "merge_positions: a merge at position zero was accepted"
+    );
 }
 
 #[test]

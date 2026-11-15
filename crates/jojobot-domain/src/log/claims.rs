@@ -642,9 +642,41 @@ impl State {
     /// **A State read back from its serialized form, finished.** Everything the events built is
     /// in the bytes except the shared declarations, which are a copy of the declarations in
     /// force and are made again here, so this is the one door a loaded State comes through.
-    pub fn restored(mut self) -> Self {
+    ///
+    /// **It refuses a State that keeps the position zero**, the one no log batch holds: such a
+    /// State was not built from a log, and a boot that took it would hold claims at a place
+    /// no event had.
+    pub fn restored(mut self) -> Result<Self, String> {
+        let zero = Position::default();
+        let places = [
+            (
+                "observed",
+                self.observed.values().flatten().any(|w| w.position == zero),
+            ),
+            (
+                "versions",
+                self.versions.values().flatten().any(|v| v.position == zero),
+            ),
+            (
+                "records",
+                self.records
+                    .values()
+                    .any(|r| r.history.iter().any(|h| h.position == zero)),
+            ),
+            (
+                "streams",
+                self.streams.values().flatten().any(|w| w.position == zero),
+            ),
+            (
+                "merge_positions",
+                self.merge_positions.values().any(|p| *p == zero),
+            ),
+        ];
+        if let Some((place, _)) = places.iter().find(|(_, held)| *held) {
+            return Err(format!("the State keeps the position zero in {place}"));
+        }
         self.rebuild_declared_snapshot();
-        self
+        Ok(self)
     }
 
     /// **The interpreter**, for an event whose position in the log is not known: it
