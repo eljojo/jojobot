@@ -1100,6 +1100,20 @@ fn second_boot_line(server_peak: u64, store_peak: u64, after_boot: Memory) -> St
     )
 }
 
+/// **The fields of the server's event log boot line, as a line of the report.** The boot that
+/// restores a snapshot says whether it did, how far the snapshot reached, how many bytes it read,
+/// how long its State took to decode and how many batches came after it. The report names them so
+/// the second boot's cost is read from the run and not from a log somebody has to find.
+fn event_log_boot_line(line: &str) -> String {
+    let from = line
+        .find("from_snapshot=")
+        .unwrap_or_else(|| panic!("the event log boot line names no from_snapshot: {line}"));
+    format!(
+        "memory-report second boot event log: {}",
+        line[from..].trim_end()
+    )
+}
+
 /// **Boot the server again over the store the first boot left**, as production
 /// boots at its next release, and record what the boot held. The stop is orderly,
 /// so the store it hands back holds a snapshot again.
@@ -1109,6 +1123,7 @@ fn second_boot(state: Scratch) -> Scratch {
     let (server_peak, store_peak) = boot.peak;
     let after_boot = memory_of_pid(run.pid).expect("the second boot's server runs");
     record(&second_boot_line(server_peak, store_peak, after_boot));
+    record(&event_log_boot_line(&run.log_boot()));
     run.stopped().0
 }
 
@@ -2106,6 +2121,24 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
             day().len() + 2 * count(Call::PostAndClose) + count(Call::Session),
             "a closed message is three calls and a session two; the rest are one"
         );
+    }
+
+    /// **The boot line of the report keeps the fields of the server's line and nothing before
+    /// them.** The line is shaped as the server wrote it in the shutdown case that reads the same
+    /// fields.
+    #[test]
+    fn the_event_log_boot_line_of_the_report_keeps_the_servers_fields() {
+        let served = "2026-11-15T00:24:20.000000Z  INFO jojobot_adapters::log_snapshot: event log boot \
+                      from_snapshot=true restored_at=180790 snapshot_load_ms=2210 \
+                      snapshot_bytes=169494660 snapshot_decode_ms=1980 tail_batches=2 \
+                      head=180792 total_ms=2260";
+        let line = event_log_boot_line(served);
+        assert!(
+            line.starts_with("memory-report second boot event log: from_snapshot=true "),
+            "{line}"
+        );
+        assert!(line.contains("snapshot_decode_ms=1980"), "{line}");
+        assert!(!line.contains("INFO"), "{line}");
     }
 
     #[test]
