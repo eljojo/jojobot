@@ -5721,14 +5721,19 @@ struct WritePath {
     /// the new document. `None` for a path that writes no document.
     write_at: Option<usize>,
     seed: fn(&FullTextIndex),
-    /// The rewrite, which fails. True when the call returned an error.
-    rewrite: fn(&FullTextIndex) -> bool,
+    /// The rewrite, which fails: the answer of the call, so the failure says what it was.
+    rewrite: fn(&FullTextIndex) -> Result<(), jojobot_domain::memory::MemoryError>,
     /// An unrelated write that reports the original unchanged, beside a new document. A
     /// call that reads a whole board leaves the original out only when it is evicted, which
     /// is a different question from the one asked here.
     unrelated: fn(&FullTextIndex),
     /// Whether the original, the rewrite and the unrelated text are found.
     found: fn(&FullTextIndex) -> (bool, bool, bool),
+    /// What a search finds for each of the three, for the failure message.
+    shown: fn(&FullTextIndex) -> String,
+    /// How many hits the whole result for the original holds, for a path whose result is
+    /// more than its ids: exactly one before the fault.
+    hits: Option<fn(&FullTextIndex) -> usize>,
 }
 
 fn mail_message(id: &str, body: &str) -> Message {
@@ -5740,6 +5745,15 @@ fn mail_found(index: &FullTextIndex) -> (bool, bool, bool) {
         mail_ids_for(index, "quokka") == ["1"],
         !mail_ids_for(index, "pangolin").is_empty(),
         mail_ids_for(index, "axolotl") == ["2"],
+    )
+}
+
+fn mail_shown(index: &FullTextIndex) -> String {
+    format!(
+        "quokka {:?}, pangolin {:?}, axolotl {:?}",
+        mail_ids_for(index, "quokka"),
+        mail_ids_for(index, "pangolin"),
+        mail_ids_for(index, "axolotl")
     )
 }
 
@@ -5763,6 +5777,22 @@ fn doc_found(index: &FullTextIndex) -> (bool, bool, bool) {
     )
 }
 
+fn doc_shown(index: &FullTextIndex) -> String {
+    format!(
+        "quokka {:?}, pangolin {:?}, axolotl {:?}",
+        fact_ids_for(index, "quokka"),
+        fact_ids_for(index, "pangolin"),
+        fact_ids_for(index, "axolotl")
+    )
+}
+
+fn doc_hits(index: &FullTextIndex) -> usize {
+    index
+        .search(&SearchQuery::text("quokka"))
+        .expect("search ok")
+        .len()
+}
+
 fn write_paths() -> Vec<WritePath> {
     vec![
         WritePath {
@@ -5776,7 +5806,7 @@ fn write_paths() -> Vec<WritePath> {
             rewrite: |index| {
                 index
                     .ingest_mail(&[mail_message("1", "rewritten pangolin")])
-                    .is_err()
+                    .map(|_| ())
             },
             unrelated: |index| {
                 index
@@ -5787,6 +5817,8 @@ fn write_paths() -> Vec<WritePath> {
                     .expect("the unrelated ingest lands")
             },
             found: mail_found,
+            shown: mail_shown,
+            hits: None,
         },
         WritePath {
             name: "a single message",
@@ -5799,7 +5831,7 @@ fn write_paths() -> Vec<WritePath> {
             rewrite: |index| {
                 index
                     .ingest_message(&mail_message("1", "rewritten pangolin"))
-                    .is_err()
+                    .map(|_| ())
             },
             unrelated: |index| {
                 index
@@ -5807,6 +5839,8 @@ fn write_paths() -> Vec<WritePath> {
                     .expect("the unrelated write lands")
             },
             found: mail_found,
+            shown: mail_shown,
+            hits: None,
         },
         WritePath {
             name: "a session run",
@@ -5819,7 +5853,7 @@ fn write_paths() -> Vec<WritePath> {
             rewrite: |index| {
                 index
                     .ingest_sessions(&[gamma_run("rewritten pangolin")])
-                    .is_err()
+                    .map(|_| ())
             },
             unrelated: |index| {
                 index
@@ -5836,6 +5870,15 @@ fn write_paths() -> Vec<WritePath> {
                     finds(index, "bot:otto", "axolotl"),
                 )
             },
+            shown: |index| {
+                format!(
+                    "gamma quokka {}, gamma pangolin {}, otto axolotl {}",
+                    finds(index, "bot:gamma", "quokka"),
+                    finds(index, "bot:gamma", "pangolin"),
+                    finds(index, "bot:otto", "axolotl")
+                )
+            },
+            hits: None,
         },
         WritePath {
             name: "a document batch",
@@ -5856,7 +5899,7 @@ fn write_paths() -> Vec<WritePath> {
                         index.reading_begins(),
                         &Default::default(),
                     )
-                    .is_err()
+                    .map(|_| ())
             },
             unrelated: |index| {
                 index
@@ -5868,6 +5911,8 @@ fn write_paths() -> Vec<WritePath> {
                     .expect("the unrelated ingest lands")
             },
             found: doc_found,
+            shown: doc_shown,
+            hits: Some(doc_hits),
         },
         WritePath {
             name: "a single document",
@@ -5880,7 +5925,7 @@ fn write_paths() -> Vec<WritePath> {
             rewrite: |index| {
                 index
                     .ingest_doc(&alpha_scan("rewritten pangolin"), &FactHistoryTerms::new())
-                    .is_err()
+                    .map(|_| ())
             },
             unrelated: |index| {
                 index
@@ -5888,6 +5933,8 @@ fn write_paths() -> Vec<WritePath> {
                     .expect("the unrelated write lands")
             },
             found: doc_found,
+            shown: doc_shown,
+            hits: Some(doc_hits),
         },
         // `forget` stages only a delete, so the leftover would drop the document the
         // failed call meant to evict from a commit that never named it. It writes no
@@ -5900,13 +5947,15 @@ fn write_paths() -> Vec<WritePath> {
                     .ingest_doc(&alpha_scan("original quokka"), &FactHistoryTerms::new())
                     .expect("the first write lands")
             },
-            rewrite: |index| index.forget(&EntityId("person:alpha".into())).is_err(),
+            rewrite: |index| index.forget(&EntityId("person:alpha".into())),
             unrelated: |index| {
                 index
                     .ingest_doc(&beta_scan(), &FactHistoryTerms::new())
                     .expect("the unrelated write lands")
             },
             found: doc_found,
+            shown: doc_shown,
+            hits: Some(doc_hits),
         },
     ]
 }
@@ -5929,22 +5978,33 @@ async fn a_failed_write_leaves_nothing_for_a_later_commit() {
             assert_eq!(
                 (path.found)(&index),
                 (true, false, false),
-                "findable before anything goes wrong: {at}"
+                "findable before anything goes wrong: {at}: {}",
+                (path.shown)(&index)
             );
+            if let Some(hits) = path.hits {
+                assert_eq!(
+                    hits(&index),
+                    1,
+                    "exactly one hit before anything goes wrong: {at}: {}",
+                    (path.shown)(&index)
+                );
+            }
             match (fault, path.write_at) {
                 (Fault::Write, Some(call)) => index.fail_add_document_at(call),
                 (Fault::Write, None) => continue,
                 (Fault::Commit, _) => index.fail_next_commit(),
             }
+            let failed = (path.rewrite)(&index);
             assert!(
-                (path.rewrite)(&index),
-                "the injected fault must surface: {at}"
+                failed.is_err(),
+                "the injected fault must surface: {at}: {failed:?}"
             );
             (path.unrelated)(&index);
             assert_eq!(
                 (path.found)(&index),
                 (true, false, true),
-                "the failed call left nothing for the unrelated commit: {at}"
+                "the failed call left nothing for the unrelated commit: {at}: {}",
+                (path.shown)(&index)
             );
         }
     }
