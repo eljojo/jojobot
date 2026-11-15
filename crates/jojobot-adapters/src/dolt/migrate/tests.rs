@@ -856,6 +856,7 @@ async fn an_interrupted_add_column_is_recognized_by_the_column_being_there() {
         .expect("the store comes up");
 
     for (version, table, column) in ROWS {
+        let _row = Named(version.to_string());
         let name = format!("{table}{column}partway").replace('_', "");
         let pool = store.database(&name).await.expect("a database of its own");
 
@@ -1781,6 +1782,18 @@ async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
     }
 }
 
+/// Names the section or row of a many-part case that was running when it panicked, so a failure
+/// says which change it is about.
+struct Named(String);
+
+impl Drop for Named {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("the section or row that failed: {}", self.0);
+        }
+    }
+}
+
 /// The state a death in the window leaves: the version's ledger row taken away and its marker
 /// committed. What the death also left undone is the caller's to put back first.
 async fn leave_begun(pool: &sqlx::MySqlPool, version: &str) {
@@ -1820,6 +1833,8 @@ async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
     // column shape answers "already reached" here, because 0013 created the
     // column; only the type shape answers for what 0018 does.
     {
+        let _section =
+            Named("an_interrupted_shipped_widening_is_recognized_by_the_columns_type".into());
         let pool = store
             .database("shippedwidening")
             .await
@@ -1878,6 +1893,9 @@ async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
     // check would have given `Leaves::Column("entity_former_handle",
     // "ordinal")`.
     {
+        let _section = Named(
+            "an_interrupted_primary_key_swap_is_recognized_by_whether_the_key_is_there".into(),
+        );
         let pool = store
             .database("keyswappartway")
             .await
@@ -1936,6 +1954,9 @@ async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
     // tell "not yet run" from "ran and found nothing to delete", which is
     // exactly what [`Leaves::NoRows`] asks.
     {
+        let _section = Named(
+            "an_interrupted_rhythm_kind_delete_is_recognized_by_the_types_row_being_gone".into(),
+        );
         let pool = store
             .database("rhythmkindpartway")
             .await
@@ -1981,6 +2002,10 @@ async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
     // rows. Paired in the same run: a type of that name a caller declared is not
     // deleted, and a kind's row of that name is not either.
     {
+        let _section = Named(
+            "an_interrupted_trip_kind_delete_is_recognized_by_the_shipped_types_row_being_gone"
+                .into(),
+        );
         let pool = store
             .database("tripkindpartway")
             .await
@@ -2053,6 +2078,7 @@ async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
     // ran. Unlike `0035`, nothing downstream renames a column this one
     // touches, so the full list is safe to reissue against.
     {
+        let _section = Named("an_interrupted_fact_status_archive_backfill_is_recognized_by_a_retired_status_left_standing".into());
         let pool = store
             .database("factstatusarchivedpartway")
             .await
@@ -2095,6 +2121,7 @@ async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
     // repeats `0046`'s rewrite on the table that carries a copy of the
     // status at each write, and needs the same recovery.
     {
+        let _section = Named("an_interrupted_fact_write_status_archive_backfill_is_recognized_by_a_retired_status_left_standing".into());
         let pool = store
             .database("factwritestatusarchivedpartway")
             .await
@@ -2140,6 +2167,8 @@ async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
     // type tells "not yet widened" from "widened", the same question
     // `0018`'s own test drives for `type_field.holds`.
     {
+        let _section =
+            Named("an_interrupted_entity_source_widening_is_recognized_by_the_columns_type".into());
         let pool = store
             .database("entitysourcewidepartway")
             .await
@@ -2178,6 +2207,8 @@ async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
     // **The shape `0020_entity_crm_wider` declares is the one that recovers
     // it.** The same question as `0019`, over the column beside it.
     {
+        let _section =
+            Named("an_interrupted_entity_crm_widening_is_recognized_by_the_columns_type".into());
         let pool = store
             .database("entitycrmwidepartway")
             .await
@@ -2221,6 +2252,8 @@ async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
     // answer for it alone, the way `0018`'s test drives the real list
     // rather than the mechanism's own synthetic fixture.
     {
+        let _section =
+            Named("an_interrupted_former_handle_widening_is_recognized_by_the_columns_type".into());
         let pool = store
             .database("formerhandlewidepartway")
             .await
