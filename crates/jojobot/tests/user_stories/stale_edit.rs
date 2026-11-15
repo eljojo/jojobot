@@ -22,21 +22,7 @@ use super::dsl::Story;
 async fn the_second_of_two_runs_editing_from_the_same_read_is_refused() {
     let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("person:kenny", "Kenny").await;
-    let claim = first
-        .call(
-            "capture",
-            json!({
-                "subject": "person:kenny", "content": "wears an orange parka",
-                "provenance": "inference",
-            }),
-        )
-        .await
-        .json();
-    let claim = claim["address"]
-        .as_str()
-        .or_else(|| claim["fact"]["address"].as_str())
-        .expect("a capture hands back its address")
-        .to_string();
+    let claim = first.guess("person:kenny", "wears an orange parka").await;
     let second = story.session_in("UTC", Some("new")).await;
 
     first

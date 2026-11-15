@@ -27,16 +27,7 @@ fn address_of(captured: &serde_json::Value) -> String {
 async fn a_later_run_rewrites_an_earlier_runs_inference_and_it_stays_an_inference() {
     let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
-    let note = address_of(
-        &first
-            .call(
-                "capture",
-                json!({"subject": "thing:handcart", "content": "the wheel squeaks",
-                       "provenance": "inference"}),
-            )
-            .await
-            .json(),
-    );
+    let note = first.guess("thing:handcart", "the wheel squeaks").await;
     first.wrap("wrote a note").await;
 
     let later = story.session_in("UTC", Some("new")).await;
@@ -127,16 +118,7 @@ async fn a_later_run_rewriting_testimony_with_no_provenance_is_still_refused() {
 async fn a_later_runs_rewrite_reopens_a_settled_inference_unless_it_brings_a_receipt() {
     let (story, first) = Story::begin_with_session("bot:gamma").await;
     first.add("thing:handcart", "The Handcart").await;
-    let note = address_of(
-        &first
-            .call(
-                "capture",
-                json!({"subject": "thing:handcart", "content": "the wheel squeaks",
-                       "provenance": "inference"}),
-            )
-            .await
-            .json(),
-    );
+    let note = first.guess("thing:handcart", "the wheel squeaks").await;
     first
         .settle_on_a_check(&note, "listened to the wheel")
         .await;
