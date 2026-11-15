@@ -22,8 +22,7 @@ fn marking(bot: &str, value: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn a_bot_marked_as_needing_an_agent_has_its_role_claim_refused_when_it_names_none() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:marge", "Marge").await;
     s.add("bot:smithers", "Smithers").await;
     let marge = story.as_bot("bot:marge").await;
@@ -84,5 +83,4 @@ async fn a_bot_marked_as_needing_an_agent_has_its_role_claim_refused_when_it_nam
         .says("\"agent\":\"agent-marge-1\"");
 
     marge.wrap("claimed the dinner plan with its agent").await;
-    story.finish().await;
 }
