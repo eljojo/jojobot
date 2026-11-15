@@ -380,11 +380,14 @@ fn watch_boot(run: &mut Running) -> Boot {
     let mut answer = String::new();
     ask.read_to_string(&mut answer).expect("the answer");
     assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    // **Taken before the peaks are read**: the read scans `/proc` across the host and
+    // its time is not the boot's.
+    let answered = started.elapsed();
     run.boot_turn = None;
     Boot {
         readings,
         peak: run.peaks_kib(),
-        answered: started.elapsed(),
+        answered,
     }
 }
 
@@ -1130,9 +1133,7 @@ fn second_boot(state: Scratch) -> Scratch {
     let after_boot = memory_of_pid(run.pid).expect("the second boot's server runs");
     record(&second_boot_line(server_peak, store_peak, after_boot));
     record(&event_log_boot_line(&run.log_boot()));
-    for line in boot_phase_lines("warm boot", spawned, &growth(&boot.readings), boot.answered) {
-        record(&line);
-    }
+    record_phase_table("warm boot", spawned, &run.seen, &boot);
     run.stopped().0
 }
 
@@ -1151,13 +1152,17 @@ fn no_snapshot_boot_line(server_peak: u64, store_peak: u64, after_boot: Memory) 
     )
 }
 
-/// **A boot's phase table, one line a phase, counted from the stop of the server
-/// before it.** `boot` names the boot in each line: the warm boot is the one production
-/// pays at a restart, with the import done and a snapshot there; the no-snapshot boot is
-/// the one a deploy that changes the State's shape pays. `spawned` is the time from that stop to the first reading of
-/// the boot; every time in `steps` and `answered` is counted from that reading. The phases
-/// are the spawn, each projection the boot logged as built, and what the boot did after
-/// the last of them until `/healthz` answered; their times add up to the first answer.
+/// **A boot's phase table, one line a phase, counted from the start of the boot
+/// attempt.** The attempt starts when the case has the store ready, after its own
+/// preparation, so it is not the time from the previous server's stop, and its spawn
+/// holds the wait for any other boot of the test binary. `boot` names the boot in each
+/// line: the warm boot is the one production pays at a restart, with the import done and
+/// a snapshot there; the no-snapshot boot is the one a deploy that changes the State's
+/// shape pays. `spawned` is the time from the start of the attempt to the first reading
+/// of the boot; every time in `steps` and `answered` is counted from that reading. The
+/// phases are the spawn, each projection the boot logged as built, and what the boot did
+/// after the last of them until `/healthz` answered. Each time prints truncated to the
+/// millisecond, so the phases can differ from the printed total by a millisecond or two.
 fn boot_phase_lines(
     boot: &str,
     spawned: Duration,
@@ -1188,10 +1193,26 @@ fn boot_phase_lines(
         spawned + answered,
     ));
     lines.push(format!(
-        "memory-report {boot} first answer: {} ms from the stop of the server before it",
+        "memory-report {boot} first answer: {} ms from the start of the boot attempt",
         ms(spawned + answered)
     ));
     lines
+}
+
+/// **Record a boot's phase table, after checking the boot said it built every
+/// projection it was asked for.** A boundary the boot never logged would otherwise move
+/// its time into the next phase unseen; the import boot already fails on one.
+fn record_phase_table(name: &str, spawned: Duration, seen: &[String], boot: &Boot) {
+    let steps = growth(&boot.readings);
+    let missing = missing_projections(seen, &steps);
+    assert!(
+        missing.is_empty(),
+        "the {name} never said it had built: {missing:?}. What it said:\n{}",
+        seen.join("\n")
+    );
+    for line in boot_phase_lines(name, spawned, &steps, boot.answered) {
+        record(&line);
+    }
 }
 
 /// **Remove the snapshot the last stop took**, so the next boot has none to load.
@@ -1218,14 +1239,7 @@ async fn no_snapshot_boot(state: Scratch) -> Running {
     let (server_peak, store_peak) = boot.peak;
     let after_boot = memory_of_pid(run.pid).expect("the no-snapshot boot's server runs");
     record(&no_snapshot_boot_line(server_peak, store_peak, after_boot));
-    for line in boot_phase_lines(
-        "no-snapshot boot",
-        spawned,
-        &growth(&boot.readings),
-        boot.answered,
-    ) {
-        record(&line);
-    }
+    record_phase_table("no-snapshot boot", spawned, &run.seen, &boot);
     run
 }
 
@@ -1856,14 +1870,13 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
         assert!(line.contains("(1101580 kB)"), "{line}");
     }
 
-    /// **The warm boot's phase table is one line a phase, counted from the stop of the
-    /// server before it.** The stop and the spawn come first, then each projection the
-    /// boot built (its own time, and when it ended), then what the boot did between the
-    /// last projection and its first answer, then the first answer itself. Each phase's
-    /// time is the end of the one before taken from its own end, so the times add up to
-    /// the first answer.
+    /// **The warm boot's phase table is one line a phase, counted from the start of the
+    /// boot attempt.** The spawn comes first, then each projection the boot built (its
+    /// own time, and when it ended), then what the boot did between the last projection
+    /// and its first answer, then the first answer itself. Each phase's time is taken
+    /// from the end of the one before, so the times add up to the first answer.
     #[test]
-    fn memory_report_tables_the_warm_boot_phases_from_the_stop_to_the_first_answer() {
+    fn memory_report_tables_the_warm_boot_phases_to_the_first_answer() {
         let steps = [
             Growth {
                 projection: Projection::MemoryImage,
@@ -1884,12 +1897,6 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
             &steps,
             Duration::from_millis(3_000),
         );
-        assert!(
-            lines
-                .iter()
-                .all(|line| line.starts_with("memory-report warm boot ")),
-            "{lines:?}"
-        );
         assert_eq!(
             lines,
             [
@@ -1900,46 +1907,38 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
                  at 2900 ms",
                 "memory-report warm boot phase: the last projection to the first answer took 400 \
                  ms, ended at 3300 ms",
-                "memory-report warm boot first answer: 3300 ms from the stop of the server before it",
+                "memory-report warm boot first answer: 3300 ms from the start of the boot attempt",
             ]
         );
     }
 
-    /// **A warm boot that built no projection still has its first answer** and a table
-    /// that adds up: the spawn, the wait to the answer, the answer.
+    /// **A boot that built no projection still has its first answer** and a table that
+    /// adds up: the spawn, the wait to the answer, the answer. Each boot's lines carry
+    /// the boot's own name, so the two tables of one job are told apart.
     #[test]
-    fn memory_report_tables_a_warm_boot_that_logged_no_projection() {
-        let lines = boot_phase_lines(
-            "warm boot",
-            Duration::from_millis(100),
-            &[],
-            Duration::from_millis(900),
-        );
-        assert_eq!(lines.len(), 3, "{lines:?}");
-        assert!(lines[2].contains("1000 ms"), "{lines:?}");
-    }
-
-    /// **Each boot's table has its own prefix**, so the two tables of one job are told
-    /// apart and a reader of the warm boot's never takes up the no-snapshot boot's.
-    #[test]
-    fn memory_report_tables_the_no_snapshot_boot_under_its_own_prefix() {
-        let lines = boot_phase_lines(
-            "no-snapshot boot",
-            Duration::from_millis(100),
-            &[],
-            Duration::from_millis(900),
-        );
-        assert_eq!(lines.len(), 3, "{lines:?}");
-        assert!(
-            lines
-                .iter()
-                .all(|line| line.starts_with("memory-report no-snapshot boot ")),
-            "{lines:?}"
-        );
-        assert!(
-            lines.iter().all(|line| !line.contains("warm boot")),
-            "{lines:?}"
-        );
+    fn memory_report_tables_a_boot_that_logged_no_projection_under_its_own_name() {
+        for name in ["warm boot", "no-snapshot boot"] {
+            let lines = boot_phase_lines(
+                name,
+                Duration::from_millis(100),
+                &[],
+                Duration::from_millis(900),
+            );
+            assert_eq!(
+                lines,
+                [
+                    format!("memory-report {name} phase: the spawn took 100 ms, ended at 100 ms"),
+                    format!(
+                        "memory-report {name} phase: the last projection to the first answer \
+                         took 900 ms, ended at 1000 ms"
+                    ),
+                    format!(
+                        "memory-report {name} first answer: 1000 ms from the start of the \
+                         boot attempt"
+                    ),
+                ]
+            );
+        }
     }
 
     /// **Only "table not found" says a commit does not hold the table.** A read that answers
