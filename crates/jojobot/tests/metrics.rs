@@ -8,19 +8,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Stdio;
 
-use jojobot_adapters::testing::free_port;
+use jojobot_adapters::testing::{Scratch, free_port};
 use jojobot_mcp::observe::CallEnd;
 use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
-
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 /// A running binary and what it printed up to its serving line.
 struct Running {

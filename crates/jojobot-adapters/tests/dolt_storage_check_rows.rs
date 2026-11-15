@@ -4,24 +4,14 @@
 //! Each case starts from a store written through the real verbs, which reports no
 //! damage, and makes the damage by the one edit to the rows a cut-off write leaves.
 
-use std::path::PathBuf;
-
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::storage_check::DoltStorageCheck;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
 use jojobot_domain::storage_check::{StorageCheck, StorageClass};
-
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 /// A store with two people and a claim on the second that is derived from a claim
 /// on the first. Nothing in it is damaged.

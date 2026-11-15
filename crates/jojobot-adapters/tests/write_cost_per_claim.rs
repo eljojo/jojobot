@@ -12,7 +12,6 @@
 //! the patched lists to a full ask of the store after each kind of claim write.
 
 use std::io::Write as _;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -23,7 +22,7 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::IndexedMemory;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_domain::memory::mention::Mentioning;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::testing::contract as memory;
@@ -59,23 +58,6 @@ fn body(n: usize, version: usize) -> String {
         "Slice {n} version {version} states what is built, why it is shaped so, and what it leaves out. "
     );
     sentence.repeat(25)
-}
-
-/// A directory of this run's own, removed when it is done.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-contract-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
 }
 
 /// The statements the server has executed so far, from its own counter.
