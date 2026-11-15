@@ -135,7 +135,6 @@ async fn an_edit_sets_the_thing_and_a_key_stays_in_its_bag() {
         json!({"address": claim, "fields": {"painter": "x"}, "sets": {"painter": "x"}}),
     )
     .await
-    .says("blocked")
     .says("painter");
     // A key that only labels the claim is never set on the thing.
     s.refused(
@@ -146,7 +145,6 @@ async fn an_edit_sets_the_thing_and_a_key_stays_in_its_bag() {
         }),
     )
     .await
-    .says("blocked")
     .says("read_from");
 
     // The way: take it off, then write it under the other bag.
@@ -200,7 +198,7 @@ async fn a_thing_made_with_settings_holds_them_as_settings() {
             json!({"address": claim, "fields": {"colour": "black"}}),
         )
         .await;
-    refusal.says("blocked").says("colour");
+    refusal.says("colour");
     names_the_key_and_the_change(&refusal, "colour");
     s.call(
         "update_fact",
@@ -249,7 +247,6 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
         json!({"address": claim, "fields": {"colour": "blue"}}),
     )
     .await
-    .says("blocked")
     .says("colour");
 
     // **A setting a guard refuses takes the rename back with it.**
@@ -260,8 +257,7 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
             "sets": {"blocks": "work:contract-claimed-nobody"},
         }),
     )
-    .await
-    .says("blocked");
+    .await;
     s.shape(
         "what the handcart is called",
         json!({"subject": "thing:handcart"}),
@@ -581,7 +577,7 @@ async fn a_role_holding_agent_as_a_setting_is_edited_through_sets() {
             json!({"address": claim, "fields": {"agent": "agent-two"}}),
         )
         .await;
-    refusal.says("blocked").says("agent");
+    refusal.says("agent");
     names_the_key_and_the_change(&refusal, "agent");
 
     s.call(

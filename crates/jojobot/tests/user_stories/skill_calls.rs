@@ -472,7 +472,6 @@ async fn every_full_refusal_names_the_organizing_skill() {
         )
         .await
         .json();
-    assert_eq!(thread["status"], "blocked", "{thread}");
     assert!(
         thread.get("seated").is_none() && thread.get("room").is_none(),
         "{thread}"

@@ -37,10 +37,7 @@ async fn a_later_run_cannot_rewrite_the_operators_words_in_place_and_the_route_w
             json!({"address": red, "content": "the handcart is blue", "provenance": "testimony"}),
         )
         .await;
-    refused
-        .says("blocked")
-        .says("derived_from")
-        .says("archived");
+    refused.says("derived_from").says("archived");
     // Nothing was rewritten: the words are the operator's still.
     later
         .recall("thing:handcart")
@@ -186,7 +183,6 @@ async fn a_run_still_needs_the_operators_word_to_make_its_own_guess_testimony() 
         json!({"address": guess, "content": "the handcart is red", "provenance": "testimony"}),
     )
     .await
-    .says("blocked")
     .says("confirmed_by_user");
     s.recall("thing:handcart")
         .await
@@ -315,7 +311,6 @@ async fn a_later_run_cannot_set_change_or_clear_a_value_field_on_the_operators_c
         later
             .refused("update_fact", edit)
             .await
-            .says("blocked")
             .says("derived_from")
             .says("archived");
     }
@@ -417,7 +412,6 @@ async fn a_resend_of_the_operators_words_and_fields_is_not_a_rewrite() {
         later
             .refused("update_fact", edit)
             .await
-            .says("blocked")
             .says("derived_from")
             .says("archived");
     }

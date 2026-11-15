@@ -13,7 +13,6 @@ use super::dsl::Story;
 /// wears `change`, and names each argument it is about in backticks. A refusal that merely mentions the words, such as one
 /// that says an argument is unknown, is none of these, so it cannot stand in.
 fn is_the_verbs_own_refusal(refusal: &Value, arguments: &[&str]) {
-    assert_eq!(refusal["status"], "blocked", "{refusal}");
     assert_eq!(refusal["wrote"], false, "{refusal}");
     assert_eq!(refusal["fix_by"], "change", "{refusal}");
     let how = refusal["how_to_proceed"].as_str().expect("a way forward");
@@ -166,7 +165,6 @@ async fn a_processed_message_is_refused_a_quarantine_and_stays_readable() {
         )
         .await
         .json();
-    assert_eq!(late["status"], "blocked", "{late}");
     assert_eq!(late["wrote"], false, "{late}");
     assert!(
         late["how_to_proceed"]

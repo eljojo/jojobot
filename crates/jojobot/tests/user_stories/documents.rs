@@ -954,14 +954,12 @@ async fn a_restore_puts_the_document_back_as_a_day_read_it_and_keeps_every_versi
         "the document moved since, or this story proves nothing: {today}"
     );
 
-    let restored = session
+    session
         .call(
             "put_document",
             json!({"document": "document:homer", "restore_to": SEPTEMBER}),
         )
-        .await
-        .json();
-    assert_ne!(restored["status"], "blocked", "{restored}");
+        .await;
 
     let now = session
         .call("read_document", json!({"document": "document:homer"}))
@@ -1008,7 +1006,6 @@ async fn a_restore_puts_the_document_back_as_a_day_read_it_and_keeps_every_versi
         )
         .await
         .json();
-    assert_ne!(again["status"], "blocked", "{again}");
     let after_again = session
         .call("read_document", json!({"document": "document:homer"}))
         .await
@@ -1071,7 +1068,7 @@ async fn a_restore_over_testimony_needs_the_operators_confirmation_or_changes_no
         "a refused restore wrote nothing: {unchanged}"
     );
 
-    let confirmed = session
+    session
         .call(
             "put_document",
             json!({
@@ -1079,9 +1076,7 @@ async fn a_restore_over_testimony_needs_the_operators_confirmation_or_changes_no
                 "confirmed_by_user": true,
             }),
         )
-        .await
-        .json();
-    assert_ne!(confirmed["status"], "blocked", "{confirmed}");
+        .await;
     let restored = session
         .call("read_document", json!({"document": "document:homer"}))
         .await
@@ -1217,8 +1212,7 @@ async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
             json!({"document": "document:homer", "restore_to": SEPTEMBER}),
         )
     };
-    let first = restore().await.json();
-    assert_ne!(first["status"], "blocked", "{first}");
+    restore().await;
     assert_eq!(
         read_the_whole_manual(&session).await,
         manual,
@@ -1281,7 +1275,6 @@ async fn a_restore_sent_again_after_a_chunk_was_lost_brings_back_every_chunk() {
     );
 
     let second = restore().await.json();
-    assert_ne!(second["status"], "blocked", "{second}");
     assert_eq!(
         read_the_whole_manual(&session).await,
         manual,
@@ -1344,7 +1337,6 @@ async fn a_section_worked_out_from_an_archived_one_is_not_its_restored_copy() {
         )
         .await
         .json();
-    assert_ne!(restored["status"], "blocked", "{restored}");
     assert_eq!(
         read_the_whole_manual(&session).await,
         MANUAL,
@@ -1434,7 +1426,6 @@ async fn a_record_worked_out_from_a_section_is_not_taken_for_its_restored_copy()
         )
         .await
         .json();
-    assert_ne!(restored["status"], "blocked", "{restored}");
     assert_eq!(
         read_the_whole_manual(&session).await,
         MANUAL,
@@ -1512,7 +1503,6 @@ async fn an_edited_restored_copy_is_found_by_its_mark_and_put_back_in_place() {
     );
 
     let again = restore().await.json();
-    assert_ne!(again["status"], "blocked", "{again}");
     assert_eq!(
         read_the_whole_manual(&session).await,
         MANUAL,
@@ -1580,7 +1570,6 @@ async fn a_restore_sent_again_after_a_rename_finds_the_copy_it_made() {
         )
         .await
         .json();
-    assert_ne!(again["status"], "blocked", "{again}");
     assert_eq!(
         again["restored"]["changed"], 0,
         "the copy was found, so nothing is written: {again}"

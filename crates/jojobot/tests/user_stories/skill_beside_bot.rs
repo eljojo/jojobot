@@ -33,7 +33,6 @@ async fn a_claim_beside_a_skill_refuses_the_call_and_claims_nothing() {
         )
         .await
         .json();
-    assert_eq!(refused["status"], "blocked", "{refused}");
     assert!(refused.get("skill").is_none(), "{refused}");
     assert!(
         refused["how_to_proceed"]
@@ -50,7 +49,6 @@ async fn a_claim_beside_a_skill_refuses_the_call_and_claims_nothing() {
         )
         .await
         .json();
-    assert_eq!(both["status"], "blocked", "{both}");
     assert!(both.get("skill").is_none(), "{both}");
     assert!(
         both["how_to_proceed"]

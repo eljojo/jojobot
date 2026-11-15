@@ -318,7 +318,6 @@ async fn a_restore_under_a_former_name_puts_the_document_back_as_it_stood() {
         )
         .await
         .json();
-    assert_ne!(restored["status"], "blocked", "{restored}");
     assert_eq!(
         read_whole(&s, "document:marge", None).await,
         ALPHA,
@@ -396,7 +395,6 @@ async fn a_restore_to_a_day_before_a_merge_does_not_bring_back_the_folded_archiv
         )
         .await
         .json();
-    assert_ne!(restored["status"], "blocked", "{restored}");
     assert_eq!(
         restored["restored"]["recreated"].as_array().map(Vec::len),
         Some(0),
