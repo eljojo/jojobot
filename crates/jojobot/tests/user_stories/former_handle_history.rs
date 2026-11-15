@@ -26,10 +26,11 @@ fn traced(answer: &super::dsl::Answer, part: &str) -> Value {
 }
 
 /// **A thing with a history under its first handle, renamed by a later run.**
-/// Returns the reader's session and the address of a claim that was corrected
-/// and the address of the claim that replaced it, both written under the
-/// former handle.
-async fn a_shelf_renamed_after_its_history_was_written() -> (super::dsl::Session, String, String) {
+/// Returns the story, which the caller keeps because the story's server stops when it is
+/// dropped, the reader's session and the address of a claim that was corrected and the
+/// address of the claim that replaced it, both written under the former handle.
+async fn a_shelf_renamed_after_its_history_was_written()
+-> (Story, super::dsl::Session, String, String) {
     let story = Story::begin("bot:otto").await;
 
     // ── Spring · the thing is made, a key is written twice, a claim is
@@ -62,14 +63,11 @@ async fn a_shelf_renamed_after_its_history_was_written() -> (super::dsl::Session
     autumn.wrap("renamed the shelf").await;
 
     // ── Winter · the reader ───────────────────────────────────────────────────
-    (
-        story
-            .session_on("2026-12-20", Some("new"))
-            .await
-            .asking_whole(),
-        first,
-        corrected,
-    )
+    let winter = story
+        .session_on("2026-12-20", Some("new"))
+        .await
+        .asking_whole();
+    (story, winter, first, corrected)
 }
 
 /// The same address, written under the current handle.
@@ -79,7 +77,7 @@ fn under_new(address: &str) -> String {
 
 #[tokio::test]
 async fn the_writes_of_a_key_are_the_same_by_a_former_handle() {
-    let (winter, _, _) = a_shelf_renamed_after_its_history_was_written().await;
+    let (_story, winter, _, _) = a_shelf_renamed_after_its_history_was_written().await;
 
     let by_new = winter
         .shape(
@@ -105,7 +103,7 @@ async fn the_writes_of_a_key_are_the_same_by_a_former_handle() {
 
 #[tokio::test]
 async fn the_writes_of_a_claim_are_the_same_by_an_address_under_a_former_handle() {
-    let (winter, first, _) = a_shelf_renamed_after_its_history_was_written().await;
+    let (_story, winter, first, _) = a_shelf_renamed_after_its_history_was_written().await;
 
     let by_new = winter
         .shape(
@@ -138,7 +136,7 @@ async fn the_writes_of_a_claim_are_the_same_by_an_address_under_a_former_handle(
 
 #[tokio::test]
 async fn the_versions_of_a_thing_are_the_same_by_a_former_handle() {
-    let (winter, _, _) = a_shelf_renamed_after_its_history_was_written().await;
+    let (_story, winter, _, _) = a_shelf_renamed_after_its_history_was_written().await;
 
     let by_new = winter
         .shape("what was it called?", json!({"history_record": NEW}))
@@ -168,7 +166,7 @@ async fn the_versions_of_a_thing_are_the_same_by_a_former_handle() {
 
 #[tokio::test]
 async fn what_was_built_on_a_claim_is_the_same_by_an_address_under_a_former_handle() {
-    let (winter, first, corrected) = a_shelf_renamed_after_its_history_was_written().await;
+    let (_story, winter, first, corrected) = a_shelf_renamed_after_its_history_was_written().await;
 
     let by_new = winter
         .shape("what replaced it?", json!({"built_on": under_new(&first)}))
