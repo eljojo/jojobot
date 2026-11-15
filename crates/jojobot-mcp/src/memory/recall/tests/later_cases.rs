@@ -686,31 +686,7 @@ async fn the_owed_pass_marks_every_object_it_was_asked_of_whether_or_not_it_keep
 #[tokio::test]
 async fn the_history_of_a_key_names_the_writer_and_the_run() {
     let jojobot = handler();
-    make_bot(&jojobot, "otto").await;
-    let acting = sid_of(&json_of(
-        &jojobot
-            .start_here(Parameters(OrientArgs {
-                agent: None,
-                request_id: None,
-                compacted: None,
-                claim: None,
-                bot: Some("otto".into()),
-                today: Some("2026-03-15".into()),
-                resume: Some("new".into()),
-                brief: Some(true),
-                timezone: None,
-                skill: None,
-                section: None,
-                sid: None,
-                ask_for_code: None,
-                challenge: None,
-                code: None,
-                offer_code: None,
-            }))
-            .await
-            .expect("the boot call is ok"),
-    ))
-    .expect("a boot that states a day hands back a handle");
+    let acting = run_on(&jojobot, "2026-03-15").await;
     capture_ok(
         &jojobot,
         CaptureArgs {

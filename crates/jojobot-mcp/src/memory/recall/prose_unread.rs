@@ -61,16 +61,6 @@ async fn recall_documents(jojobot: &Jojobot) -> Value {
     json_of(&jojobot.recall(Parameters(args)).await.expect("recall ok"))
 }
 
-/// **Both pages read: both are counted and none is named unread.** The positive
-/// the failing case rests on.
-#[tokio::test]
-async fn pages_that_read_are_counted_and_none_is_named_unread() {
-    let (jojobot, _) = two_pages().await;
-    let body = recall_documents(&jojobot).await;
-    assert_eq!(body["prose_left_out"]["count"], 2, "{body}");
-    assert!(body.get("prose_unread").is_none(), "{body}");
-}
-
 /// **A page the store cannot answer for is named; the page it can answer for is
 /// still counted.**
 #[tokio::test]

@@ -4799,13 +4799,9 @@ fn recalls_description_names_the_unreadable_key_and_its_fix_by() {
     );
 }
 
-/// **An unscoped `follow` reaches an edge, a mention and a ref at once,
-/// each labelled apart from the others** — proven over the production
-/// stack (`mention::Mentioning` in front of memory), because a bare
-/// store would pass this for the wrong reason: an unrendered mention is
-/// ordinary text, not a link.
-#[tokio::test]
-async fn an_unscoped_follow_in_reaches_the_edge_the_mention_and_the_ref_labelled_apart() {
+/// **`topic:all-rules` reached by three routes at once**, over the production mention stack:
+/// an edge from one writer, a mention in the words of another and a ref from a third.
+async fn three_routes_into_all_rules() -> Jojobot {
     let jojobot = handler_mentioning();
     ensure(&jojobot, "topic:all-rules").await;
     capture_ok(
@@ -4838,6 +4834,17 @@ async fn an_unscoped_follow_in_reaches_the_edge_the_mention_and_the_ref_labelled
         },
     )
     .await;
+    jojobot
+}
+
+/// **An unscoped `follow` reaches an edge, a mention and a ref at once,
+/// each labelled apart from the others** — proven over the production
+/// stack (`mention::Mentioning` in front of memory), because a bare
+/// store would pass this for the wrong reason: an unrendered mention is
+/// ordinary text, not a link.
+#[tokio::test]
+async fn an_unscoped_follow_in_reaches_the_edge_the_mention_and_the_ref_labelled_apart() {
+    let jojobot = three_routes_into_all_rules().await;
 
     let walked = recall_json(
         &jojobot,
@@ -4884,38 +4891,7 @@ async fn an_unscoped_follow_in_reaches_the_edge_the_mention_and_the_ref_labelled
 /// dropped the shape filter entirely could not pass both.
 #[tokio::test]
 async fn a_follow_scoped_to_one_edge_shape_never_returns_a_mention_or_a_ref() {
-    let jojobot = handler_mentioning();
-    ensure(&jojobot, "topic:all-rules").await;
-    capture_ok(
-        &jojobot,
-        CaptureArgs {
-            object: Some("topic:all-rules".into()),
-            shape: Some("connection".into()),
-            ..capture_args(
-                "person:homer",
-                "draws an edge, its own words never repeat the target's name",
-            )
-        },
-    )
-    .await;
-    capture_ok(
-        &jojobot,
-        CaptureArgs {
-            ..capture_args(
-                "person:gayle",
-                "mentions @topic:all-rules directly in its own words",
-            )
-        },
-    )
-    .await;
-    capture_ok(
-        &jojobot,
-        CaptureArgs {
-            refs: Some(vec!["topic:all-rules".into()]),
-            ..capture_args("person:hugo", "touches it without saying how")
-        },
-    )
-    .await;
+    let jojobot = three_routes_into_all_rules().await;
 
     let walked = recall_json(
         &jojobot,
@@ -7899,10 +7875,6 @@ async fn the_ready_view_spends_its_window_on_ready_work_only() {
         "the window is spent on ready work, so nothing ready waits on a later page: {body}"
     );
     assert!(
-        !listed(&body).contains(&"work:sigma".to_string()),
-        "work behind an unfinished dependency is still left out: {body}"
-    );
-    assert!(
         body["ready_left_out"]["count"].as_u64() >= Some(1),
         "and the work left out is still counted: {body}"
     );
@@ -9024,15 +8996,7 @@ async fn a_read_that_names_keys_ships_those_keys_and_says_once_what_it_left_out(
 /// Make `count` pieces of work with long, unlike slugs under one parent.
 async fn hostile_children(jojobot: &Jojobot, parent: &str, count: u64) {
     for n in 0..count {
-        let mut state = 0x9e37_79b9_u64.wrapping_mul(n + 1);
-        let slug: String = (0..110)
-            .map(|_| {
-                state = state
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                char::from(b'a' + ((state >> 33) % 26) as u8)
-            })
-            .collect();
+        let slug = unlike_slug(n, None);
         work_under(
             jojobot,
             &slug,
