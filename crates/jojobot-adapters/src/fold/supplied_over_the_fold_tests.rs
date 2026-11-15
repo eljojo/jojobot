@@ -302,7 +302,15 @@ impl jojobot_domain::memory::Memory for SharedCounted {}
 async fn the_stack_counted_above_the_fold(
     provisions: Provisions,
 ) -> (Provisioned<SharedCounted>, Arc<Counted>) {
-    let store = Arc::new(InMemoryMemory::booted().knowing(provisions.clone()));
+    the_stack_counted_over(InMemoryMemory::booted(), provisions).await
+}
+
+/// [`the_stack_counted_above_the_fold`] over a fake that already holds rows.
+async fn the_stack_counted_over(
+    fake: InMemoryMemory,
+    provisions: Provisions,
+) -> (Provisioned<SharedCounted>, Arc<Counted>) {
+    let store = Arc::new(fake.knowing(provisions.clone()));
     let folded = Folded::new(store);
     folded.rebuild().await.expect("the fold fills");
     let counted = Arc::new(Counted::new(Arc::new(SharedFold(Arc::new(folded)))));
@@ -769,6 +777,50 @@ async fn a_names_read_of_a_supplied_record_lists_nothing() {
         .expect("names")
         .expect("the stack answers a names read");
     assert_eq!(named(&names.known, &loops()), ["The operator's board"]);
+    let seen = counted.seen();
+    assert_eq!(seen.get("list_entities"), None, "{seen:?}");
+
+    // A row the store holds at the handle is the answer, and the shipped record is not.
+    let fake = InMemoryMemory::booted();
+    fake.add_entity(NewEntity::new(loops(), "My rounds", "user-named"))
+        .await
+        .expect("the row is stored before the build supplies the handle")
+        .written()
+        .expect("not blocked");
+    let (stack, counted) = the_stack_counted_over(fake, shipped()).await;
+    counted.reset();
+    let names = stack
+        .names(&wanted)
+        .await
+        .expect("names")
+        .expect("the stack answers a names read");
+    assert_eq!(named(&names.known, &loops()), ["My rounds"]);
+    let seen = counted.seen();
+    assert_eq!(seen.get("list_entities"), None, "{seen:?}");
+
+    // **A row renamed away leaves the handle to the build.** The handle is a retired
+    // address of the renamed row, so the fold answers it with that row and reports no
+    // miss; the record the build supplies there is still what the listing serves.
+    let renamed = EntityId("view:alpha".into());
+    stack
+        .rename_entity(
+            &loops(),
+            &renamed,
+            None,
+            jiff::civil::date(2026, 9, 3),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("renamed");
+    counted.reset();
+    let names = stack
+        .names(&wanted)
+        .await
+        .expect("names")
+        .expect("the stack answers a names read");
+    assert_eq!(named(&names.known, &renamed), ["My rounds"]);
+    assert_eq!(named(&names.known, &loops()), ["The shipped board"]);
     let seen = counted.seen();
     assert_eq!(seen.get("list_entities"), None, "{seen:?}");
 }

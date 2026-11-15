@@ -389,12 +389,13 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             return Ok(None);
         };
         for (entity, _) in self.provisions.records() {
-            // **A miss is a handle no row wears**, archived and folded rows included,
-            // so the record is the answer and no listing is asked for it. A handle the
-            // fold holds a row for is in `known`, and the stored row wins.
+            // **A stored row wears the handle only when the fold answers with a row of
+            // that id**, archived and folded rows included, and then it wins. A handle the
+            // fold answers through a retired address names the renamed row, whose id is
+            // another, so the record the build supplies is still what the listing serves.
+            // No listing is asked for either.
             if !wanted.handles.contains(&entity.id)
                 || names.known.iter().any(|held| held.id == entity.id)
-                || !names.missed.contains(&entity.id)
             {
                 continue;
             }
