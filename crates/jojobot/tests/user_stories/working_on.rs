@@ -19,6 +19,22 @@ async fn working_on(reader: &Session, bot: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Otto owns a piece of work and says in his journal that he is on it.
+async fn otto_frames_the_walls(otto: &Session) {
+    otto.add("work:frame-the-walls", "Frame the walls").await;
+    otto.call(
+        "journal",
+        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
+    )
+    .await;
+}
+
+/// Otto wraps the session that wrote what he is working on.
+async fn otto_wraps_up(otto: &Session) {
+    otto.call("wrap_session", json!({"story": "done for now"}))
+        .await;
+}
+
 /// **A session declares what its bot is doing, and any reader sees it.** The
 /// paired negative is the bot before it declares: no key, not an empty one.
 #[tokio::test]
@@ -45,12 +61,7 @@ async fn a_session_declares_what_its_bot_is_working_on() {
 #[tokio::test]
 async fn a_session_clears_what_its_bot_was_working_on() {
     let (_story, otto) = Story::begin_with_session("bot:otto").await;
-    otto.add("work:frame-the-walls", "Frame the walls").await;
-    otto.call(
-        "journal",
-        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
-    )
-    .await;
+    otto_frames_the_walls(&otto).await;
     assert_eq!(
         working_on(&otto, "bot:otto").await.as_deref(),
         Some("work:frame-the-walls")
@@ -203,12 +214,7 @@ async fn another_bot_moving_the_work_fills_nothing() {
 #[tokio::test]
 async fn renaming_the_thing_keeps_working_on() {
     let (_story, otto) = Story::begin_with_session("bot:otto").await;
-    otto.add("work:frame-the-walls", "Frame the walls").await;
-    otto.call(
-        "journal",
-        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
-    )
-    .await;
+    otto_frames_the_walls(&otto).await;
 
     otto.call(
         "rename_entity",
@@ -228,20 +234,14 @@ async fn renaming_the_thing_keeps_working_on() {
 #[tokio::test]
 async fn a_wrapped_session_leaves_working_on_unknown() {
     let (story, otto) = Story::begin_with_session("bot:otto").await;
-    otto.add("work:frame-the-walls", "Frame the walls").await;
-    otto.call(
-        "journal",
-        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
-    )
-    .await;
+    otto_frames_the_walls(&otto).await;
     let reader = story.as_bot("bot:assistant").await;
     assert_eq!(
         working_on(&reader, "bot:otto").await.as_deref(),
         Some("work:frame-the-walls")
     );
 
-    otto.call("wrap_session", json!({"story": "done for now"}))
-        .await;
+    otto_wraps_up(&otto).await;
 
     let after = reader.call("recall", json!({"subject": "bot:otto"})).await;
     assert_eq!(
@@ -267,12 +267,7 @@ async fn a_wrapped_session_leaves_working_on_unknown() {
 #[tokio::test]
 async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
     let (story, otto) = Story::begin_with_session("bot:otto").await;
-    otto.add("work:frame-the-walls", "Frame the walls").await;
-    otto.call(
-        "journal",
-        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
-    )
-    .await;
+    otto_frames_the_walls(&otto).await;
     let live = story.page("bot:otto").await;
     live.section("fields")
         .says("working_on")
@@ -283,8 +278,7 @@ async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
     live.says("working_on = work:frame-the-walls");
     live.never_says("working_on_stale");
 
-    otto.call("wrap_session", json!({"story": "done for now"}))
-        .await;
+    otto_wraps_up(&otto).await;
 
     let after = story.page("bot:otto").await;
     after.never_says("history=working_on");
@@ -594,12 +588,7 @@ async fn the_records_mark_a_working_on_whose_writer_was_abandoned() {
 #[tokio::test]
 async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_writer_wrapped() {
     let (story, otto) = Story::begin_with_session("bot:otto").await;
-    otto.add("work:frame-the-walls", "Frame the walls").await;
-    otto.call(
-        "journal",
-        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
-    )
-    .await;
+    otto_frames_the_walls(&otto).await;
     otto.call(
         "add_entity",
         json!({"kind": "view", "root": true, "handle": "on-the-framing", "name": "On the framing",
@@ -609,8 +598,7 @@ async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_write
     .await;
     story.page("view:on-the-framing").await.says("bot:otto");
 
-    otto.call("wrap_session", json!({"story": "done for now"}))
-        .await;
+    otto_wraps_up(&otto).await;
 
     story
         .page("view:on-the-framing")
