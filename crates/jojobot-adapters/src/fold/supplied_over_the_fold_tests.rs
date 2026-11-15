@@ -799,6 +799,51 @@ async fn a_mark_followed_through_a_long_chain_of_merges_reaches_the_survivor() {
     assert_eq!(rendered(&text, &scoped), rendered(&text, &whole));
 }
 
+/// **A names read that mentions a supplied record builds no listing.** The fold answers
+/// a handle it holds a row for, and a handle it misses has no row, so the supply layer
+/// adds the record without asking whether a stored row is there. A stored row at the
+/// handle is the fold's answer and wins over the shipped one.
+#[tokio::test]
+async fn a_names_read_of_a_supplied_record_lists_nothing() {
+    use jojobot_domain::memory::Wanted;
+
+    let (stack, counted) = the_stack_counted_above_the_fold(shipped()).await;
+    let mut wanted = Wanted::default();
+    wanted.handles.insert(loops());
+    counted.reset();
+    let names = stack
+        .names(&wanted)
+        .await
+        .expect("names")
+        .expect("the stack answers a names read");
+    assert_eq!(named(&names.known, &loops()), ["The shipped board"]);
+    assert!(names.missed.is_empty(), "{:?}", names.missed);
+    let seen = counted.seen();
+    assert_eq!(seen.get("list_entities"), None, "{seen:?}");
+
+    stack
+        .update_entity(
+            &loops(),
+            EntityPatch {
+                name: Some("The operator's board".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the operator names the record")
+        .written()
+        .expect("not blocked");
+    counted.reset();
+    let names = stack
+        .names(&wanted)
+        .await
+        .expect("names")
+        .expect("the stack answers a names read");
+    assert_eq!(named(&names.known, &loops()), ["The operator's board"]);
+    let seen = counted.seen();
+    assert_eq!(seen.get("list_entities"), None, "{seen:?}");
+}
+
 fn spelled_slug(n: usize) -> String {
     spelled_thing(n)
         .0

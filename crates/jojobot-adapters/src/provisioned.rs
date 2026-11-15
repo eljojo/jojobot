@@ -389,9 +389,12 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             return Ok(None);
         };
         for (entity, _) in self.provisions.records() {
+            // **A miss is a handle no row wears**, archived and folded rows included,
+            // so the record is the answer and no listing is asked for it. A handle the
+            // fold holds a row for is in `known`, and the stored row wins.
             if !wanted.handles.contains(&entity.id)
                 || names.known.iter().any(|held| held.id == entity.id)
-                || self.supplied_only(&entity.id).await?.is_none()
+                || !names.missed.contains(&entity.id)
             {
                 continue;
             }
