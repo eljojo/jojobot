@@ -5,7 +5,7 @@
 //! parent was archived is, because nothing standing answers to that parent any
 //! more, and it comes back to the tree the day the parent does.
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::dsl::Story;
 
@@ -13,15 +13,6 @@ const BOARD: &str = "project:atlas";
 const CARD: &str = "work:sigma";
 const CHILD_CARD: &str = "work:tau";
 const LOOSE_CARD: &str = "work:upsilon";
-
-fn ids(answer: &Value) -> Vec<String> {
-    answer["objects"]
-        .as_array()
-        .unwrap_or_else(|| panic!("the answer lists objects: {answer}"))
-        .iter()
-        .map(|object| object["id"].as_str().expect("an id").to_string())
-        .collect()
-}
 
 #[tokio::test]
 async fn the_roots_are_the_things_under_nothing_standing() {
@@ -39,8 +30,7 @@ async fn the_roots_are_the_things_under_nothing_standing() {
         .await;
     }
 
-    let roots = s.call("recall", json!({"roots": true})).await.json();
-    let found = ids(&roots);
+    let found = s.call("recall", json!({"roots": true})).await.ids();
     assert!(found.contains(&BOARD.to_string()), "{found:?}");
     assert!(
         !found.contains(&CARD.to_string()) && !found.contains(&CHILD_CARD.to_string()),
@@ -51,15 +41,16 @@ async fn the_roots_are_the_things_under_nothing_standing() {
     // work item under the board is not, in the same read.
     let work = s
         .call("recall", json!({"roots": true, "kind": "work"}))
-        .await
-        .json();
+        .await;
     assert!(
-        ids(&work).contains(&LOOSE_CARD.to_string()),
-        "a kind keeps the roots of its own kind: {work}"
+        work.ids().contains(&LOOSE_CARD.to_string()),
+        "a kind keeps the roots of its own kind: {}",
+        work.raw()
     );
     assert!(
-        !ids(&work).contains(&CARD.to_string()),
-        "a kind narrows the roots further: {work}"
+        !work.ids().contains(&CARD.to_string()),
+        "a kind narrows the roots further: {}",
+        work.raw()
     );
 
     // The board is archived, so nothing standing answers to it, and its card is
@@ -69,7 +60,7 @@ async fn the_roots_are_the_things_under_nothing_standing() {
         json!({"handle": BOARD, "reason": "story: the parent goes"}),
     )
     .await;
-    let after = ids(&s.call("recall", json!({"roots": true})).await.json());
+    let after = s.call("recall", json!({"roots": true})).await.ids();
     assert!(after.contains(&CARD.to_string()), "{after:?}");
     assert!(!after.contains(&BOARD.to_string()), "{after:?}");
     assert!(!after.contains(&CHILD_CARD.to_string()), "{after:?}");

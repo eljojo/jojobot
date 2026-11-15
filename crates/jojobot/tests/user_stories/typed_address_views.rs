@@ -37,15 +37,6 @@ async fn the_ledger_under_the_twelfth_rule(s: &Session) {
     .await;
 }
 
-fn ids(read: &serde_json::Value) -> Vec<String> {
-    read["objects"]
-        .as_array()
-        .unwrap_or_else(|| panic!("an answer has objects: {read}"))
-        .iter()
-        .map(|object| object["id"].as_str().unwrap_or_default().to_string())
-        .collect()
-}
-
 /// **The live read, the saved view and a rename agree.**
 #[tokio::test]
 async fn a_saved_view_names_a_decision_by_its_number_and_follows_its_rename() {
@@ -61,11 +52,11 @@ async fn a_saved_view_names_a_decision_by_its_number_and_follows_its_rename() {
             json!({"kind": "thing", "where": "ruled_by = decision:springfield-12"}),
         )
         .await;
-    assert_eq!(ids(&direct.json()), ["thing:omega"], "{}", direct.raw());
+    assert_eq!(direct.ids(), ["thing:omega"], "{}", direct.raw());
     let live = s
         .call("recall", json!({"kind": "thing", "where": line}))
         .await;
-    assert_eq!(ids(&live.json()), ["thing:omega"], "{}", live.raw());
+    assert_eq!(live.ids(), ["thing:omega"], "{}", live.raw());
 
     s.call(
         "add_entity",
@@ -76,7 +67,7 @@ async fn a_saved_view_names_a_decision_by_its_number_and_follows_its_rename() {
     let saved = s
         .call("recall", json!({"view": "twelfth-rule-ledger"}))
         .await;
-    assert_eq!(ids(&saved.json()), ["thing:omega"], "{}", saved.raw());
+    assert_eq!(saved.ids(), ["thing:omega"], "{}", saved.raw());
 
     s.call(
         "rename_entity",
@@ -86,7 +77,7 @@ async fn a_saved_view_names_a_decision_by_its_number_and_follows_its_rename() {
     let after = s
         .call("recall", json!({"view": "twelfth-rule-ledger"}))
         .await;
-    assert_eq!(ids(&after.json()), ["thing:omega"], "{}", after.raw());
+    assert_eq!(after.ids(), ["thing:omega"], "{}", after.raw());
     story.finish().await;
 }
 
@@ -107,7 +98,7 @@ async fn a_saved_view_naming_a_number_nobody_holds_is_refused() {
     let saved = s
         .call("recall", json!({"view": "twelfth-rule-ledger"}))
         .await;
-    assert_eq!(ids(&saved.json()), ["thing:omega"], "{}", saved.raw());
+    assert_eq!(saved.ids(), ["thing:omega"], "{}", saved.raw());
     let refused = s.refused(
         "add_entity",
         json!({"kind": "view", "handle": "ninety-ninth-rule-ledger", "name": "Ninety-ninth ledger",
@@ -149,12 +140,7 @@ async fn a_view_input_of_kind_decision_takes_a_decision_by_its_number() {
                    "inputs": {"ruling": "decision:springfield-12"}}),
         )
         .await;
-    assert_eq!(
-        ids(&by_handle.json()),
-        ["thing:omega"],
-        "{}",
-        by_handle.raw()
-    );
+    assert_eq!(by_handle.ids(), ["thing:omega"], "{}", by_handle.raw());
     let by_number = s
         .call(
             "recall",
@@ -162,12 +148,7 @@ async fn a_view_input_of_kind_decision_takes_a_decision_by_its_number() {
                    "inputs": {"ruling": format!("{RULES}/12")}}),
         )
         .await;
-    assert_eq!(
-        ids(&by_number.json()),
-        ["thing:omega"],
-        "{}",
-        by_number.raw()
-    );
+    assert_eq!(by_number.ids(), ["thing:omega"], "{}", by_number.raw());
     s.refused(
         "recall",
         json!({"view": "rulings-ledger", "inputs": {"ruling": format!("{RULES}/99")}}),
@@ -365,12 +346,7 @@ async fn an_address_through_two_collections_names_its_member_everywhere() {
     let address = format!("{RULES}/2/5/7");
 
     let recalled = s.call("recall", json!({"subject": address})).await;
-    assert_eq!(
-        ids(&recalled.json()),
-        ["document:homer"],
-        "{}",
-        recalled.raw()
-    );
+    assert_eq!(recalled.ids(), ["document:homer"], "{}", recalled.raw());
     let read = s.call("read_document", json!({"document": address})).await;
     assert_eq!(
         read.json()["markdown"],
@@ -390,7 +366,7 @@ async fn an_address_through_two_collections_names_its_member_everywhere() {
     let live = s
         .call("recall", json!({"kind": "thing", "where": line}))
         .await;
-    assert_eq!(ids(&live.json()), ["thing:omega"], "{}", live.raw());
+    assert_eq!(live.ids(), ["thing:omega"], "{}", live.raw());
     s.call(
         "add_entity",
         json!({"kind": "view", "handle": "minutes-ledger", "name": "Minutes ledger",
@@ -398,7 +374,7 @@ async fn an_address_through_two_collections_names_its_member_everywhere() {
     )
     .await;
     let saved = s.call("recall", json!({"view": "minutes-ledger"})).await;
-    assert_eq!(ids(&saved.json()), ["thing:omega"], "{}", saved.raw());
+    assert_eq!(saved.ids(), ["thing:omega"], "{}", saved.raw());
     story.finish().await;
 }
 
@@ -495,12 +471,7 @@ async fn a_number_through_a_renamed_collections_old_handle_names_its_member() {
     let address = "topic:rules-old/20";
 
     let recalled = s.call("recall", json!({"subject": address})).await;
-    assert_eq!(
-        ids(&recalled.json()),
-        ["document:homer"],
-        "{}",
-        recalled.raw()
-    );
+    assert_eq!(recalled.ids(), ["document:homer"], "{}", recalled.raw());
     let read = s.call("read_document", json!({"document": address})).await;
     assert_eq!(
         read.json()["markdown"],
@@ -528,7 +499,7 @@ async fn a_number_through_a_renamed_collections_old_handle_names_its_member() {
     let live = s
         .call("recall", json!({"kind": "thing", "where": line}))
         .await;
-    assert_eq!(ids(&live.json()), ["thing:omega"], "{}", live.raw());
+    assert_eq!(live.ids(), ["thing:omega"], "{}", live.raw());
     s.call(
         "add_entity",
         json!({"kind": "view", "handle": "old-minutes-ledger", "name": "Old minutes ledger",
@@ -538,7 +509,7 @@ async fn a_number_through_a_renamed_collections_old_handle_names_its_member() {
     let saved = s
         .call("recall", json!({"view": "old-minutes-ledger"}))
         .await;
-    assert_eq!(ids(&saved.json()), ["thing:omega"], "{}", saved.raw());
+    assert_eq!(saved.ids(), ["thing:omega"], "{}", saved.raw());
 
     // The old handle as the whole target is still refused.
     s.refused(
