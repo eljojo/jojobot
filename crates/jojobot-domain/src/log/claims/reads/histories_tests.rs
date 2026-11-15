@@ -242,107 +242,76 @@ fn a_claim_serves_the_lineage_and_mark_of_a_record_the_state_does_not_hold() {
 /// held and has been renamed since. The store maps a stored home through the
 /// current handle, so the State serves the lineage under `work:gamma` and not
 /// under the id it was filed with.
-#[test]
-fn a_missing_record_is_served_under_the_handle_its_home_wears_now() {
-    let mut state = State::default();
-    for event in things() {
-        state.apply(&stamped(None, None, event));
-    }
-    state.apply(&stamped(
-        None,
-        None,
-        ClaimEvent::ObjectCreated {
-            object: object("k9"),
-            body: body("work", "work:gamma"),
-        },
-    ));
-    state.apply(&stamped(
-        None,
-        None,
-        ClaimEvent::AddressBound {
-            object: object("k9"),
-            address: "work:epsilon".to_string(),
-        },
-    ));
-    state.apply(&stamped(
-        None,
-        None,
-        ClaimEvent::AddressRetired {
-            object: object("k9"),
-            address: "work:epsilon".to_string(),
-            day: jiff::civil::date(2026, 4, 1),
-        },
-    ));
-    state.apply(&stamped(
-        None,
-        None,
-        ClaimEvent::AddressBound {
-            object: object("k9"),
-            address: "work:gamma".to_string(),
-        },
-    ));
-    state.apply(&stamped(
-        None,
-        None,
-        created(
-            "work:alpha/f2",
-            ClaimBody {
-                derived_from: Some(record("k9/f3")),
-                ..claim("f2", "work:alpha", "follows from a record nothing holds", 2)
-            },
-        ),
-    ));
-    let served = FactAddress::new(EntityId("work:gamma".into()), FactId("f3".into()));
-    let fact = state.fact(&record("work:alpha/f2")).unwrap();
-    assert_eq!(fact.derived_from, Some(served.clone()), "the current fact");
-    let parts = state.claim_chains_of(&object("work:alpha"));
-    let write = parts[&FactId("f2".into())].last().unwrap();
-    assert_eq!(write.derived_from, Some(served), "the history");
-}
-
+///
 /// **A missing record of a supplied home is served under the home's handle.** A
 /// supplied record's object id carries a `/` (`supplied/<handle>`), so the record
 /// id of a claim filed on it carries two. The last one splits the local id off, and
 /// the home that is left is the object the State holds, served at its handle.
 #[test]
-fn a_missing_record_of_a_supplied_home_is_served_under_its_handle() {
-    let mut state = State::default();
-    for event in things() {
-        state.apply(&stamped(None, None, event));
-    }
-    state.apply(&stamped(
-        None,
-        None,
-        ClaimEvent::ObjectCreated {
-            object: object("supplied/work:delta"),
-            body: body("work", "work:delta"),
-        },
-    ));
-    state.apply(&stamped(
-        None,
-        None,
-        ClaimEvent::AddressBound {
-            object: object("supplied/work:delta"),
-            address: "work:delta".to_string(),
-        },
-    ));
-    state.apply(&stamped(
-        None,
-        None,
-        created(
-            "work:alpha/f2",
-            ClaimBody {
-                derived_from: Some(record("supplied/work:delta/f3")),
-                ..claim("f2", "work:alpha", "follows from a record nothing holds", 2)
+fn a_missing_record_is_served_under_its_homes_handle() {
+    let mut actual = Vec::new();
+    let mut expected = Vec::new();
+    for (home, handle, former) in [
+        ("k9", "work:gamma", Some("work:epsilon")),
+        ("supplied/work:delta", "work:delta", None),
+    ] {
+        let mut state = State::default();
+        for event in things() {
+            state.apply(&stamped(None, None, event));
+        }
+        state.apply(&stamped(
+            None,
+            None,
+            ClaimEvent::ObjectCreated {
+                object: object(home),
+                body: body("work", handle),
             },
-        ),
-    ));
-    let served = FactAddress::new(EntityId("work:delta".into()), FactId("f3".into()));
-    let fact = state.fact(&record("work:alpha/f2")).unwrap();
-    assert_eq!(fact.derived_from, Some(served.clone()), "the current fact");
-    let parts = state.claim_chains_of(&object("work:alpha"));
-    let write = parts[&FactId("f2".into())].last().unwrap();
-    assert_eq!(write.derived_from, Some(served), "the history");
+        ));
+        if let Some(former) = former {
+            for event in [
+                ClaimEvent::AddressBound {
+                    object: object(home),
+                    address: former.to_string(),
+                },
+                ClaimEvent::AddressRetired {
+                    object: object(home),
+                    address: former.to_string(),
+                    day: jiff::civil::date(2026, 4, 1),
+                },
+            ] {
+                state.apply(&stamped(None, None, event));
+            }
+        }
+        state.apply(&stamped(
+            None,
+            None,
+            ClaimEvent::AddressBound {
+                object: object(home),
+                address: handle.to_string(),
+            },
+        ));
+        state.apply(&stamped(
+            None,
+            None,
+            created(
+                "work:alpha/f2",
+                ClaimBody {
+                    derived_from: Some(record(&format!("{home}/f3"))),
+                    ..claim("f2", "work:alpha", "follows from a record nothing holds", 2)
+                },
+            ),
+        ));
+        let served = FactAddress::new(EntityId(handle.into()), FactId("f3".into()));
+        let fact = state.fact(&record("work:alpha/f2")).unwrap();
+        let parts = state.claim_chains_of(&object("work:alpha"));
+        let write = parts[&FactId("f2".into())].last().unwrap();
+        actual.push((fact.derived_from, write.derived_from.clone()));
+        expected.push((Some(served.clone()), Some(served)));
+    }
+    assert_eq!(
+        actual, expected,
+        "the current fact and the history for each home"
+    );
 }
 
 /// **A field written by a bot that was merged away is served under the handle
