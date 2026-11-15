@@ -42,6 +42,7 @@ const SWITCHED_SESSIONS: &[&str] = &[
     "session_history",
     "journal_history",
     "scan_session_history",
+    "live_by_agent",
 ];
 
 /// The mail reads the image serves.

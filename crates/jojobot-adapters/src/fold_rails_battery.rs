@@ -236,6 +236,28 @@ impl SessionRails<'_> {
             )
             .await;
         }
+        // **Who hosts a live run**: every agent a run holds now, the agents the walk
+        // moves runs between, and one no run ever had.
+        let mut agents: Vec<String> = all.iter().filter_map(|r| r.agent.clone()).collect();
+        agents.extend(
+            ["agent-x", "agent-y", "agent-z", "agent-nobody"]
+                .into_iter()
+                .map(String::from),
+        );
+        agents.sort();
+        agents.dedup();
+        for agent in &agents {
+            check(
+                when,
+                "live_by_agent",
+                agent,
+                calls,
+                s,
+                f.live_by_agent(agent),
+                d.live_by_agent(agent),
+            )
+            .await;
+        }
         // **The wordings of every entry the runs hold**, and of ids that are no
         // entry of the run, beside a run that does not exist.
         for run in &all {
@@ -327,6 +349,22 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
         .expect("begin a run with a name that sorts before");
     p.agree("after runs that start before and at the same instant as the others")
         .await;
+
+    // **Hosts of runs.** Three runs share one agent and the newest start answers; the newest
+    // then moves to another agent, so the first is an earlier host of it and answers with
+    // the next newest.
+    for run in [
+        &SessionId("mmmmm1".into()),
+        &homer.id,
+        &SessionId("aaaaa1".into()),
+    ] {
+        w.set_agent(run, "agent-x").await.expect("host a run");
+    }
+    p.agree("after three runs share a host").await;
+    w.set_agent(&SessionId("aaaaa1".into()), "agent-y")
+        .await
+        .expect("move a run to another host");
+    p.agree("after the newest run moves to another host").await;
 
     calls.reset();
     let first = w
@@ -512,6 +550,8 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
 
     // A run abandoned, taken back, then wrapped, with the window reopened.
     let bart = SessionId("bbbbb1".into());
+    w.set_agent(&bart, "agent-z").await.expect("host the run");
+    p.agree("after a run is hosted before it ends").await;
     calls.reset();
     w.close(&bart, SessionState::Abandoned)
         .await
