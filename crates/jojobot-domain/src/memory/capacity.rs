@@ -433,9 +433,9 @@ mod tests {
     /// nothing that adds. Another kind has no default and takes its own setting.
     #[test]
     fn admission_follows_kind_setting_count_and_the_reserve() {
-        // Kind (empty is no kind), the setting (empty reads as none), live
-        // records, records added, whether the reserve is offered, and what is
-        // admitted.
+        // Kind (empty is no kind), the setting (empty is no setting key at all),
+        // live records, records added, whether the reserve is offered, and what
+        // is admitted. A setting present and empty is held by another test.
         let rows = [
             ("thread", "", 3, 1, true, "borrowed 4/3"),
             ("thread", "", 4, 1, true, "refused"),
@@ -455,7 +455,10 @@ mod tests {
                 "topic" => Some(EntityKind::TOPIC),
                 _ => None,
             };
-            let fields = held(&[(RECORD_CAPACITY, setting)]);
+            let fields = match setting {
+                "" => held(&[]),
+                number => held(&[(RECORD_CAPACITY, number)]),
+            };
             let got = match ask(kind, &fields, &active(live), adding, borrow) {
                 Admission::Lands => "lands".to_string(),
                 Admission::Refused(_) => "refused".to_string(),

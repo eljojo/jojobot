@@ -215,9 +215,12 @@ mod tests {
             let there: Vec<&str> = there.split(',').filter(|n| !n.is_empty()).collect();
             let got = match decide_create(&name(incoming), &boxes(&there), None) {
                 Decision::Proceed => "proceed".to_string(),
-                Decision::Block(found) => {
-                    format!("{} {:?}", found[0].name.as_str(), found[0].reason).to_lowercase()
-                }
+                Decision::Block(found) => match found.first() {
+                    Some(first) => {
+                        format!("{} {:?}", first.name.as_str(), first.reason).to_lowercase()
+                    }
+                    None => "block with no candidate".to_string(),
+                },
             };
             assert_eq!(got, wanted, "{incoming} among {there:?}");
         }
