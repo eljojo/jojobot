@@ -107,8 +107,7 @@ pub async fn migrated_database(
     store: &crate::dolt::Dolt,
     name: &str,
 ) -> Result<sqlx::MySqlPool, crate::dolt::StartError> {
-    static TEMPLATE: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
-    let backup = TEMPLATE.get_or_try_init(build_template).await?;
+    let backup = template().await?;
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "CALL DOLT_BACKUP('restore', 'file://{}', '{name}')",
         backup.display()
@@ -117,6 +116,99 @@ pub async fn migrated_database(
     .await
     .map_err(|e| crate::dolt::StartError::Spawn(e.to_string()))?;
     store.database(name).await
+}
+
+/// The template backup of this process, built on first use.
+async fn template() -> Result<&'static std::path::PathBuf, crate::dolt::StartError> {
+    static TEMPLATE: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
+    TEMPLATE.get_or_try_init(build_template).await
+}
+
+/// **A migrated database of its own on the one store this test binary shares.**
+///
+/// The store starts on the first call and serves every case after it, so a
+/// binary of fifty cases starts one server and not fifty. **Isolation is the
+/// database**: each call restores the template under a name no other call in the
+/// process gets, and hands back a pool that reaches that database only, so a row
+/// one case writes is invisible to every other case. `label` says what the case
+/// is for and is part of the name.
+///
+/// **The server runs on a thread of its own, with a runtime of its own.** A case's
+/// runtime ends with the case, and the server is tied to the thread that spawned
+/// it. The pool this returns belongs to the case's runtime, and so does every
+/// connection it opens.
+///
+/// **A case that needs a server of its own keeps `Dolt::start`:** one that stops or
+/// restarts the store, reads its stderr or its log, asserts on its port or its
+/// data directory, or is about a migration. A case that stopped the shared store
+/// would break every case after it, which is why none can.
+pub async fn shared_database(label: &str) -> Result<sqlx::MySqlPool, crate::dolt::StartError> {
+    use crate::dolt::StartError;
+    use sqlx::Connection;
+    static NUMBER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let name = format!(
+        "{}_{}",
+        label.replace(|c: char| !c.is_ascii_alphanumeric(), "_"),
+        NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let url = crate::dolt::server_url(shared_port());
+    let backup = template().await?;
+    let mut admin = sqlx::MySqlConnection::connect(&url)
+        .await
+        .map_err(|e| StartError::Spawn(e.to_string()))?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CALL DOLT_BACKUP('restore', 'file://{}', '{name}')",
+        backup.display()
+    )))
+    .execute(&mut admin)
+    .await
+    .map_err(|e| StartError::Spawn(e.to_string()))?;
+    let _ = admin.close().await;
+    sqlx::mysql::MySqlPoolOptions::new()
+        .max_connections(4)
+        .acquire_timeout(UNHURRIED)
+        .connect(&format!("{url}/{name}"))
+        .await
+        .map_err(|e| StartError::Spawn(e.to_string()))
+}
+
+/// The port of the store this process shares, started on first use.
+fn shared_port() -> u16 {
+    static PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    *PORT.get_or_init(|| {
+        let (told, heard) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("shared-store".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("a runtime for the shared store");
+                runtime.block_on(async move {
+                    let root = std::env::temp_dir()
+                        .join(format!("{SHARED_DIR_PREFIX}{}", std::process::id()));
+                    sweep_dead_templates();
+                    std::fs::create_dir_all(&root).expect("a directory for the shared store");
+                    remove_template_at_exit(root.clone());
+                    let store = start_unhurried(&root, free_port()).await;
+                    let _ = told.send(
+                        store
+                            .as_ref()
+                            .map(|store| store.port())
+                            .map_err(|e| e.to_string()),
+                    );
+                    // **Held here for the life of the process**: dropping it would
+                    // kill the server under the cases that still use it.
+                    let _store = store;
+                    std::future::pending::<()>().await
+                })
+            })
+            .expect("a thread for the shared store");
+        heard
+            .recv()
+            .expect("the shared store thread answers")
+            .unwrap_or_else(|why| panic!("the shared store did not start: {why}"))
+    })
 }
 
 /// [`migrated_database`] with the claims import done on it: the log holds a
@@ -193,6 +285,9 @@ pub async fn import_claims_supplying(
 /// one and a migration added between runs cannot meet a stale template.
 const TEMPLATE_DIR_PREFIX: &str = "jojobot-store-template-";
 
+/// The same, for the store this process shares ([`shared_database`]).
+const SHARED_DIR_PREFIX: &str = "jojobot-store-shared-";
+
 /// Build the template once for this process: migrate one database on a store of
 /// its own and back it up to a directory a running server can restore from.
 ///
@@ -249,16 +344,20 @@ async fn build_template_in(
 /// dropped; the hook below runs on the way out of a normal end and of a failed
 /// run alike. A kill does not reach it, which is what the sweep is for.
 fn remove_template_at_exit(root: std::path::PathBuf) {
-    static ROOT: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+    static ROOTS: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
     extern "C" fn at_exit() {
-        if let Ok(mut root) = ROOT.lock()
-            && let Some(root) = root.take()
-        {
-            let _ = std::fs::remove_dir_all(root);
+        if let Ok(mut roots) = ROOTS.lock() {
+            for root in roots.drain(..) {
+                let _ = std::fs::remove_dir_all(root);
+            }
         }
     }
-    if let Ok(mut held) = ROOT.lock() {
-        *held = Some(root);
+    let first = ROOTS.lock().is_ok_and(|mut held| {
+        held.push(root);
+        held.len() == 1
+    });
+    if !first {
+        return;
     }
     // SAFETY: the hook takes no arguments and touches only the path above and
     // the file system.
@@ -286,9 +385,10 @@ fn sweep_dead_templates_in(parent: &std::path::Path) {
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
-        let Some(pid) = name
-            .to_string_lossy()
-            .strip_prefix(TEMPLATE_DIR_PREFIX)
+        let name = name.to_string_lossy();
+        let Some(pid) = [TEMPLATE_DIR_PREFIX, SHARED_DIR_PREFIX]
+            .iter()
+            .find_map(|prefix| name.strip_prefix(prefix))
             .and_then(|pid| pid.parse::<u32>().ok())
         else {
             continue;
@@ -842,5 +942,49 @@ mod tests {
                 .all(|path| path.starts_with(std::env::temp_dir())),
             "a path is made under the temp directory: {paths:?}"
         );
+    }
+
+    async fn probe_rows(pool: &sqlx::MySqlPool) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar("SELECT COUNT(*) FROM isolation_probe")
+            .fetch_one(pool)
+            .await
+    }
+
+    /// **Two cases on the shared store cannot see each other's data.** A table
+    /// made and filled in one database is absent from a second one opened after
+    /// the write.
+    #[tokio::test]
+    async fn a_row_written_in_one_shared_database_is_not_in_another() {
+        // **One label for both**, so only the counter tells the two names apart.
+        let writer = shared_database("isolation").await.expect("one");
+        sqlx::query("CREATE TABLE isolation_probe (n INT)")
+            .execute(&writer)
+            .await
+            .expect("a table is made");
+        sqlx::query("INSERT INTO isolation_probe VALUES (1)")
+            .execute(&writer)
+            .await
+            .expect("a row is written");
+        assert_eq!(probe_rows(&writer).await.expect("the writer reads it"), 1);
+        let reader = shared_database("isolation").await.expect("two");
+        assert!(
+            probe_rows(&reader).await.is_err(),
+            "the second database has no such table"
+        );
+    }
+
+    /// **Every case on the shared store reaches one server**, so the server is
+    /// started once per binary and not once per case.
+    #[tokio::test]
+    async fn two_cases_on_the_shared_store_reach_one_server() {
+        let port = |pool: sqlx::MySqlPool| async move {
+            sqlx::query_scalar::<_, i64>("SELECT @@port")
+                .fetch_one(&pool)
+                .await
+                .expect("the server names its port")
+        };
+        let one = shared_database("isolation_port_a").await.expect("one");
+        let two = shared_database("isolation_port_b").await.expect("two");
+        assert_eq!(port(one).await, port(two).await);
     }
 }
