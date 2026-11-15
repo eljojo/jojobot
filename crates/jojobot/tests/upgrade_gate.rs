@@ -3668,32 +3668,22 @@ fn a_boot_over_a_store_with_a_snapshot_may_not_warn_that_none_was_used() {
     assert_eq!(check_the_no_snapshot_warning(&[], true), Ok(()));
 }
 
-/// **The slow-statement alert is not a failed boot.** On a busy machine a
-/// statement of the boot runs past sqlx's alert threshold and sqlx says so at
-/// warning level. That says nothing about the boot, so the gate lets exactly
-/// that line through: by its target and its message.
-#[tokio::test]
-async fn a_slow_statement_alert_is_not_a_degradation() {
-    let logged = lines_logged_around_a_slow_statement("slow-alert-alone").await;
-    let alert = logged
-        .iter()
-        .find(|line| line.contains("sqlx::query: slow statement"))
-        .unwrap_or_else(|| {
-            panic!("sqlx logged no slow-statement alert, so this proves nothing: {logged:?}")
-        });
-    assert!(
-        degradations(std::slice::from_ref(alert), false, &[]).is_empty(),
-        "the slow-statement alert counted as a degraded boot: {alert}"
-    );
-}
-
-/// **Every other warning and every error still fails the gate**, beside the
-/// alert it lets through. A warning from the same target with another message,
+/// **The slow-statement alert is not a failed boot, and every other warning and
+/// every error still fails the gate.** On a busy machine a statement of the boot
+/// runs past sqlx's alert threshold and sqlx says so at warning level; the gate
+/// lets exactly that line through, by its target and its message. A warning from
+/// the same target with another message,
 /// the alert's own message from another target, a warning from anywhere else
 /// and an error are each a degradation, and the alert in the same log is not.
 #[tokio::test]
 async fn any_other_warning_or_error_is_still_a_degradation_beside_the_alert() {
     let logged = lines_logged_around_a_slow_statement("slow-alert-beside").await;
+    assert!(
+        logged
+            .iter()
+            .any(|line| line.contains("sqlx::query: slow statement")),
+        "sqlx logged no slow-statement alert, so this proves nothing: {logged:?}"
+    );
     let failing = degradations(&logged, false, &[]);
     assert_eq!(
         failing.len(),
@@ -3755,30 +3745,13 @@ async fn lines_logged_around_a_slow_acquire(label: &str, threshold: Duration) ->
         .collect()
 }
 
-/// **The slow-acquire alert is not a failed boot.** On a busy machine a
-/// connection of the boot takes longer to acquire than sqlx's threshold and sqlx
-/// says so at warning level. That says nothing about the boot, so the gate lets
-/// exactly that line through: by its target and its message.
-#[tokio::test]
-async fn a_slow_acquire_alert_is_not_a_degradation() {
-    let logged =
-        lines_logged_around_a_slow_acquire("slow-acquire-alone", Duration::from_micros(7)).await;
-    let alert = logged
-        .iter()
-        .find(|line| line.contains("sqlx::pool::acquire: acquired connection"))
-        .unwrap_or_else(|| {
-            panic!("sqlx logged no slow-acquire alert, so this proves nothing: {logged:?}")
-        });
-    assert!(
-        degradations(std::slice::from_ref(alert), false, &[]).is_empty(),
-        "the slow-acquire alert counted as a degraded boot: {alert}"
-    );
-}
-
-/// **Every other warning still fails the gate**, beside the alert it lets
-/// through. A warning from the same target with another message, the alert's own
-/// message from another target and a warning from anywhere else are each a
-/// degradation, and the alert in the same log is not.
+/// **The slow-acquire alert is not a failed boot, and every other warning still
+/// fails the gate.** On a busy machine a connection of the boot takes longer to
+/// acquire than sqlx's threshold and sqlx says so at warning level; the gate lets
+/// exactly that line through, by its target and its message. A warning from the
+/// same target with another message, the alert's own message from another target
+/// and a warning from anywhere else are each a degradation, and the alert in the
+/// same log is not.
 #[tokio::test]
 async fn any_other_warning_is_still_a_degradation_beside_the_acquire_alert() {
     let logged =
