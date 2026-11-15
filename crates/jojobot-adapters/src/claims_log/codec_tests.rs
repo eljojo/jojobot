@@ -484,21 +484,29 @@ fn claim_event_variants() -> Vec<String> {
         .split("pub enum ClaimEvent {")
         .nth(1)
         .expect("the enum is in the source");
+    variants_in(body)
+}
+
+/// The variant names at the top level of an enum body. A raw identifier (`r#Name`) is the
+/// variant `Name`: serde spells it without the prefix.
+fn variants_in(body: &str) -> Vec<String> {
     body.lines()
         .skip(1)
         .take_while(|line| *line != "}")
-        .filter(|line| {
-            line.starts_with("    ")
-                && !line.starts_with("     ")
-                && line.chars().nth(4).is_some_and(char::is_uppercase)
-        })
-        .map(|line| {
-            line.trim()
-                .chars()
-                .take_while(|c| c.is_alphanumeric())
-                .collect()
-        })
+        .filter(|line| line.starts_with("    ") && !line.starts_with("     "))
+        .map(|line| line.trim().trim_start_matches("r#"))
+        .filter(|name| name.chars().next().is_some_and(char::is_uppercase))
+        .map(|name| name.chars().take_while(|c| c.is_alphanumeric()).collect())
         .collect()
+}
+
+#[test]
+fn a_raw_identifier_is_a_variant_under_its_plain_name() {
+    let body = "{\n    Plain,\n    r#Raw { x: u8 },\n    // a comment\n}\n";
+    assert_eq!(
+        variants_in(body),
+        vec!["Plain".to_string(), "Raw".to_string()]
+    );
 }
 
 /// **Every variant of `ClaimEvent` is a shape the wire enum has under the same name.** A new event
