@@ -472,6 +472,74 @@ async fn each_defect_of_a_snapshot_has_its_own_named_reason() {
     unreadable.checksum = Sha256::digest(&unreadable.blob).into();
     log.replace_snapshot(Some(unreadable));
     assert_eq!(reason_of(&log).await, Some(Skip::Unreadable));
+    // A blob that parses as this build's State but keeps the position zero, which no batch
+    // holds, is unreadable too.
+    fn zero_first(value: &mut serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Object(fields) => {
+                if fields
+                    .get("position")
+                    .is_some_and(serde_json::Value::is_u64)
+                {
+                    fields.insert("position".into(), serde_json::json!(0));
+                    return true;
+                }
+                fields.values_mut().any(zero_first)
+            }
+            serde_json::Value::Array(items) => items.iter_mut().any(zero_first),
+            _ => false,
+        }
+    }
+    use jojobot_domain::log::claims::{ClaimEvent, KindId, ObjectBody};
+    let claiming = InMemoryLog::default();
+    append(
+        &claiming,
+        "claims",
+        vec![crate::claims_log::codec::encode(
+            &jojobot_domain::log::Event {
+                event_kind: String::new(),
+                meaning_version: 1,
+                actor: None,
+                run: None,
+                session_card: None,
+                request: None,
+                part: None,
+                occurred_at: None,
+                written_at: None,
+                imported_source_time: None,
+                payload: ClaimEvent::ObjectCreated {
+                    object: ObjectId("k1".into()),
+                    body: ObjectBody {
+                        kind: KindId("person".into()),
+                        parent: None,
+                        name: "person:homer".into(),
+                        source: "operator".into(),
+                        aliases: Vec::new(),
+                        boot: None,
+                        metadata: Default::default(),
+                        archived: false,
+                        bound_to: None,
+                    },
+                },
+            },
+        )],
+    )
+    .await;
+    take_snapshot(&claiming, jiff::Timestamp::UNIX_EPOCH)
+        .await
+        .unwrap();
+    let good = claiming.load_snapshot().await.unwrap().unwrap();
+    let mut parsed: serde_json::Value = serde_json::from_slice(&good.blob).unwrap();
+    assert!(
+        zero_first(&mut parsed["claims"]),
+        "the control State keeps a claims position to zero"
+    );
+    let mut zeroed = good.clone();
+    zeroed.blob = serde_json::to_vec(&parsed).unwrap();
+    zeroed.serialized_length = zeroed.blob.len() as u64;
+    zeroed.checksum = Sha256::digest(&zeroed.blob).into();
+    claiming.replace_snapshot(Some(zeroed));
+    assert_eq!(reason_of(&claiming).await, Some(Skip::Unreadable));
 }
 
 /// **A boot that skips a snapshot counts the skip under its reason.** The count is

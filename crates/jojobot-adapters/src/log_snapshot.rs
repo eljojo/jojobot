@@ -242,7 +242,9 @@ async fn restored(log: &dyn LogStore, validity: &Validity) -> Result<Result<Boot
     };
     // **The one door a loaded State comes through**: what a family leaves out of its
     // serialized form is made again here.
-    let state = state.restored();
+    let Ok(state) = state.restored() else {
+        return Ok(Err(Skip::Unreadable));
+    };
     Ok(Ok(Boot {
         state,
         position: snapshot.covered_position,

@@ -41,9 +41,9 @@ impl State {
 
     /// **A State read back from a snapshot, finished.** The one door a loaded State comes
     /// through: what each family leaves out of its serialized form is made again here.
-    pub fn restored(mut self) -> Self {
-        self.claims = self.claims.restored();
-        self
+    pub fn restored(mut self) -> Result<Self, String> {
+        self.claims = self.claims.restored()?;
+        Ok(self)
     }
 }
 
@@ -82,7 +82,10 @@ mod tests {
             serde_json::from_slice(&serde_json::to_vec(&state).expect("the State serializes"))
                 .expect("the State reads back");
         assert!(
-            restored.restored().ledger_seen,
+            restored
+                .restored()
+                .expect("the State is one a log built")
+                .ledger_seen,
             "a restored State forgot that the log holds a ledger event"
         );
     }
