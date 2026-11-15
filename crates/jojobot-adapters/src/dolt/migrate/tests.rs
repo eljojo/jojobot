@@ -827,77 +827,95 @@ fn every_migration_is_a_single_statement() {
 /// the only thing that ends the wedge.
 ///
 /// Built with the runner's own step, so this is the state a real
-/// interruption leaves rather than an imagined one.
+/// interruption leaves rather than an imagined one. **One row per migration
+/// that adds a column**, each on a database of its own so no row can lean on
+/// another's state; one store serves them all.
 #[tokio::test]
 async fn an_interrupted_add_column_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-alter");
+    // (version, table, the column the migration adds)
+    const ROWS: &[(&str, &str, &str)] = &[
+        ("0015_type_field_origin", "type_field", "origin"),
+        ("0017_type_field_folds", "type_field", "folds"),
+        ("0022_type_field_owner", "type_field", "owner"),
+        ("0023_type_field_required", "type_field", "required"),
+        ("0025_type_field_one_of", "type_field", "one_of"),
+        ("0026_session_timezone", "session", "timezone"),
+        ("0027_fact_inserted_at", "fact", "inserted_at"),
+        ("0028_fact_stale_after", "fact", "stale_after"),
+        ("0030_session_stated_day", "session", "started_on"),
+        (
+            "0055_message_posted_by_session",
+            "message",
+            "posted_by_session",
+        ),
+    ];
+    let scratch = Scratch::new("migrate-interrupted-add-column");
     let path = scratch.0.clone();
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("alteredpartway")
-        .await
-        .expect("a database of its own");
 
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the statement
-    // itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0015_type_field_origin")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0015_type_field_origin")
-        .await
-        .expect("the marker lands");
+    for (version, table, column) in ROWS {
+        let name = format!("{table}{column}partway").replace('_', "");
+        let pool = store.database(&name).await.expect("a database of its own");
 
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted alter that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded.iter().any(|v| v == "0015_type_field_origin"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
+        run(&pool).await.expect("the schema");
+        // The state a death in the window leaves: the ledger row taken away,
+        // the marker committed, the column already there because the
+        // statement itself had succeeded.
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind(version)
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, version).await.expect("the marker lands");
 
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the same
-    // marker over a table that is still there — so a runner asking about
-    // the table answers "it landed" for a change that did not, records the
-    // version, and leaves a schema missing a column with a ledger saying it
-    // has one. Nothing later repairs that, and every read of the column
-    // fails.
-    sqlx::raw_sql("ALTER TABLE type_field DROP COLUMN origin")
+        let applied = run(&pool).await.expect("the start completes the schema");
+        assert!(
+            applied.is_empty(),
+            "{version}: an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        assert!(
+            recorded.iter().any(|v| v == version),
+            "{version}: …and the ledger says so, so the next start asks nothing: {recorded:?}"
+        );
+
+        // **The other direction, and it is what makes the first one mean
+        // anything.** A death BEFORE the statement took effect leaves the
+        // same marker over a table that is still there — so a runner asking
+        // about the table answers "it landed" for a change that did not,
+        // records the version, and leaves a schema missing a column with a
+        // ledger saying it has one. Nothing later repairs that, and every
+        // read of the column fails.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER TABLE {table} DROP COLUMN {column}"
+        )))
         .execute(&pool)
         .await
         .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0015_type_field_origin")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0015_type_field_origin")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0015_type_field_origin".to_string()],
-        "an interrupted alter that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "type_field", "origin")
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind(version)
+            .execute(&pool)
             .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
+            .expect("the ledger row goes");
+        mark_begun(&pool, version).await.expect("the marker lands");
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec![version.to_string()],
+            "{version}: an interrupted add-column that did NOT land is applied",
+        );
+        assert!(
+            column_exists(&pool, table, column)
+                .await
+                .expect("the schema is readable"),
+            "{version}: …and the column the migration is for is really there afterwards",
+        );
+    }
 
     store.stop().await;
 }
@@ -2534,590 +2552,6 @@ async fn a_boot_killed_part_way_through_the_entity_write_snapshot_completes_on_t
     store.stop().await;
 }
 
-/// **The shape `0017_type_field_folds` declares is the one that recovers
-/// it.** The same question `0015`'s own test drives for
-/// `type_field.origin`.
-#[tokio::test]
-async fn an_interrupted_type_field_folds_add_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-type-field-folds");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("typefieldfoldspartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the
-    // statement itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0017_type_field_folds")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0017_type_field_folds")
-        .await
-        .expect("the marker lands");
-
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded.iter().any(|v| v == "0017_type_field_folds"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
-
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the
-    // same marker over a table that is still there.
-    sqlx::raw_sql("ALTER TABLE type_field DROP COLUMN folds")
-        .execute(&pool)
-        .await
-        .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0017_type_field_folds")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0017_type_field_folds")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0017_type_field_folds".to_string()],
-        "an interrupted add-column that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "type_field", "folds")
-            .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
-
-    store.stop().await;
-}
-
-/// **The shape `0022_type_field_owner` declares is the one that recovers
-/// it.** The same question `0015`'s own test drives for
-/// `type_field.origin`.
-#[tokio::test]
-async fn an_interrupted_type_field_owner_add_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-type-field-owner");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("typefieldownerpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the
-    // statement itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0022_type_field_owner")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0022_type_field_owner")
-        .await
-        .expect("the marker lands");
-
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded.iter().any(|v| v == "0022_type_field_owner"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
-
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the
-    // same marker over a table that is still there.
-    sqlx::raw_sql("ALTER TABLE type_field DROP COLUMN owner")
-        .execute(&pool)
-        .await
-        .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0022_type_field_owner")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0022_type_field_owner")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0022_type_field_owner".to_string()],
-        "an interrupted add-column that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "type_field", "owner")
-            .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
-
-    store.stop().await;
-}
-
-/// **The shape `0023_type_field_required` declares is the one that
-/// recovers it.** The same question `0015`'s own test drives for
-/// `type_field.origin`.
-#[tokio::test]
-async fn an_interrupted_type_field_required_add_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-type-field-required");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("typefieldrequiredpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the
-    // statement itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0023_type_field_required")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0023_type_field_required")
-        .await
-        .expect("the marker lands");
-
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded.iter().any(|v| v == "0023_type_field_required"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
-
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the
-    // same marker over a table that is still there.
-    sqlx::raw_sql("ALTER TABLE type_field DROP COLUMN required")
-        .execute(&pool)
-        .await
-        .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0023_type_field_required")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0023_type_field_required")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0023_type_field_required".to_string()],
-        "an interrupted add-column that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "type_field", "required")
-            .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
-
-    store.stop().await;
-}
-
-/// **The shape `0025_type_field_one_of` declares is the one that
-/// recovers it.** The same question `0015`'s own test drives for
-/// `type_field.origin`.
-#[tokio::test]
-async fn an_interrupted_type_field_one_of_add_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-type-field-one-of");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("typefieldoneofpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the
-    // statement itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0025_type_field_one_of")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0025_type_field_one_of")
-        .await
-        .expect("the marker lands");
-
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded.iter().any(|v| v == "0025_type_field_one_of"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
-
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the
-    // same marker over a table that is still there.
-    sqlx::raw_sql("ALTER TABLE type_field DROP COLUMN one_of")
-        .execute(&pool)
-        .await
-        .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0025_type_field_one_of")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0025_type_field_one_of")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0025_type_field_one_of".to_string()],
-        "an interrupted add-column that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "type_field", "one_of")
-            .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
-
-    store.stop().await;
-}
-
-/// **The shape `0026_session_timezone` declares is the one that recovers
-/// it.** The same question `0015`'s own test drives for
-/// `type_field.origin`.
-#[tokio::test]
-async fn an_interrupted_session_timezone_add_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-session-timezone");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("sessiontimezonepartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the
-    // statement itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0026_session_timezone")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0026_session_timezone")
-        .await
-        .expect("the marker lands");
-
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded.iter().any(|v| v == "0026_session_timezone"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
-
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the
-    // same marker over a table that is still there.
-    sqlx::raw_sql("ALTER TABLE session DROP COLUMN timezone")
-        .execute(&pool)
-        .await
-        .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0026_session_timezone")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0026_session_timezone")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0026_session_timezone".to_string()],
-        "an interrupted add-column that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "session", "timezone")
-            .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
-
-    store.stop().await;
-}
-
-/// **The shape `0027_fact_inserted_at` declares is the one that recovers
-/// it.** The same question `0015`'s own test drives for
-/// `type_field.origin`.
-#[tokio::test]
-async fn an_interrupted_fact_inserted_at_add_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-fact-inserted-at");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("factinsertedatpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the
-    // statement itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0027_fact_inserted_at")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0027_fact_inserted_at")
-        .await
-        .expect("the marker lands");
-
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded.iter().any(|v| v == "0027_fact_inserted_at"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
-
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the
-    // same marker over a table that is still there.
-    sqlx::raw_sql("ALTER TABLE fact DROP COLUMN inserted_at")
-        .execute(&pool)
-        .await
-        .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0027_fact_inserted_at")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0027_fact_inserted_at")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0027_fact_inserted_at".to_string()],
-        "an interrupted add-column that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "fact", "inserted_at")
-            .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
-
-    store.stop().await;
-}
-
-/// **The shape `0028_fact_stale_after` declares is the one that recovers
-/// it.** The same question `0015`'s own test drives for
-/// `type_field.origin`.
-#[tokio::test]
-async fn an_interrupted_fact_stale_after_add_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-fact-stale-after");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("factstaleafterpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the
-    // statement itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0028_fact_stale_after")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0028_fact_stale_after")
-        .await
-        .expect("the marker lands");
-
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded.iter().any(|v| v == "0028_fact_stale_after"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
-
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the
-    // same marker over a table that is still there.
-    sqlx::raw_sql("ALTER TABLE fact DROP COLUMN stale_after")
-        .execute(&pool)
-        .await
-        .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0028_fact_stale_after")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0028_fact_stale_after")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0028_fact_stale_after".to_string()],
-        "an interrupted add-column that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "fact", "stale_after")
-            .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
-
-    store.stop().await;
-}
-
-/// **The shape `0030_session_stated_day` declares is the one that
-/// recovers it.** The same question `0015`'s own test drives for
-/// `type_field.origin`.
-#[tokio::test]
-async fn an_interrupted_session_started_on_add_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-session-started-on");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("sessionstartedonpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the
-    // statement itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0030_session_stated_day")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0030_session_stated_day")
-        .await
-        .expect("the marker lands");
-
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded.iter().any(|v| v == "0030_session_stated_day"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
-
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the
-    // same marker over a table that is still there.
-    sqlx::raw_sql("ALTER TABLE session DROP COLUMN started_on")
-        .execute(&pool)
-        .await
-        .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0030_session_stated_day")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0030_session_stated_day")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0030_session_stated_day".to_string()],
-        "an interrupted add-column that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "session", "started_on")
-            .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
-
-    store.stop().await;
-}
-
 /// **A schema fingerprint** — every table, its columns (name, declared
 /// type, nullability) and its indexes, read from `information_schema`
 /// and rendered in a fixed order. Two databases fingerprint identically
@@ -3276,81 +2710,6 @@ async fn a_copied_migrated_store_fingerprints_identically_to_a_fresh_one() {
              the whole chain, so this comparison cannot actually catch a stale template",
     );
     store_copy_short.stop().await;
-}
-
-/// **The shape `0055_message_posted_by_session` declares is the one that
-/// recovers it.** The same question `0030`'s own test drives for
-/// `session.started_on`.
-#[tokio::test]
-async fn an_interrupted_message_posted_by_session_add_is_recognized_by_the_column_being_there() {
-    let scratch = Scratch::new("migrate-interrupted-message-posted-by-session");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("messagepostedbysessionpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-    // The state a death in the window leaves: the ledger row taken away,
-    // the marker committed, the column already there because the
-    // statement itself had succeeded.
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0055_message_posted_by_session")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0055_message_posted_by_session")
-        .await
-        .expect("the marker lands");
-
-    let applied = run(&pool).await.expect("the start completes the schema");
-    assert!(
-        applied.is_empty(),
-        "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
-    );
-    let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(&pool)
-        .await
-        .expect("the ledger is readable");
-    assert!(
-        recorded
-            .iter()
-            .any(|v| v == "0055_message_posted_by_session"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
-    );
-
-    // **The other direction, and it is what makes the first one mean
-    // anything.** A death BEFORE the statement took effect leaves the
-    // same marker over a table that is still there.
-    sqlx::raw_sql("ALTER TABLE message DROP COLUMN posted_by_session")
-        .execute(&pool)
-        .await
-        .expect("the column goes");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0055_message_posted_by_session")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0055_message_posted_by_session")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0055_message_posted_by_session".to_string()],
-        "an interrupted add-column that did NOT land is applied",
-    );
-    assert!(
-        column_exists(&pool, "message", "posted_by_session")
-            .await
-            .expect("the schema is readable"),
-        "…and the column the migration is for is really there afterwards",
-    );
-
-    store.stop().await;
 }
 
 /// **A death between the two columns the kept references and mark add leaves the
