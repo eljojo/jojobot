@@ -41,6 +41,15 @@ use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionError, SessionState, Sessions, Sid};
 use jojobot_domain::teaching::testing::contract as teachings;
 
+/// **The fold image over a store whose claims are imported**, filled and ready to read. The
+/// cases that run a contract through the fold start from this.
+async fn folded_over(pool: &sqlx::MySqlPool) -> Folded {
+    jojobot_adapters::testing::import_claims_now(pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
+    folded.rebuild().await.expect("the image fills");
+    folded
+}
+
 /// **What a handle's row is stored under**, for a case that reads the
 /// substrate directly. `fact`/`fact_write` key on the badge now, never the
 /// handle, so a raw query against them binds this rather than the handle a
@@ -1911,9 +1920,7 @@ async fn dolt_satisfies_the_stands_for_contract_when_folded() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
-    folded.rebuild().await.expect("the image fills");
+    let folded = folded_over(&pool).await;
 
     memory::run_all_stands_for(&folded).await;
 }
@@ -1955,9 +1962,7 @@ async fn dolt_satisfies_the_record_capacity_contract_when_folded() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
-    folded.rebuild().await.expect("the image fills");
+    let folded = folded_over(&pool).await;
 
     memory::run_all_record_capacity(&folded).await;
 }
@@ -1985,9 +1990,7 @@ async fn dolt_satisfies_the_receipt_contract_when_folded() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
-    folded.rebuild().await.expect("the image fills");
+    let folded = folded_over(&pool).await;
 
     memory::run_all_receipt(&folded).await;
 }
@@ -2128,9 +2131,7 @@ async fn dolt_satisfies_the_numbered_collection_contract_when_folded() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
-    folded.rebuild().await.expect("the image fills");
+    let folded = folded_over(&pool).await;
 
     memory::run_all_numbered(&folded).await;
 }
@@ -2148,9 +2149,7 @@ async fn two_writes_of_one_number_at_once_land_one_and_refuse_the_other_naming_i
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let folded = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool).journaled())));
-    folded.rebuild().await.expect("the image fills");
+    let folded = Arc::new(folded_over(&pool).await);
 
     let collection = EntityId("topic:contract-ordinances-race".into());
     folded
@@ -3780,9 +3779,7 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
         .written()
         .expect("not blocked");
 
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
-    folded.rebuild().await.expect("the fold fills");
+    let folded = folded_over(&pool).await;
     let (_, before) = memory
         .fields_versioned(&role)
         .await
@@ -3911,9 +3908,7 @@ async fn a_renewed_role_merged_into_a_thing_is_found_by_its_renewed_lease_moment
         .written()
         .expect("not blocked");
 
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
-    folded.rebuild().await.expect("the fold fills");
+    let folded = folded_over(&pool).await;
     jojobot_adapters::testing::open_seam(&folded.writer(), &pool).await;
 
     let lease_writes = || async {
