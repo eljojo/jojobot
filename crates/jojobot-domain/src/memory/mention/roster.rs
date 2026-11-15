@@ -243,19 +243,24 @@ pub async fn roster_for_with(
     roster_for_wanted(memory, texts, wanted_names(names)).await
 }
 
+/// **Each adjacent pair of texts, joined the way a claim's content and details are.**
+/// A claim's words are read as one text, so what is code, and a handle outside it, can
+/// differ from either read alone. Every walk that gathers names from texts reads these
+/// pairs too, so what a gather asks for and what a fallback finds are the same names;
+/// a name only one reading finds is asked for and harms none.
+fn joined_pairs(texts: &[&str]) -> Vec<String> {
+    texts
+        .windows(2)
+        .filter_map(|pair| super::words_joined(pair[0], Some(pair[1])))
+        .collect()
+}
+
 /// **What a set of texts holds**: the badge of every stored mark, read wherever it sits
 /// (the mark is jojobot's own), and every handle written outside code, typed after an
 /// at sign, a numbered address included.
 pub fn wanted_by(texts: &[&str]) -> crate::memory::Wanted {
     let mut wanted = crate::memory::Wanted::default();
-    // **A claim's content and details are read as one text**, so what is code, and a
-    // handle outside it, can differ from either read alone. Each adjacent pair is
-    // gathered joined as well; a name only one reading finds is asked for and harms
-    // none.
-    let joined: Vec<String> = texts
-        .windows(2)
-        .filter_map(|pair| super::words_joined(pair[0], Some(pair[1])))
-        .collect();
+    let joined = joined_pairs(texts);
     for text in texts
         .iter()
         .copied()
@@ -545,7 +550,12 @@ pub(super) fn screened(
 /// number, each once. Text inside code is not read.
 pub(super) fn numbered_addresses(texts: &[&str]) -> Vec<(EntityId, u64)> {
     let mut found: Vec<(EntityId, u64)> = Vec::new();
-    for text in texts {
+    let joined = joined_pairs(texts);
+    for text in texts
+        .iter()
+        .copied()
+        .chain(joined.iter().map(String::as_str))
+    {
         for handle in named(text) {
             if let Some(address) = crate::memory::numbered::numbered_handle(&handle)
                 && !found.contains(&address)

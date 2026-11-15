@@ -1019,3 +1019,78 @@ async fn a_replacement_outside_code_only_beside_the_stored_content_is_named() {
         .written()
         .expect("the replacement is outside code beside the stored content");
 }
+
+/// **A numbered address only the joined words expose is found by the fallback too.**
+/// The words read together expose `/2` outside code, and read apart the details expose a
+/// `/01`, which names nothing and sends the write to the whole roster. That path finds
+/// its numbered addresses from the same pairs, so the held member is still a member.
+#[tokio::test]
+async fn a_numbered_address_outside_code_only_in_the_pair_survives_the_whole_roster() {
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{NewEntity, NewFact};
+
+    let (layer, _, _) = the_mention_stack().await;
+    let (about, collection, member) = (spelled_thing(1), spelled_thing(2), spelled_thing(3));
+    for (id, parent) in [
+        (&about, None),
+        (&collection, None),
+        (&member, Some(collection.clone())),
+    ] {
+        layer
+            .add_entity(NewEntity {
+                parent,
+                ..NewEntity::new(id.clone(), &id.0, "fold-image")
+            })
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+    }
+    let mut numbering = state(NewFact::about(
+        collection.clone(),
+        "numbers its members",
+        jiff::civil::date(2026, 9, 2),
+    ));
+    numbering.session = Some("fold-image".into());
+    numbering.fields.insert(
+        jojobot_domain::memory::numbered::NUMBERS_BY.into(),
+        "number".into(),
+    );
+    numbering
+        .sets
+        .insert(jojobot_domain::memory::numbered::NUMBERS_BY.into());
+    let mut numbered = state(NewFact::about(
+        member.clone(),
+        "is a member",
+        jiff::civil::date(2026, 9, 2),
+    ));
+    numbered.session = Some("fold-image".into());
+    numbered.fields.insert("number".into(), "2".into());
+    numbered.sets.insert("number".into());
+    for fact in [numbering, numbered] {
+        layer
+            .capture(fact)
+            .await
+            .expect("captured")
+            .written()
+            .expect("not blocked");
+    }
+
+    let fence = "`".repeat(3);
+    let mut fact = state(NewFact::about(
+        about.clone(),
+        format!("{fence}text"),
+        jiff::civil::date(2026, 9, 2),
+    ));
+    fact.session = Some("fold-image".into());
+    fact.details = Some(format!(
+        "{fence}\n@{c}/2\n{fence}\n@{c}/01\n{fence}\n{fence}",
+        c = collection.0
+    ));
+    layer
+        .capture(fact)
+        .await
+        .expect("captured")
+        .written()
+        .expect("the held member is outside code in the pair");
+}
