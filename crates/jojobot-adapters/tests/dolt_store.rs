@@ -22,7 +22,7 @@ use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::{Provisioned, SuppliedOverFold};
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::teaching_log::LoggedTeachings;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::{Scratch, free_port, migrated_database, shared_database};
 use jojobot_adapters::writer::Writer;
 use jojobot_adapters::writer_log::WriterLog;
 use jojobot_domain::mailbox::testing::contract as mailboxes;
@@ -72,16 +72,13 @@ async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
 
 #[tokio::test]
 async fn dolt_names_the_writer_and_run_of_each_key_write() {
-    let scratch = Scratch::new("key-origin");
-    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let pool = migrated_database(&server, "keyorigin").await.unwrap();
+    let pool = shared_database("keyorigin").await.unwrap();
     booted(&pool).await;
     memory::a_keys_history_names_the_writer_and_run_with_sessions(
         &DoltMemory::open(pool.clone()),
         &DoltSessions::open(pool),
     )
     .await;
-    server.stop().await;
 }
 
 /// **The contract's cases, each against a store of its own.**
@@ -142,11 +139,7 @@ async fn calls_counted_at_once_under_one_key_are_all_counted() {
     use jojobot_domain::clock::Clock;
     use jojobot_domain::session::history::WriteStamp;
     use jojobot_domain::usage::{CallKey, CallOutcome};
-    let scratch = Scratch::new("call-counts");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "counts")
+    let pool = shared_database("counts")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -188,7 +181,6 @@ async fn calls_counted_at_once_under_one_key_are_all_counted() {
         assert_eq!(of(None), 6, "{what}: {held:?}");
         assert_eq!(held.len(), 2, "{what}, one row per key: {held:?}");
     }
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.7) kept witness: W: counter bypass racer (calls).
@@ -199,11 +191,7 @@ async fn calls_counted_at_once_under_one_key_are_all_counted() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn calls_counted_at_once_through_the_store_alone_are_all_counted() {
     use jojobot_domain::usage::{CallKey, CallOutcome};
-    let scratch = Scratch::new("call-counts-store-alone");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "counts_alone")
+    let pool = shared_database("counts_alone")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -228,7 +216,6 @@ async fn calls_counted_at_once_through_the_store_alone_are_all_counted() {
     assert_eq!(held.len(), 1, "one row for the one key: {held:?}");
     assert_eq!(held[0].key, key, "{held:?}");
     assert_eq!(held[0].count, 24, "{held:?}");
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.7) kept witness: W: counter bypass racer (served).
@@ -237,11 +224,7 @@ async fn calls_counted_at_once_through_the_store_alone_are_all_counted() {
 /// at the sum of the 24, with no write gate above the store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn served_added_at_once_through_the_store_alone_is_all_kept() {
-    let scratch = Scratch::new("served-store-alone");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "served_alone")
+    let pool = shared_database("served_alone")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -275,7 +258,6 @@ async fn served_added_at_once_through_the_store_alone_is_all_kept() {
     let days = sessions.served_days().await.expect("the days read");
     assert_eq!(days.len(), 1, "one row for the one day: {days:?}");
     assert_eq!(days[0].chars, 240, "the day's total: {days:?}");
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.7) kept witness: W: counter bypass racer (reset).
@@ -286,11 +268,7 @@ async fn served_added_at_once_through_the_store_alone_is_all_kept() {
 /// zeroing would be in neither.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_reset_racing_adds_through_the_store_alone_loses_nothing() {
-    let scratch = Scratch::new("reset-racing-adds");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "reset_racing")
+    let pool = shared_database("reset_racing")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -339,7 +317,6 @@ async fn a_reset_racing_adds_through_the_store_alone_loses_nothing() {
         "the resets set back {set_back} and the run holds {}",
         read.served_chars
     );
-    store.stop().await;
 }
 
 /// **Every charter change is kept, in the order it was made, whoever made it.**
@@ -348,11 +325,7 @@ async fn a_reset_racing_adds_through_the_store_alone_loses_nothing() {
 /// from still holds the change by another alone.
 #[tokio::test]
 async fn a_charter_changed_by_another_bot_and_then_by_the_bot_itself_leaves_two_rows() {
-    let scratch = Scratch::new("charter-writes");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "charter_writes")
+    let pool = shared_database("charter_writes")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -420,7 +393,6 @@ async fn a_charter_changed_by_another_bot_and_then_by_the_bot_itself_leaves_two_
         }),
         "the read still answers with the change by another"
     );
-    store.stop().await;
 }
 
 /// **Every declaration a caller makes of a type is kept, in the order it was
@@ -430,11 +402,7 @@ async fn a_charter_changed_by_another_bot_and_then_by_the_bot_itself_leaves_two_
 /// a caller declares is kept the same way; what the software ships is not.
 #[tokio::test]
 async fn a_type_declared_and_redeclared_twice_leaves_three_writes_in_order() {
-    let scratch = Scratch::new("type-writes");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "type_writes")
+    let pool = shared_database("type_writes")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -543,7 +511,6 @@ async fn a_type_declared_and_redeclared_twice_leaves_three_writes_in_order() {
         vec!["flavor", "glaze", "sprinkles"],
         "the declaration the reads answer with is the newest"
     );
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.7) kept witness: Session race (nondeterministic: harden or drop).
@@ -566,11 +533,7 @@ async fn a_type_declared_and_redeclared_twice_leaves_three_writes_in_order() {
 /// for why an in-memory double cannot exercise this branch.
 #[tokio::test]
 async fn a_session_write_that_conflicts_with_another_is_told_apart_from_a_failed_store() {
-    let scratch = Scratch::new("session-conflict-not-a-failure");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "session_conflict_not_a_failure")
+    let pool = shared_database("session_conflict_not_a_failure")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -619,8 +582,6 @@ async fn a_session_write_that_conflicts_with_another_is_told_apart_from_a_failed
         "this case is supposed to exercise the real conflict, and without one there is \
          nothing here for SessionError::Conflict to be proven against"
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **An entity keeps its badge through every path that rewrites it, and no
@@ -643,11 +604,7 @@ async fn a_session_write_that_conflicts_with_another_is_told_apart_from_a_failed
 /// shared with every other such row.
 #[tokio::test]
 async fn an_entity_keeps_its_badge_through_every_rewrite() {
-    let scratch = Scratch::new("badge");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "badge")
+    let pool = shared_database("badge")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -752,8 +709,6 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
         minted, other,
         "two entities wear one badge, so it names neither of them",
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **A row written before the badge column existed is given one at startup,
@@ -774,11 +729,7 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
 /// would satisfy the first two.
 #[tokio::test]
 async fn the_fill_badges_rows_written_before_the_column_and_repeats_nothing() {
-    let scratch = Scratch::new("badgefill");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "badgefill")
+    let pool = shared_database("badgefill")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -825,8 +776,6 @@ async fn the_fill_badges_rows_written_before_the_column_and_repeats_nothing() {
         "the fill gave out badges a second time, so running it at every startup would not be \
          safe",
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **The pointer migration, rule 268: a row written before this build
@@ -844,11 +793,7 @@ async fn the_fill_badges_rows_written_before_the_column_and_repeats_nothing() {
 /// run.
 #[tokio::test]
 async fn resolve_stale_pointer_columns_rewrites_every_stale_value() {
-    let scratch = Scratch::new("pointer-migration-clean");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "pointer_migration_clean")
+    let pool = shared_database("pointer_migration_clean")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -978,18 +923,12 @@ async fn resolve_stale_pointer_columns_rewrites_every_stale_value() {
         "the migration rewrote a value a second time, so running it at every startup would not \
          be safe",
     );
-
-    store.stop().await;
 }
 
 /// The small synthetic capture preserves the bytes an older build emitted.
 #[tokio::test]
 async fn resolve_stale_pointer_columns_reads_the_captured_rows() {
-    let scratch = Scratch::new("captured-pointers");
-    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let pool = migrated_database(&server, "capturedpointers")
-        .await
-        .unwrap();
+    let pool = shared_database("capturedpointers").await.unwrap();
     booted(&pool).await;
     for statement in include_str!("fixtures/a334e84_pre_batch.sql")
         .lines()
@@ -1032,7 +971,6 @@ async fn resolve_stale_pointer_columns_reads_the_captured_rows() {
         assert_eq!(after, std::slice::from_ref(&badge), "{table}.{column}");
     }
     assert_eq!(memory.resolve_stale_pointer_columns().await.unwrap(), 0);
-    server.stop().await;
 }
 
 /// 🚨 **The pointer migration refuses to guess.** A stored value that
@@ -1044,11 +982,7 @@ async fn resolve_stale_pointer_columns_reads_the_captured_rows() {
 /// one value nothing has ever answered to mixed in.
 #[tokio::test]
 async fn resolve_stale_pointer_columns_refuses_to_guess_at_an_unresolvable_row() {
-    let scratch = Scratch::new("pointer-migration-blocked");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "pointer_migration_blocked")
+    let pool = shared_database("pointer_migration_blocked")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1111,8 +1045,6 @@ async fn resolve_stale_pointer_columns_refuses_to_guess_at_an_unresolvable_row()
     .await
     .expect("the row reads");
     assert_eq!(still_there, never_existed);
-
-    store.stop().await;
 }
 
 /// 🚨 **An alias row is its own entity's foreign key, and a rename must not
@@ -1136,11 +1068,7 @@ async fn resolve_stale_pointer_columns_refuses_to_guess_at_an_unresolvable_row()
 /// uses rather than stopping at `list_entities`.
 #[tokio::test]
 async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
-    let scratch = Scratch::new("alias-rename");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "aliasrename")
+    let pool = shared_database("aliasrename")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1210,8 +1138,6 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
             .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == now)),
         "the nickname does not find the renamed entity: {after:?}",
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **An entry written before the closing mark existed reads as not
@@ -1221,11 +1147,7 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
 /// as its story.
 #[tokio::test]
 async fn a_journal_entry_written_before_the_closing_mark_reads_as_not_closing() {
-    let scratch = Scratch::new("journal-entry-before-the-closing-mark");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "journal_entry_before_the_closing_mark")
+    let pool = shared_database("journal_entry_before_the_closing_mark")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1264,8 +1186,6 @@ async fn a_journal_entry_written_before_the_closing_mark_reads_as_not_closing() 
         read.closing_entry().is_none(),
         "so the run has no closing entry"
     );
-
-    store.stop().await;
 }
 
 /// **The same database through a pool that gives up on a connection sooner.**
@@ -1288,11 +1208,7 @@ async fn gives_up_within(pool: &sqlx::MySqlPool, within: std::time::Duration) ->
 /// enforces, two runs begun on the same words, and then a store that is gone.
 #[tokio::test]
 async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
-    let scratch = Scratch::new("session-refused-write");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "session_refused_write")
+    let pool = shared_database("session_refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1331,7 +1247,6 @@ async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
         ),
     }
 
-    store.stop().await;
     let gone = sessions_store.sessions_of(&bot).await;
     assert!(
         matches!(gone, Err(SessionError::Store(_))),
@@ -1344,11 +1259,7 @@ async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
 /// and then a store that is gone.
 #[tokio::test]
 async fn a_refused_mailbox_write_is_not_reported_as_an_unreachable_store() {
-    let scratch = Scratch::new("mailbox-refused-write");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "mailbox_refused_write")
+    let pool = shared_database("mailbox_refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1395,7 +1306,6 @@ async fn a_refused_mailbox_write_is_not_reported_as_an_unreachable_store() {
         ),
     }
 
-    store.stop().await;
     let gone = mailboxes_store.list_mailboxes().await;
     assert!(
         matches!(gone, Err(MailboxError::Store(_))),
@@ -1440,11 +1350,7 @@ async fn a_merge_that_would_leave_a_bot_above_itself_is_refused_in_every_shape()
         )))
         .collect();
     for (what, reports, lands) in rows {
-        let scratch = Scratch::new("merge-chart-cycle");
-        let mut store = Dolt::start(&scratch.0, free_port())
-            .await
-            .expect("the store comes up");
-        let pool = migrated_database(&store, "merge_chart_cycle")
+        let pool = shared_database("merge_chart_cycle")
             .await
             .expect("a database of its own");
         migrate::run(&pool).await.expect("the schema");
@@ -1503,7 +1409,6 @@ async fn a_merge_that_would_leave_a_bot_above_itself_is_refused_in_every_shape()
                 "when {what} nothing moved: {sigma:?}"
             );
         }
-        store.stop().await;
     }
 }
 
@@ -1518,11 +1423,7 @@ async fn a_merge_that_would_leave_a_bot_above_itself_is_refused_in_every_shape()
 /// "refused" for everything would pass the first half alone.
 #[tokio::test]
 async fn a_refused_write_is_not_reported_as_an_unreachable_store() {
-    let scratch = Scratch::new("refused-write");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "refused_write")
+    let pool = shared_database("refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1574,7 +1475,6 @@ async fn a_refused_write_is_not_reported_as_an_unreachable_store() {
     }
 
     // The positive beside it: a store that is gone is still an unreachable store.
-    store.stop().await;
     let gone = memory.list_entities(None).await;
     assert!(
         matches!(gone, Err(MemoryError::Store(_))),
@@ -1592,11 +1492,7 @@ async fn a_refused_write_is_not_reported_as_an_unreachable_store() {
 /// condition on the write side of a rename.
 #[tokio::test]
 async fn renaming_a_row_with_no_badge_is_a_readable_error_not_a_panic() {
-    let scratch = Scratch::new("rename-no-badge");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "renamenobadge")
+    let pool = shared_database("renamenobadge")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1640,8 +1536,6 @@ async fn renaming_a_row_with_no_badge_is_a_readable_error_not_a_panic() {
         was.to_string(),
         "the refused rename moved the row anyway",
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **A rename to or from a handle near the domain's own limit does not
@@ -1654,11 +1548,7 @@ async fn renaming_a_row_with_no_badge_is_a_readable_error_not_a_panic() {
 /// naming no cause a caller could act on.
 #[tokio::test]
 async fn a_rename_near_the_handle_length_limit_still_lands() {
-    let scratch = Scratch::new("rename-long-handle");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "renamelonghandle")
+    let pool = shared_database("renamelonghandle")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1707,8 +1597,6 @@ async fn a_rename_near_the_handle_length_limit_still_lands() {
         was.to_string(),
         "the forwarding row does not hold the handle it was given",
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **A correction is kept: the substrate holds what the claim used to say,
@@ -1733,11 +1621,7 @@ async fn a_rename_near_the_handle_length_limit_still_lands() {
 /// case says the two agree.
 #[tokio::test]
 async fn the_substrate_keeps_what_a_correction_overwrote() {
-    let scratch = Scratch::new("factwrite");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "factwrite")
+    let pool = shared_database("factwrite")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -1828,8 +1712,6 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
         .map(|f| f.content)
         .collect::<Vec<_>>();
     assert_eq!(read, vec!["was never at the fair".to_string()]);
-
-    store.stop().await;
 }
 
 /// **A handle under a key nobody declared is stored as the thing's permanent
@@ -1844,11 +1726,7 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
 /// write to that key stores the id.
 #[tokio::test]
 async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_is_served_as_written() {
-    let scratch = Scratch::new("undeclared-handle-storage");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "undeclaredhandlestorage")
+    let pool = shared_database("undeclaredhandlestorage")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -1962,8 +1840,6 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_is_ser
         .written()
         .expect("it names a real thing");
     assert_eq!(stored("blocks").await, format!("@#{other_badge}"));
-
-    store.stop().await;
 }
 
 /// **A chain of sixty-five merges loses no claim in the real store.** Alone,
@@ -1971,28 +1847,19 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_is_ser
 /// every flavour of the store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dolt_loses_no_claim_down_a_chain_of_sixty_five_merges() {
-    let scratch = Scratch::new("merge_chain");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "merge_chain")
+    let pool = shared_database("merge_chain")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
     memory::a_chain_of_sixty_five_merges_loses_no_claim(&DoltMemory::open(pool)).await;
-    store.stop().await;
 }
 
 /// **A chain of replacements is followed to its bound and no further in the
 /// real store.** Alone, for the cost of writing that many decisions.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dolt_follows_a_chain_of_replacements_to_its_bound_and_no_further() {
-    let scratch = Scratch::new("replacement_chain");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "replacement_chain")
+    let pool = shared_database("replacement_chain")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -2001,44 +1868,32 @@ async fn dolt_follows_a_chain_of_replacements_to_its_bound_and_no_further() {
         pool,
     ))
     .await;
-    store.stop().await;
 }
 
 /// **A manager folded through thirty-three merges is the bot it became in the
 /// real store.** Alone, for the cost of that many merges.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dolt_serves_a_manager_folded_through_a_long_chain_as_the_bot_it_became() {
-    let scratch = Scratch::new("merge_manager_chain");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "merge_manager_chain")
+    let pool = shared_database("merge_manager_chain")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
     memory::a_manager_folded_through_a_long_chain_is_the_bot_it_became(&DoltMemory::open(pool))
         .await;
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.5) kept witness: W: per-store mount, stands_for.
 /// **The mark's own contract, against the real store.**
 #[tokio::test]
 async fn dolt_satisfies_the_stands_for_contract() {
-    let scratch = Scratch::new("stands-for");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "standsfor")
+    let pool = shared_database("standsfor")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
 
     memory::run_all_stands_for(&DoltMemory::open(pool)).await;
-
-    store.stop().await;
 }
 
 /// **The mark's own contract, through the fold.** The fold image answers a
@@ -2046,11 +1901,7 @@ async fn dolt_satisfies_the_stands_for_contract() {
 /// image dropped would pass the case above and fail here.
 #[tokio::test]
 async fn dolt_satisfies_the_stands_for_contract_when_folded() {
-    let scratch = Scratch::new("stands-for-folded");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "standsforfolded")
+    let pool = shared_database("standsforfolded")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2060,8 +1911,6 @@ async fn dolt_satisfies_the_stands_for_contract_when_folded() {
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_stands_for(&folded).await;
-
-    store.stop().await;
 }
 
 /// **The claims built on a claim are listed by the number in their labels, in the
@@ -2069,11 +1918,7 @@ async fn dolt_satisfies_the_stands_for_contract_when_folded() {
 /// the label, which puts `f10` before `f2`.
 #[tokio::test]
 async fn dolt_lists_the_claims_built_on_a_claim_by_the_number_in_their_labels() {
-    let scratch = Scratch::new("built-on-order");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "builtonorder")
+    let pool = shared_database("builtonorder")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2081,38 +1926,26 @@ async fn dolt_lists_the_claims_built_on_a_claim_by_the_number_in_their_labels() 
 
     memory::built_on_lists_what_was_built_by_the_number_in_the_labels(&DoltMemory::open(pool))
         .await;
-
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.5) kept witness: W: per-store mount, record capacity.
 /// **The record ceiling's contract, against the real store.**
 #[tokio::test]
 async fn dolt_satisfies_the_record_capacity_contract() {
-    let scratch = Scratch::new("record-capacity");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "recordcapacity")
+    let pool = shared_database("recordcapacity")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
 
     memory::run_all_record_capacity(&DoltMemory::open(pool)).await;
-
-    store.stop().await;
 }
 
 /// **The record ceiling's contract, through the fold.** A refusal reads the
 /// store inside the write, and the fold image has to agree with what it held.
 #[tokio::test]
 async fn dolt_satisfies_the_record_capacity_contract_when_folded() {
-    let scratch = Scratch::new("record-capacity-folded");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "recordcapacityfolded")
+    let pool = shared_database("recordcapacityfolded")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2122,27 +1955,19 @@ async fn dolt_satisfies_the_record_capacity_contract_when_folded() {
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_record_capacity(&folded).await;
-
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.5) kept witness: W: per-store mount, receipt.
 /// **The receipt's own contract, against the real store.**
 #[tokio::test]
 async fn dolt_satisfies_the_receipt_contract() {
-    let scratch = Scratch::new("receipt");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "receipt")
+    let pool = shared_database("receipt")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
 
     memory::run_all_receipt(&DoltMemory::open(pool)).await;
-
-    store.stop().await;
 }
 
 /// **The receipt's own contract, through the fold.** The fold image answers a
@@ -2150,11 +1975,7 @@ async fn dolt_satisfies_the_receipt_contract() {
 /// the image dropped would pass the case above and fail here.
 #[tokio::test]
 async fn dolt_satisfies_the_receipt_contract_when_folded() {
-    let scratch = Scratch::new("receipt-folded");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "receiptfolded")
+    let pool = shared_database("receiptfolded")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2164,8 +1985,6 @@ async fn dolt_satisfies_the_receipt_contract_when_folded() {
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_receipt(&folded).await;
-
-    store.stop().await;
 }
 
 /// **The receipt is kept in the spelling a reader of an older row would find,
@@ -2175,11 +1994,7 @@ async fn dolt_satisfies_the_receipt_contract_when_folded() {
 /// back without one; the same claim with a damaged cell names the receipt.
 #[tokio::test]
 async fn a_receipt_is_kept_in_one_spelling_and_a_damaged_cell_is_named() {
-    let scratch = Scratch::new("receipt-cell");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "receiptcell")
+    let pool = shared_database("receiptcell")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2282,8 +2097,6 @@ async fn a_receipt_is_kept_in_one_spelling_and_a_damaged_cell_is_named() {
         matches!(&damaged, Err(MemoryError::Store(said)) if said.contains("receipt")),
         "a cell the store did not write is named, not read as none: {damaged:?}"
     );
-
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.5) kept witness: W: per-store mount, numbered collection.
@@ -2292,30 +2105,20 @@ async fn a_receipt_is_kept_in_one_spelling_and_a_damaged_cell_is_named() {
 /// or not, the whole subtree as the scope, and a miss that offers the numbers.
 #[tokio::test]
 async fn dolt_satisfies_the_numbered_collection_contract() {
-    let scratch = Scratch::new("numbered");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "numbered")
+    let pool = shared_database("numbered")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
 
     memory::run_all_numbered(&DoltMemory::open(pool)).await;
-
-    store.stop().await;
 }
 
 /// **The same specs, through the fold**: the image answers a handle and a
 /// collection's next number from what the store gave it.
 #[tokio::test]
 async fn dolt_satisfies_the_numbered_collection_contract_when_folded() {
-    let scratch = Scratch::new("numbered-folded");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "numberedfolded")
+    let pool = shared_database("numberedfolded")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2325,8 +2128,6 @@ async fn dolt_satisfies_the_numbered_collection_contract_when_folded() {
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_numbered(&folded).await;
-
-    store.stop().await;
 }
 
 /// **Two writes of one number at once: one lands, and the other is refused
@@ -2337,11 +2138,7 @@ async fn dolt_satisfies_the_numbered_collection_contract_when_folded() {
 #[tokio::test]
 async fn two_writes_of_one_number_at_once_land_one_and_refuse_the_other_naming_it() {
     use jojobot_domain::memory::MemoryError;
-    let scratch = Scratch::new("numbered-race");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "numberedrace")
+    let pool = shared_database("numberedrace")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2434,7 +2231,6 @@ async fn two_writes_of_one_number_at_once_land_one_and_refuse_the_other_naming_i
         write(&members[1], "7"),
         write(&members[2], "8")
     );
-    store.stop().await;
 
     let landed = |result: &Result<
         jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
@@ -2543,11 +2339,7 @@ async fn a_write_with_no_kept_references_reads_as_not_recorded_and_a_damaged_one
 /// genuinely absent.
 #[tokio::test]
 async fn what_sits_under_a_supplied_record_answers_over_the_real_store() {
-    let scratch = Scratch::new("supplied-children");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "suppliedchildren")
+    let pool = shared_database("suppliedchildren")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2596,8 +2388,6 @@ async fn what_sits_under_a_supplied_record_answers_over_the_real_store() {
         vec![under],
         "the child under a supplied record came back empty over the real store",
     );
-
-    store.stop().await;
 }
 
 /// **The mention contract against the real store**, over the layer that
@@ -2607,11 +2397,7 @@ async fn what_sits_under_a_supplied_record_answers_over_the_real_store() {
 /// what is SERVED differ, and a case holding only one of them cannot make it.
 #[tokio::test]
 async fn the_dolt_store_keeps_a_mention_as_a_badge_and_serves_it_as_a_handle() {
-    let scratch = Scratch::new("mentions");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "mentions")
+    let pool = shared_database("mentions")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2624,8 +2410,6 @@ async fn the_dolt_store_keeps_a_mention_as_a_badge_and_serves_it_as_a_handle() {
         &DoltRehandles(pool.clone()),
     )
     .await;
-
-    store.stop().await;
 }
 
 /// **The real store's way of moving a handle**: the row is rewritten in place,
@@ -2715,11 +2499,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
 /// the real store, exactly as over the fake.
 #[tokio::test]
 async fn dolt_carries_a_claim_on_a_supplied_record_into_its_one_document() {
-    let scratch = Scratch::new("supplied-document");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "supplied-document")
+    let pool = shared_database("supplied-document")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2747,8 +2527,6 @@ async fn dolt_carries_a_claim_on_a_supplied_record_into_its_one_document() {
         supplied,
     );
     memory::a_claim_on_a_supplied_record_is_in_its_one_document(&served).await;
-
-    store.stop().await;
 }
 
 /// **A stored row at a handle the build supplies is named, and left alone,
@@ -2760,11 +2538,7 @@ async fn dolt_carries_a_claim_on_a_supplied_record_into_its_one_document() {
 /// collision against.
 #[tokio::test]
 async fn dolt_names_a_stored_row_at_a_supplied_handle_and_leaves_it_alone() {
-    let scratch = Scratch::new("provision-collision");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "provision-collision")
+    let pool = shared_database("provision-collision")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2772,8 +2546,6 @@ async fn dolt_names_a_stored_row_at_a_supplied_handle_and_leaves_it_alone() {
 
     memory::a_stored_row_at_a_supplied_handle_is_named_and_left_alone(&DoltMemory::open(pool))
         .await;
-
-    store.stop().await;
 }
 
 /// **…and every entity read counted in one place, over the real store.**
@@ -2783,11 +2555,7 @@ async fn dolt_names_a_stored_row_at_a_supplied_handle_and_leaves_it_alone() {
 /// it, and a verdict about somebody else's case measures nothing.
 #[tokio::test]
 async fn dolt_answers_every_entity_read_for_a_supplied_record() {
-    let scratch = Scratch::new("supplied-reads");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "suppliedreads")
+    let pool = shared_database("suppliedreads")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2813,8 +2581,6 @@ async fn dolt_answers_every_entity_read_for_a_supplied_record() {
     let known = DoltMemory::open(pool).knowing(supplied);
 
     memory::every_entity_read_answers_for_a_supplied_record(&known).await;
-
-    store.stop().await;
 }
 
 /// **…and every existence-gated read answers alike for a stored record and a
@@ -2825,11 +2591,7 @@ async fn dolt_answers_every_entity_read_for_a_supplied_record() {
 /// unrelated assertion answer for it.
 #[tokio::test]
 async fn dolt_answers_every_gated_read_alike_stored_and_supplied() {
-    let scratch = Scratch::new("gated-reads-paired");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "gatedreadspaired")
+    let pool = shared_database("gatedreadspaired")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2857,8 +2619,6 @@ async fn dolt_answers_every_gated_read_alike_stored_and_supplied() {
 
     memory::a_captured_claim_reads_through_every_gated_read_stored_and_supplied(&stored, &known)
         .await;
-
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.4) kept witness: W: Stored/Supplied edit mount (Dolt).
@@ -2868,11 +2628,7 @@ async fn dolt_answers_every_gated_read_alike_stored_and_supplied() {
 /// A database of its own, for the same reason the two cases above get one.
 #[tokio::test]
 async fn dolt_lands_an_edit_alike_stored_and_supplied() {
-    let scratch = Scratch::new("edit-lands-paired");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "editlandspaired")
+    let pool = shared_database("editlandspaired")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2899,8 +2655,6 @@ async fn dolt_lands_an_edit_alike_stored_and_supplied() {
     let known = DoltMemory::open(pool).knowing(supplied);
 
     memory::an_edit_on_a_captured_claim_lands_stored_and_supplied(&stored, &known).await;
-
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.4) kept witness: W: Stored/Supplied retract mount (Dolt).
@@ -2910,11 +2664,7 @@ async fn dolt_lands_an_edit_alike_stored_and_supplied() {
 /// A database of its own, for the same reason the two cases above get one.
 #[tokio::test]
 async fn dolt_lands_a_retraction_alike_stored_and_supplied() {
-    let scratch = Scratch::new("retraction-lands-paired");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "retractionlandspaired")
+    let pool = shared_database("retractionlandspaired")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2941,8 +2691,6 @@ async fn dolt_lands_a_retraction_alike_stored_and_supplied() {
     let known = DoltMemory::open(pool).knowing(supplied);
 
     memory::a_retraction_on_a_captured_claim_lands_stored_and_supplied(&stored, &known).await;
-
-    store.stop().await;
 }
 
 /// **…and a fact address minted before a fold, over the real store's own
@@ -2951,19 +2699,13 @@ async fn dolt_lands_a_retraction_alike_stored_and_supplied() {
 /// database with dozens of others should not have to reason about.
 #[tokio::test]
 async fn dolt_names_the_survivor_for_an_address_stale_after_a_fold() {
-    let scratch = Scratch::new("stale-after-fold");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "staleafterfold")
+    let pool = shared_database("staleafterfold")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
 
     memory::a_stale_address_after_a_fold_says_where_it_went(&DoltMemory::open(pool)).await;
-
-    store.stop().await;
 }
 
 /// **What the REAL store keeps when the build supplies half the text.**
@@ -2981,11 +2723,7 @@ async fn dolt_names_the_survivor_for_an_address_stale_after_a_fold() {
 /// the case says nothing about what a reader actually gets.
 #[tokio::test]
 async fn the_real_store_keeps_the_operators_half_and_not_the_builds() {
-    let scratch = Scratch::new("provisioned");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "provisioned")
+    let pool = shared_database("provisioned")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3039,8 +2777,6 @@ async fn the_real_store_keeps_the_operators_half_and_not_the_builds() {
         .expect("the entity is there")
         .prose;
     assert!(read.contains(SHIPPED) && read.contains("files the weekly note"));
-
-    store.stop().await;
 }
 
 /// **A record the build ships is in no table of the real store**, and it still
@@ -3054,11 +2790,7 @@ async fn the_real_store_keeps_the_operators_half_and_not_the_builds() {
 /// would pass.
 #[tokio::test]
 async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
-    let scratch = Scratch::new("supplied");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "supplied")
+    let pool = shared_database("supplied")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3159,8 +2891,6 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
         Some(shipped),
         "the write was allowed and the link was lost",
     );
-
-    store.stop().await;
 }
 
 /// **An owner index that answers for the contract's roster and nothing else.**
@@ -3265,11 +2995,7 @@ async fn dolt_satisfies_the_mailbox_contract() {
 /// for why an in-memory double cannot exercise this branch.
 #[tokio::test]
 async fn a_mailbox_write_that_conflicts_with_another_is_told_apart_from_a_failed_store() {
-    let scratch = Scratch::new("mailbox-conflict-not-a-failure");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "mailbox_conflict_not_a_failure")
+    let pool = shared_database("mailbox_conflict_not_a_failure")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -3337,8 +3063,6 @@ async fn a_mailbox_write_that_conflicts_with_another_is_told_apart_from_a_failed
         "this case is supposed to exercise the real conflict, and without one there is \
          nothing here for MailboxError::Conflict to be proven against"
     );
-
-    store.stop().await;
 }
 
 /// The teaching contract's cases, each against a store of its own.
@@ -3400,11 +3124,7 @@ async fn dolt_satisfies_the_teaching_contract() {
 /// read that projects cannot see what this case is about.
 #[tokio::test]
 async fn an_edit_does_not_re_stamp_the_claims_own_column() {
-    let scratch = Scratch::new("restamp");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "restamp")
+    let pool = shared_database("restamp")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3467,8 +3187,6 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
         "an edit re-stamped the column that says when jojobot took the record in, which the \
          backfill copies from",
     );
-
-    store.stop().await;
 }
 
 /// **A folded value's backing carries the note the record it came from
@@ -3485,11 +3203,7 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
 /// positive on its own.
 #[tokio::test]
 async fn a_folded_values_backing_carries_the_note_its_record_carries() {
-    let scratch = Scratch::new("noted");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "noted")
+    let pool = shared_database("noted")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3547,8 +3261,6 @@ async fn a_folded_values_backing_carries_the_note_its_record_carries() {
         "a record with no note produced one anyway: {:?}",
         rent.note,
     );
-
-    store.stop().await;
 }
 
 /// **A store acting out a day stamps that day**, in the two columns that say
@@ -3570,11 +3282,7 @@ async fn a_folded_values_backing_carries_the_note_its_record_carries() {
 async fn a_store_acting_out_a_day_stamps_that_day() {
     const JUNE: &str = "2026-06-01";
 
-    let scratch = Scratch::new("acting");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "acting")
+    let pool = shared_database("acting")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3628,8 +3336,6 @@ async fn a_store_acting_out_a_day_stamps_that_day() {
         written_at.starts_with(JUNE),
         "the store stamped the write itself on the wall clock: {written_at}",
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **The backfill is what keeps a claim written before the substrate
@@ -3657,11 +3363,7 @@ async fn a_store_acting_out_a_day_stamps_that_day() {
 /// substrate here is the migration this build ships, on the path a start takes.
 #[tokio::test]
 async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() {
-    let scratch = Scratch::new("backfill");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "backfill")
+    let pool = shared_database("backfill")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3806,8 +3508,6 @@ async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() 
         "the claim came back changed, so the backfill fills the substrate with less than the \
          row holds",
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **A row carrying a retired status is rewritten to `archived` on disk**,
@@ -3820,11 +3520,7 @@ async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() 
 /// snapshot, and `fact_write`, which keeps its own copy per write.
 #[tokio::test]
 async fn the_backfill_rewrites_every_retired_status_to_archived() {
-    let scratch = Scratch::new("status-archived");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "statusarchived")
+    let pool = shared_database("statusarchived")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3919,8 +3615,6 @@ async fn the_backfill_rewrites_every_retired_status_to_archived() {
         write_status.0, "archived",
         "fact_write still carries the retired spelling on disk",
     );
-
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.5) kept witness: W: SQL fast path hit.
@@ -3930,11 +3624,7 @@ async fn the_backfill_rewrites_every_retired_status_to_archived() {
 /// needs that question asked.
 #[tokio::test]
 async fn a_fields_hit_answers_with_no_full_listing() {
-    let scratch = Scratch::new("resolve_hit");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3973,8 +3663,6 @@ async fn a_fields_hit_answers_with_no_full_listing() {
         before,
         "a hit must not build the full listing"
     );
-
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.5) kept witness: W: SQL fast path miss.
@@ -4308,11 +3996,7 @@ async fn a_rename_after_lease_renewals_does_not_lower_the_version() {
     use jojobot_domain::memory::{FactPatch, Guarded, NewEntity, NewFact};
     use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
 
-    let scratch = Scratch::new("lease_rename_version");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4403,8 +4087,6 @@ async fn a_rename_after_lease_renewals_does_not_lower_the_version() {
         "the version fell across a rename, so a cache holding {before} would refuse the read at \
          {after}"
     );
-
-    store.stop().await;
 }
 
 /// **A thing that is owed and cannot say when is given the day the pass ran,
@@ -4418,11 +4100,7 @@ async fn the_pass_that_stamps_unreadable_due_days_runs_once_and_touches_only_wha
     use jojobot_adapters::dolt::{Migrated, UNREADABLE_DUE_PASS, backfill_unreadable_due_days};
     use jojobot_domain::memory::{Guarded, NewEntity, NewFact};
 
-    let scratch = Scratch::new("unreadable_due_pass");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4552,8 +4230,6 @@ async fn the_pass_that_stamps_unreadable_due_days_runs_once_and_touches_only_wha
         None,
         "and stamps nothing"
     );
-
-    store.stop().await;
 }
 
 /// **A due-day pass that cannot read the instance's record is skipped and stays
@@ -4568,11 +4244,7 @@ async fn the_due_day_pass_is_skipped_and_owed_when_the_instance_record_cannot_be
     use jojobot_adapters::dolt::{Migrated, UNREADABLE_DUE_PASS, backfill_unreadable_due_days};
     use jojobot_domain::memory::{NewEntity, NewFact};
 
-    let scratch = Scratch::new("unreadable_due_instance");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4661,8 +4333,6 @@ async fn the_due_day_pass_is_skipped_and_owed_when_the_instance_record_cannot_be
         marks().await.iter().any(|name| name == UNREADABLE_DUE_PASS),
         "the pass is finished"
     );
-
-    store.stop().await;
 }
 
 /// **A renewal stamps the row it overwrites.** The renewal replaces the value of
@@ -4676,11 +4346,7 @@ async fn a_lease_renewal_stamps_the_row_it_overwrites() {
     use jojobot_domain::memory::{FactPatch, Guarded, NewEntity, NewFact};
     use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
 
-    let scratch = Scratch::new("lease_renewal_stamp");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4806,8 +4472,6 @@ async fn a_lease_renewal_stamps_the_row_it_overwrites() {
         class_before,
         "the renewal changed the bag the overwritten row was written under"
     );
-
-    store.stop().await;
 }
 
 /// **`fields_versioned` defers the listing the same way.** It is the read
@@ -4815,11 +4479,7 @@ async fn a_lease_renewal_stamps_the_row_it_overwrites() {
 /// every write.
 #[tokio::test]
 async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
-    let scratch = Scratch::new("resolve_fields_versioned");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4882,8 +4542,6 @@ async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_ge
         memory.index_listings() > before,
         "a miss must still build the listing, which is what the candidates come from"
     );
-
-    store.stop().await;
 }
 
 /// **`recall` deferred the same way `fields` did.** Same read, shared with
@@ -4891,11 +4549,7 @@ async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_ge
 /// eagerly before a resolve.
 #[tokio::test]
 async fn a_recall_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
-    let scratch = Scratch::new("resolve_recall");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4943,18 +4597,12 @@ async fn a_recall_hit_answers_with_no_full_listing_and_a_miss_still_gets_candida
         memory.index_listings() > before,
         "a miss must still build the listing"
     );
-
-    store.stop().await;
 }
 
 /// **`history` deferred the same way.**
 #[tokio::test]
 async fn a_history_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
-    let scratch = Scratch::new("resolve_history");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -5008,8 +4656,6 @@ async fn a_history_hit_answers_with_no_full_listing_and_a_miss_still_gets_candid
         memory.index_listings() > before,
         "a miss must still build the listing"
     );
-
-    store.stop().await;
 }
 
 /// **`backing` deferred the same way.**
@@ -5082,11 +4728,7 @@ async fn a_backing_hit_answers_with_no_full_listing_and_a_miss_still_gets_candid
 /// thing is the store's answer and not the fake's.
 #[tokio::test]
 async fn the_real_store_does_not_owe_a_person_for_a_deadline_on_one_claim() {
-    let scratch = Scratch::new("owed-person");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "owedperson")
+    let pool = shared_database("owedperson")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -5096,8 +4738,6 @@ async fn the_real_store_does_not_owe_a_person_for_a_deadline_on_one_claim() {
         pool,
     ))
     .await;
-
-    store.stop().await;
 }
 
 /// **`update_fact` deferred the same way.** An edit whose handle, edge object
@@ -5107,11 +4747,7 @@ async fn the_real_store_does_not_owe_a_person_for_a_deadline_on_one_claim() {
 /// keep those misses from passing over an edit that never ran.
 #[tokio::test]
 async fn an_update_fact_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
-    let scratch = Scratch::new("resolve_update_fact");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -5236,8 +4872,6 @@ async fn an_update_fact_hit_answers_with_no_full_listing_and_a_miss_still_gets_c
         memory.index_listings() > before,
         "a miss must still build the listing"
     );
-
-    store.stop().await;
 }
 
 /// **A lineage pointer and a mark on `update_fact` defer the listing too.**
@@ -5248,11 +4882,7 @@ async fn an_update_fact_hit_answers_with_no_full_listing_and_a_miss_still_gets_c
 /// ran.
 #[tokio::test]
 async fn an_update_fact_naming_a_source_or_a_mark_builds_no_listing_until_a_name_misses() {
-    let scratch = Scratch::new("resolve_update_fact_lineage");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -5385,18 +5015,12 @@ async fn an_update_fact_naming_a_source_or_a_mark_builds_no_listing_until_a_name
         memory.index_listings() > before,
         "a miss must still build the listing"
     );
-
-    store.stop().await;
 }
 
 /// **`claim_histories` deferred the same way.**
 #[tokio::test]
 async fn a_claim_histories_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
-    let scratch = Scratch::new("resolve_claim_histories");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -5447,8 +5071,6 @@ async fn a_claim_histories_hit_answers_with_no_full_listing_and_a_miss_still_get
         memory.index_listings() > before,
         "a miss must still build the listing"
     );
-
-    store.stop().await;
 }
 
 /// **`claim_history` deferred, and it has TWO miss branches**: a handle
@@ -5457,11 +5079,7 @@ async fn a_claim_histories_hit_answers_with_no_full_listing_and_a_miss_still_get
 #[tokio::test]
 async fn a_claim_history_hit_answers_with_no_full_listing_and_both_misses_still_get_candidates_or_repair()
  {
-    let scratch = Scratch::new("resolve_claim_history");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -5535,19 +5153,13 @@ async fn a_claim_history_hit_answers_with_no_full_listing_and_both_misses_still_
         "the fact-miss branch must still build the listing, which is what the already-merged \
          check reads"
     );
-
-    store.stop().await;
 }
 
 /// **`retract` deferred, and it has the same two miss branches
 /// `claim_history` does.**
 #[tokio::test]
 async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_the_listing() {
-    let scratch = Scratch::new("resolve_retract");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
+    let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -5633,8 +5245,6 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
         "the fact-miss branch must still build the listing, which is what the already-merged \
          check reads"
     );
-
-    store.stop().await;
 }
 
 /// **The cheap signal [`Memory::write_summary`] answers, against the real
@@ -5646,11 +5256,7 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
 /// (creation, prose, rename, archive, merge).
 #[tokio::test]
 async fn write_summary_answers_the_real_store() {
-    let scratch = Scratch::new("write-summary");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "write_summary")
+    let pool = shared_database("write_summary")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -5848,8 +5454,6 @@ async fn write_summary_answers_the_real_store() {
         empty.fact_hash, after_capture.fact_hash,
         "the fact table's own hash did not move when a fact was captured"
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **An entity removed directly against the store — never through the
@@ -5882,11 +5486,7 @@ async fn write_summary_answers_the_real_store() {
 /// negative would pass against a search wired to nothing.
 #[tokio::test]
 async fn an_entity_deleted_directly_against_the_store_stops_being_served() {
-    let scratch = Scratch::new("direct-delete-entity");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "directdeleteentity")
+    let pool = shared_database("directdeleteentity")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -5952,8 +5552,6 @@ async fn an_entity_deleted_directly_against_the_store_stops_being_served() {
             .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == kept)),
         "the entity that was not deleted must still be served: {survivor:?}"
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **A fact edited directly against the store — never through the
@@ -5977,11 +5575,7 @@ async fn an_entity_deleted_directly_against_the_store_stops_being_served() {
 /// come from.
 #[tokio::test]
 async fn a_fact_edited_directly_against_the_store_stops_answering_its_old_content() {
-    let scratch = Scratch::new("direct-edit-fact");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "directeditfact")
+    let pool = shared_database("directeditfact")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -6069,8 +5663,6 @@ async fn a_fact_edited_directly_against_the_store_stops_answering_its_old_conten
         !surviving_fact.is_empty(),
         "the fact that was not touched must still be served: {surviving_fact:?}"
     );
-
-    store.stop().await;
 }
 
 /// **The cheap signal `Sessions::write_summary` answers, against the real
@@ -6089,11 +5681,7 @@ async fn a_fact_edited_directly_against_the_store_stops_answering_its_old_conten
 /// sessions, on every served answer, for a rescan with nothing new to find.
 #[tokio::test]
 async fn session_write_summary_answers_the_real_store() {
-    let scratch = Scratch::new("session-write-summary");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "session_write_summary")
+    let pool = shared_database("session_write_summary")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -6376,7 +5964,6 @@ async fn session_write_summary_answers_the_real_store() {
     );
 
     let _ = entry;
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.4) `q-933-capture-witnesses-retire`: kept Commit-conflict race.
@@ -6396,11 +5983,7 @@ async fn session_write_summary_answers_the_real_store() {
 /// here is an actual race rather than a simulated one.
 #[tokio::test]
 async fn a_write_that_conflicts_with_another_is_told_apart_from_a_failed_store() {
-    let scratch = Scratch::new("conflict-not-a-failure");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "conflict_not_a_failure")
+    let pool = shared_database("conflict_not_a_failure")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -6443,8 +6026,6 @@ async fn a_write_that_conflicts_with_another_is_told_apart_from_a_failed_store()
         "a write that lost a genuine commit-time race must read back as Conflict, not a bare \
          store failure: {loser:?}"
     );
-
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.4) `q-933-capture-witnesses-retire`: kept Last-slot race.
@@ -6460,11 +6041,7 @@ async fn a_write_that_conflicts_with_another_is_told_apart_from_a_failed_store()
 /// in-memory double takes one lock per write and has no race for it to lose.
 #[tokio::test]
 async fn two_captures_racing_for_the_last_slot_of_a_thread_cannot_both_land() {
-    let scratch = Scratch::new("record-capacity-race");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "record_capacity_race")
+    let pool = shared_database("record_capacity_race")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -6516,8 +6093,6 @@ async fn two_captures_racing_for_the_last_slot_of_a_thread_cannot_both_land() {
         .filter(|f| f.status == jojobot_domain::memory::FactStatus::Active)
         .count();
     assert_eq!(live, 2, "the thread never holds a third record");
-
-    store.stop().await;
 }
 
 /// **Every link row the store holds, as (entity, key, ordinal, target)**, in a
@@ -6568,11 +6143,7 @@ async fn links_the_writes_imply(
 /// could not do, and the holder is found again once the rows are rebuilt.
 #[tokio::test]
 async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them() {
-    let scratch = Scratch::new("field-link-write");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "field_link_write")
+    let pool = shared_database("field_link_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -6679,8 +6250,6 @@ async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them(
             .contains(&held.address().to_string()),
         "without link rows nothing is found: the question reads no value",
     );
-
-    store.stop().await;
 }
 
 /// **A fold leaves the link rows of the claims it folds where they were written.**
@@ -6691,11 +6260,7 @@ async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them(
 /// survivor serves the value the write held.
 #[tokio::test]
 async fn a_merge_leaves_the_link_rows_where_the_writes_were_made() {
-    let scratch = Scratch::new("field-link-merge");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "field_link_merge")
+    let pool = shared_database("field_link_merge")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -6774,8 +6339,6 @@ async fn a_merge_leaves_the_link_rows_where_the_writes_were_made() {
         alpha.as_str(),
         "and the survivor serves what the duplicate's write pointed at"
     );
-
-    store.stop().await;
 }
 
 /// 🚨 **Two things that each wrote the same key can be folded into one.**
@@ -7011,11 +6574,7 @@ async fn a_merge_places_a_keys_writes_by_the_stamp_the_store_gave_them() {
         ("neither has a stamp", None, None, ["done", "now"], "now"),
     ];
     for (what, survivors, duplicates, order, holds) in scenarios {
-        let scratch = Scratch::new("field-write-merge-stamped");
-        let mut store = Dolt::start(&scratch.0, free_port())
-            .await
-            .expect("the store comes up");
-        let pool = migrated_database(&store, "field_write_merge_stamped")
+        let pool = shared_database("field_write_merge_stamped")
             .await
             .expect("a database of its own");
         migrate::run(&pool).await.expect("the schema");
@@ -7086,8 +6645,6 @@ async fn a_merge_places_a_keys_writes_by_the_stamp_the_store_gave_them() {
             holds,
             "when {what}, the survivor holds the newest write",
         );
-
-        store.stop().await;
     }
 }
 
@@ -7102,11 +6659,7 @@ async fn a_merge_places_a_keys_writes_by_the_stamp_the_store_gave_them() {
 /// imply.
 #[tokio::test]
 async fn a_merge_of_two_things_linking_the_same_target_under_one_key_keeps_both_links() {
-    let scratch = Scratch::new("field-link-merge-same-key");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "field_link_merge_same_key")
+    let pool = shared_database("field_link_merge_same_key")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -7187,8 +6740,6 @@ async fn a_merge_of_two_things_linking_the_same_target_under_one_key_keeps_both_
         pointing.iter().all(|fact| fact.home == survivor),
         "and both are served as the survivor's: {pointing:?}"
     );
-
-    store.stop().await;
 }
 
 /// **Two forwarding rows in the shape an older build left**, for a case about
@@ -7524,11 +7075,7 @@ async fn children_of_folds_that_name_a_worn_handle(
 /// is about; the second shape is the positive the first rests on.
 #[tokio::test]
 async fn dolt_serves_a_child_of_a_folded_row_under_the_thing_the_fold_meant_in_a_document() {
-    let scratch = Scratch::new("heir-document");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "heir_document")
+    let pool = shared_database("heir_document")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -7550,17 +7097,12 @@ async fn dolt_serves_a_child_of_a_folded_row_under_the_thing_the_fold_meant_in_a
             "folded {when}: the child is served under the wrong parent"
         );
     }
-    store.stop().await;
 }
 
 /// **The same three folds, read through the entity list.**
 #[tokio::test]
 async fn dolt_lists_a_child_of_a_folded_row_under_the_thing_the_fold_meant() {
-    let scratch = Scratch::new("heir-list");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "heir_list")
+    let pool = shared_database("heir_list")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -7584,7 +7126,6 @@ async fn dolt_lists_a_child_of_a_folded_row_under_the_thing_the_fold_meant() {
             "folded {when}: the child is listed under the wrong parent"
         );
     }
-    store.stop().await;
 }
 
 /// **A fold and a rename are ordered as moments, and a moment that cannot be read
@@ -7598,11 +7139,7 @@ async fn dolt_lists_a_child_of_a_folded_row_under_the_thing_the_fold_meant() {
 /// it with the new thing.
 #[tokio::test]
 async fn dolt_orders_a_fold_by_moments_and_leaves_an_unreadable_moment_alone() {
-    let scratch = Scratch::new("heir-moments");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "heir_moments")
+    let pool = shared_database("heir_moments")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -7672,7 +7209,6 @@ async fn dolt_orders_a_fold_by_moments_and_leaves_an_unreadable_moment_alone() {
         Some(&folded),
         "a rename with no readable moment places nothing"
     );
-    store.stop().await;
 }
 
 /// **A forwarding row the store cannot place is warned about once per process,
@@ -7682,11 +7218,7 @@ async fn dolt_orders_a_fold_by_moments_and_leaves_an_unreadable_moment_alone() {
 /// the count rests on.
 #[tokio::test]
 async fn dolt_warns_once_about_a_forwarding_row_it_cannot_place() {
-    let scratch = Scratch::new("heir-warn-once");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "heir_warn_once")
+    let pool = shared_database("heir_warn_once")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -7742,7 +7274,6 @@ async fn dolt_warns_once_about_a_forwarding_row_it_cannot_place() {
         1,
         "reads and a rename sweep over the same row add no second line"
     );
-    store.stop().await;
 }
 
 /// **A rename moves the forwarding rows that meant the renamed thing, and leaves
@@ -7753,11 +7284,7 @@ async fn dolt_warns_once_about_a_forwarding_row_it_cannot_place() {
 /// carried, which is the positive the other rests on.
 #[tokio::test]
 async fn dolt_leaves_a_forwarding_row_a_rename_does_not_mean() {
-    let scratch = Scratch::new("heir-sweep");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "heir_sweep")
+    let pool = shared_database("heir_sweep")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -7809,7 +7336,6 @@ async fn dolt_leaves_a_forwarding_row_a_rename_does_not_mean() {
         Some(sweep.kept.as_str()),
         "a row folded before the survivor left the handle meant the survivor, and stays"
     );
-    store.stop().await;
 }
 
 /// **A forward the pass cannot place is reported at the first boot that meets
@@ -7818,11 +7344,7 @@ async fn dolt_leaves_a_forwarding_row_a_rename_does_not_mean() {
 /// the set is new and is told about. The tie is written by hand.
 #[tokio::test]
 async fn dolt_reports_the_forwarding_rows_it_cannot_place_once() {
-    let scratch = Scratch::new("forward-reported");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "forward_reported")
+    let pool = shared_database("forward_reported")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -7911,7 +7433,6 @@ async fn dolt_reports_the_forwarding_rows_it_cannot_place_once() {
         (2, false, false),
         "{links:?}"
     );
-    store.stop().await;
 }
 
 /// **A link a fold of an older build left on the forwarding row is repointed at
@@ -7925,11 +7446,7 @@ async fn dolt_reports_the_forwarding_rows_it_cannot_place_once() {
 /// one. A holder of an unrelated thing keeps its link.
 #[tokio::test]
 async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
-    let scratch = Scratch::new("forwarded-links");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "forwarded_links")
+    let pool = shared_database("forwarded_links")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -8134,8 +7651,6 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
         .await
         .expect("a pass without its marker runs");
     assert!(!rerun.settled && rerun.repointed == 0, "{rerun:?}");
-
-    store.stop().await;
 }
 
 /// **A link an older fold left on a forwarding row is repointed even when the
@@ -8151,11 +7666,7 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
 /// skipped, listed, and the pass is not marked finished.
 #[tokio::test]
 async fn dolt_repoints_links_an_older_fold_left_when_the_survivor_was_renamed() {
-    let scratch = Scratch::new("forwarded-renamed");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "forwarded_renamed")
+    let pool = shared_database("forwarded_renamed")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -8335,8 +7846,6 @@ async fn dolt_repoints_links_an_older_fold_left_when_the_survivor_was_renamed() 
         !after.settled,
         "a pass that skipped a forward is not marked finished: {after:?}"
     );
-
-    store.stop().await;
 }
 
 /// **A store where the pass the deployed build ran already finished, with a
@@ -8856,11 +8365,7 @@ async fn dolt_takes_an_edit_back_with_the_claim_it_was_made_with() {
 /// stopped recording both fail here.
 #[tokio::test]
 async fn a_change_nothing_searches_for_is_recorded_and_moves_no_signal() {
-    let scratch = Scratch::new("session-history-signal");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "session_history_signal")
+    let pool = shared_database("session_history_signal")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -8945,8 +8450,6 @@ async fn a_change_nothing_searches_for_is_recorded_and_moves_no_signal() {
         before + 1,
         "the one change the index reads moves the signal by one"
     );
-
-    store.stop().await;
 }
 
 /// **A record the store kept before it recorded what changed reads as
@@ -8956,11 +8459,7 @@ async fn a_change_nothing_searches_for_is_recorded_and_moves_no_signal() {
 /// its wordings were kept has none.
 #[tokio::test]
 async fn a_record_from_before_the_history_reads_as_unrecorded() {
-    let scratch = Scratch::new("session-history-old");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "session_history_old")
+    let pool = shared_database("session_history_old")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -9047,8 +8546,6 @@ async fn a_record_from_before_the_history_reads_as_unrecorded() {
             .is_empty(),
         "an entry written before its wordings were kept has none"
     );
-
-    store.stop().await;
 }
 
 /// One claim and the field it set, filed under `key` below the surface: a badge
@@ -9128,11 +8625,7 @@ fn supplied_view(id: &EntityId, name: &str) -> Provision {
 /// rename is no orphan either. A second call has nothing left to do.
 #[tokio::test]
 async fn dolt_gives_a_row_to_a_handle_whose_writes_outlived_its_record() {
-    let scratch = Scratch::new("adopt-retired");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "adoptretired")
+    let pool = shared_database("adoptretired")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -9340,8 +8833,6 @@ async fn dolt_gives_a_row_to_a_handle_whose_writes_outlived_its_record() {
         again.adopted.is_empty(),
         "a second call has nothing left to adopt: {again:?}"
     );
-
-    store.stop().await;
 }
 
 /// **An upgrade keeps an edge at a handle the build stopped supplying
@@ -9952,11 +9443,7 @@ async fn a_capture_on_a_member_of_a_large_numbered_collection_runs_a_bounded_num
  {
     use jojobot_domain::memory::{Guarded, guard};
     const MEMBERS: u32 = 64;
-    let scratch = Scratch::new("numbered-cost");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "numberedcost")
+    let pool = shared_database("numberedcost")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -10055,8 +9542,6 @@ async fn a_capture_on_a_member_of_a_large_numbered_collection_runs_a_bounded_num
         "a capture on one of {MEMBERS} members ran {on_member} statements against {on_plain} \
          on a plain thing: {per_member:.2} per member, more than {STATEMENTS_PER_MEMBER}"
     );
-
-    store.stop().await;
 }
 
 /// **The operator's name and aliases on a supplied record, over the real store.**
@@ -10102,11 +9587,7 @@ async fn an_upgrade_that_renames_a_shipped_record_leaves_the_operators_name_on_t
     use jojobot_adapters::provisioned::overlay_contract::{shipped_record_as, supplied};
     use jojobot_domain::memory::EntityPatch;
 
-    let scratch = Scratch::new("overlay-upgrade");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "overlay_upgrade")
+    let pool = shared_database("overlay_upgrade")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -10156,8 +9637,6 @@ async fn an_upgrade_that_renames_a_shipped_record_leaves_the_operators_name_on_t
         Some("Ready board"),
         "a record the operator never named takes the new build's name"
     );
-
-    store.stop().await;
 }
 
 /// **A sets-only edit of a record the build still supplies lands, over the real
@@ -10168,11 +9647,7 @@ async fn a_sets_only_edit_of_a_still_supplied_record_lands_over_the_real_store()
     use jojobot_adapters::provisioned::overlay_contract::supplied;
     use jojobot_domain::memory::EntityPatch;
 
-    let scratch = Scratch::new("overlay-edit");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "overlay_edit")
+    let pool = shared_database("overlay_edit")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -10240,7 +9715,6 @@ async fn a_sets_only_edit_of_a_still_supplied_record_lands_over_the_real_store()
             if words.contains("settings_record")),
         "a public capture of the engine's label was not refused: {refused:?}"
     );
-    store.stop().await;
 }
 
 /// **The stack the server serves through over a real store whose import bound the
@@ -10285,11 +9759,7 @@ fn an_operator_job() -> jojobot_domain::log::claims::job::CaptureJob {
 /// record, which is its handle.
 #[tokio::test]
 async fn a_name_and_aliases_set_on_a_supplied_record_are_served_back_over_the_real_store() {
-    let scratch = Scratch::new("overlay-name");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "overlay_name")
+    let pool = shared_database("overlay_name")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -10349,7 +9819,6 @@ async fn a_name_and_aliases_set_on_a_supplied_record_are_served_back_over_the_re
         wanted,
         "the listing does not wear the operator's name after a restart"
     );
-    store.stop().await;
 }
 
 /// **A claim the capture verb writes on a record the build supplies is read back
@@ -10357,11 +9826,7 @@ async fn a_name_and_aliases_set_on_a_supplied_record_are_served_back_over_the_re
 /// sets and the claim itself are the record's, whichever way it was named.
 #[tokio::test]
 async fn a_claim_captured_on_a_supplied_record_is_read_back_over_the_real_store() {
-    let scratch = Scratch::new("overlay-capture");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "overlay_capture")
+    let pool = shared_database("overlay_capture")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -10400,7 +9865,6 @@ async fn a_claim_captured_on_a_supplied_record_is_read_back_over_the_real_store(
             .any(|fact| fact.id == landed.id),
         "the claim is not in the read of the record"
     );
-    store.stop().await;
 }
 
 /// **A claim that points at a record the build supplies is read back with its
@@ -10409,11 +9873,7 @@ async fn a_claim_captured_on_a_supplied_record_is_read_back_over_the_real_store(
 /// filed under the handle the rows know the record by.
 #[tokio::test]
 async fn a_claim_that_points_at_a_supplied_record_is_read_back_by_handle_over_the_real_store() {
-    let scratch = Scratch::new("overlay-pointers");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "overlay_pointers")
+    let pool = shared_database("overlay_pointers")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -10472,7 +9932,6 @@ async fn a_claim_that_points_at_a_supplied_record_is_read_back_by_handle_over_th
         Some(FactAddress::new(target, source.id)),
         "the claim it was derived from is not homed on the handle"
     );
-    store.stop().await;
 }
 
 /// **A legacy write that names a supplied record files its pointers on the record's
@@ -10482,11 +9941,7 @@ async fn a_claim_that_points_at_a_supplied_record_is_read_back_by_handle_over_th
 /// holder, and the holder's claim reads back by handle.
 #[tokio::test]
 async fn a_legacy_write_naming_a_supplied_record_files_its_pointers_on_its_identity() {
-    let scratch = Scratch::new("overlay-legacy-pointers");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "overlay_legacy_pointers")
+    let pool = shared_database("overlay_legacy_pointers")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -10539,7 +9994,6 @@ async fn a_legacy_write_naming_a_supplied_record_files_its_pointers_on_its_ident
         .expect("the claim is in the read of its holder");
     assert_eq!(read.edge.map(|edge| edge.object), Some(loops.clone()));
     assert_eq!(read.refs, vec![loops]);
-    store.stop().await;
 }
 
 /// **A stored row at a supplied handle still takes the claim** (rule 508): the row
@@ -10547,11 +10001,7 @@ async fn a_legacy_write_naming_a_supplied_record_files_its_pointers_on_its_ident
 #[tokio::test]
 async fn a_stored_row_at_a_supplied_handle_still_takes_a_legacy_claim() {
     use jojobot_adapters::provisioned::overlay_contract::supplied;
-    let scratch = Scratch::new("overlay-row-wins");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "overlay_row_wins")
+    let pool = shared_database("overlay_row_wins")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -10602,7 +10052,6 @@ async fn a_stored_row_at_a_supplied_handle_still_takes_a_legacy_claim() {
         .map(|entity| entity.name.as_str())
         .collect();
     assert_eq!(names, vec!["My rounds"], "the row answers at its handle");
-    store.stop().await;
 }
 
 /// **A review stamp is not a later change than the write that carries it, in the
@@ -10611,36 +10060,26 @@ async fn a_stored_row_at_a_supplied_handle_still_takes_a_legacy_claim() {
 /// straight back in its queue.
 #[tokio::test]
 async fn a_review_stamp_is_not_a_later_change_than_its_own_write_in_the_real_store() {
-    let scratch = Scratch::new("review-stamp");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "review_stamp")
+    let pool = shared_database("review_stamp")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
     let memory = DoltMemory::open(pool);
     memory::a_review_stamp_is_not_a_later_change_than_the_write_that_carries_it(&memory).await;
-    store.stop().await;
 }
 
 /// **A creation writes the records beside its first claim in one act, in the real
 /// store.** The contract runs in parts; this holds the one case on its own.
 #[tokio::test]
 async fn a_creation_writes_the_records_beside_its_first_claim_in_the_real_store() {
-    let scratch = Scratch::new("alongside");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "alongside")
+    let pool = shared_database("alongside")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
     let memory = DoltMemory::open(pool);
     memory::a_creation_writes_the_records_beside_its_first_claim_in_one_act(&memory).await;
-    store.stop().await;
 }
 
 /// **A merged bot's newest write counts its real writes and none of its ledgers,
@@ -10668,11 +10107,7 @@ async fn a_merged_bots_newest_write_counts_its_real_writes_in_the_real_store() {
 /// applies it to the write.
 #[tokio::test]
 async fn another_sessions_seam_lands_on_a_testimony_section_in_the_real_store() {
-    let scratch = Scratch::new("seam-leads");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "seam_leads")
+    let pool = shared_database("seam_leads")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -10680,7 +10115,6 @@ async fn another_sessions_seam_lands_on_a_testimony_section_in_the_real_store() 
     let memory = DoltMemory::open(pool);
     memory::another_sessions_blank_lead_on_a_testimony_section_lands_and_nothing_else_does(&memory)
         .await;
-    store.stop().await;
 }
 
 /// **A write of jojobot's own bookkeeping is no change of the thing, in the real
@@ -10688,18 +10122,13 @@ async fn another_sessions_seam_lands_on_a_testimony_section_in_the_real_store() 
 /// rewritten at start; the newest moment of the thing stays as it was.
 #[tokio::test]
 async fn a_bookkeeping_write_is_no_change_of_the_thing_in_the_real_store() {
-    let scratch = Scratch::new("bookkept");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "bookkept")
+    let pool = shared_database("bookkept")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
     let memory = DoltMemory::open(pool);
     memory::a_bookkeeping_write_is_no_change_of_the_thing(&memory).await;
-    store.stop().await;
 }
 
 /// TEMPORARY(9.3.4) `q-933-capture-witnesses-retire`: kept W: claims read on a capped home.
@@ -10709,11 +10138,7 @@ async fn a_bookkeeping_write_is_no_change_of_the_thing_in_the_real_store() {
 /// sets none. A capture onto a thread still reads the claims it counts.
 #[tokio::test]
 async fn a_capture_reads_the_claims_of_its_home_only_where_a_ceiling_applies() {
-    let scratch = Scratch::new("capture-ceiling-reads");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "capture_ceiling_reads")
+    let pool = shared_database("capture_ceiling_reads")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -10779,8 +10204,6 @@ async fn a_capture_reads_the_claims_of_its_home_only_where_a_ceiling_applies() {
         on_a_thread > 0,
         "a thread has a ceiling, so a capture onto one reads the claims it counts"
     );
-
-    store.stop().await;
 }
 
 /// **The real store counts only a bot's own connection claims as its thoughts.**
@@ -10791,11 +10214,7 @@ async fn a_capture_reads_the_claims_of_its_home_only_where_a_ceiling_applies() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dolt_counts_only_the_bots_own_connection_claims_as_its_thoughts() {
     use jojobot_domain::memory::thought_room;
-    let scratch = Scratch::new("thought-writers");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "thoughtwriters")
+    let pool = shared_database("thoughtwriters")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -11016,7 +10435,6 @@ async fn dolt_counts_only_the_bots_own_connection_claims_as_its_thoughts() {
         2,
         "the room still holds the bot's own two"
     );
-    store.stop().await;
 }
 
 /// **A bot is a writer of a thread only for a thought it wrote itself.** Another
@@ -11024,11 +10442,7 @@ async fn dolt_counts_only_the_bots_own_connection_claims_as_its_thoughts() {
 /// thought makes it one. The runs are rows in the store's own session table.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dolt_makes_a_bot_a_writer_of_a_thread_only_for_a_thought_it_wrote() {
-    let scratch = Scratch::new("thread-writers");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "threadwriters")
+    let pool = shared_database("threadwriters")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -11102,7 +10516,6 @@ async fn dolt_makes_a_bot_a_writer_of_a_thread_only_for_a_thought_it_wrote() {
         vec![milhouse.clone()],
         "its own thought does"
     );
-    store.stop().await;
 }
 
 /// **A write keeps the writing bot as the id the bot is filed under**, not the
@@ -11114,11 +10527,7 @@ async fn dolt_makes_a_bot_a_writer_of_a_thread_only_for_a_thought_it_wrote() {
 /// reads the same, and a write that kept no bot is read through its run as it was.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_write_keeps_the_writing_bot_as_the_id_it_is_filed_under() {
-    let scratch = Scratch::new("writer-identity");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "writeridentity")
+    let pool = shared_database("writeridentity")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -11242,5 +10651,4 @@ async fn a_write_keeps_the_writing_bot_as_the_id_it_is_filed_under() {
         !read_back(renamed, others.id.clone()).await,
         "with no bot recorded and no run, a claim reads as the home's own, as it always did"
     );
-    store.stop().await;
 }
