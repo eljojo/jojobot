@@ -1248,9 +1248,9 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
 }
 
 /// **A thing renamed after its prose was written is deleted with that prose.**
-/// The fake keys prose by the handle it was written under and a rename does not
-/// re-key it. Pages at both its creation and an intermediate handle must go;
-/// the latter is found through the former handles. An unrelated page stays.
+/// A rename moves the page to the new handle, so the page written before the first
+/// rename and the one written between the two renames are both under the final
+/// handle when the thing is deleted, and both go. An unrelated page stays.
 #[tokio::test]
 async fn deleting_a_renamed_thing_under_the_store_clears_the_prose_written_before_the_rename() {
     let store = InMemoryMemory::booted();
@@ -1277,8 +1277,9 @@ async fn deleting_a_renamed_thing_under_the_store_clears_the_prose_written_befor
         .written()
         .expect("nothing collides with the new handle");
     assert!(
-        store.prose.lock().unwrap().contains_key(&doomed),
-        "the page still sits under the handle it was written under"
+        store.prose.lock().unwrap().contains_key(&renamed)
+            && !store.prose.lock().unwrap().contains_key(&doomed),
+        "the page moved to the new handle"
     );
     store
         .set_prose(&renamed, "a later page", None)
@@ -1298,7 +1299,10 @@ async fn deleting_a_renamed_thing_under_the_store_clears_the_prose_written_befor
         .expect("the second rename is answered")
         .written()
         .expect("nothing collides with the final handle");
-    assert!(store.prose.lock().unwrap().contains_key(&renamed));
+    assert!(
+        store.prose.lock().unwrap().contains_key(&final_handle)
+            && !store.prose.lock().unwrap().contains_key(&renamed)
+    );
     store
         .set_prose(&final_handle, "the last page", None)
         .await
@@ -1321,8 +1325,8 @@ async fn deleting_a_renamed_thing_under_the_store_clears_the_prose_written_befor
 
 /// **A page written under a middle handle goes with the thing.** After two renames
 /// the thing was made as one handle, wrote its page as another and is deleted as a
-/// third: only the former-handle table names the middle one, so a delete that reads
-/// the made-as handle and the current one leaves the page behind.
+/// third: the second rename moved the page to the third, and the delete clears it
+/// there and leaves nothing under the middle handle.
 #[tokio::test]
 async fn deleting_a_twice_renamed_thing_clears_the_page_written_under_its_middle_handle() {
     let store = InMemoryMemory::booted();
@@ -1362,16 +1366,17 @@ async fn deleting_a_twice_renamed_thing_clears_the_page_written_under_its_middle
         .written()
         .expect("nothing collides with the last handle");
     assert!(
-        store.prose.lock().unwrap().contains_key(&middle),
-        "the page sits under the handle it was written under"
+        store.prose.lock().unwrap().contains_key(&last)
+            && !store.prose.lock().unwrap().contains_key(&middle),
+        "the page moved with the second rename"
     );
 
     store.delete_entity_past_the_guard(&last);
 
     let held = store.prose.lock().unwrap();
     assert!(
-        !held.contains_key(&middle),
-        "the page under the middle handle remains: {held:?}"
+        !held.contains_key(&middle) && !held.contains_key(&last),
+        "the page of the deleted thing remains: {held:?}"
     );
 }
 
@@ -1593,4 +1598,77 @@ async fn every_refused_composite_leaves_the_whole_store_and_the_claims_state_as_
         .await
         .unwrap();
     assert_ne!(leaves_to_keep(&store).await.1, before.1, "the control");
+}
+
+/// **A renamed thing's page goes with it.** Prose is keyed by the handle it is written under, and a
+/// rename gave the thing a new handle and left the page at the old one: a scan lost the page, and a
+/// thing made later at the vacated handle read the former page as its own.
+#[tokio::test]
+async fn a_renamed_things_prose_follows_it_and_the_vacated_handle_reads_none() {
+    let store = InMemoryMemory::booted();
+    let lisa = thing(&store, "person:lisa", "Lisa").await;
+    store
+        .set_prose(&lisa, "plays the saxophone", None)
+        .await
+        .expect("the page is written");
+    let renamed = EntityId("person:delta".into());
+    store
+        .rename_entity(
+            &lisa,
+            &renamed,
+            None,
+            date(2026, 6, 4),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename is answered")
+        .written()
+        .expect("nothing collides with the new handle");
+    let page_of = |scans: &[search::DocScan], handle: &EntityId| {
+        scans
+            .iter()
+            .find(|doc| {
+                doc.entity
+                    .as_ref()
+                    .is_some_and(|entity| &entity.id == handle)
+            })
+            .map(|doc| doc.prose.clone())
+    };
+    let scans = store.scan().await.expect("the scan reads");
+    assert_eq!(
+        page_of(&scans, &renamed).as_deref(),
+        Some("plays the saxophone"),
+        "the page follows the thing to its new handle"
+    );
+
+    // The vacated handle is screened against the former one, so the creation is refused once
+    // and made again with the override its refusal offers.
+    let mut second = NewEntity::new(EntityId("person:lisa".into()), "Bart", "fixture");
+    let again = match store.add_entity(second.clone()).await.expect("add") {
+        crate::memory::Guarded::Written(entity) => entity.id,
+        crate::memory::Guarded::Blocked {
+            attempted,
+            candidates,
+        } => {
+            second.override_token = Some(crate::memory::guard::override_token(
+                &attempted,
+                &candidates,
+            ));
+            second.override_reason = Some("a different person at the vacated handle".into());
+            store
+                .add_entity(second)
+                .await
+                .expect("add")
+                .written()
+                .expect("the override lifts the refusal")
+                .id
+        }
+    };
+    let scans = store.scan().await.expect("the scan reads");
+    assert_eq!(
+        page_of(&scans, &again).as_deref(),
+        Some(""),
+        "the vacated handle holds no page of the thing that left it"
+    );
 }
