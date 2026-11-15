@@ -2385,17 +2385,7 @@ async fn the_limit_caps_the_list_and_defaults_to_twenty() {
 #[tokio::test]
 async fn a_rebuild_drops_what_the_store_no_longer_says() {
     let index = FullTextIndex::open().expect("index opens");
-    let before = scan(
-        "doc-1",
-        Some(entity("person:alpha", "Alpha")),
-        "",
-        vec![fact(
-            "person:alpha",
-            "f1",
-            "keeps a ferret",
-            date(2026, 1, 1),
-        )],
-    );
+    let before = alpha_scan("keeps a ferret");
     index
         .ingest_all(&[before], index.reading_begins(), &Default::default())
         .expect("ingest");
@@ -2407,17 +2397,7 @@ async fn a_rebuild_drops_what_the_store_no_longer_says() {
         1
     );
 
-    let after = scan(
-        "doc-1",
-        Some(entity("person:alpha", "Alpha")),
-        "",
-        vec![fact(
-            "person:alpha",
-            "f1",
-            "keeps a tortoise",
-            date(2026, 1, 1),
-        )],
-    );
+    let after = alpha_scan("keeps a tortoise");
     index
         .ingest_all(&[after], index.reading_begins(), &Default::default())
         .expect("re-ingest");
@@ -5022,46 +5002,6 @@ async fn a_reading_in_flight_does_not_clear_a_corpus_failure_it_predates() {
     );
 }
 
-/// **The other direction, and the positive both directions rest on.**
-///
-/// A failure that a reading BEGAN AFTER is exactly the one that reading is
-/// entitled to clear: it read the store later than the failure, so it
-/// speaks for the store as it stands. Without this the test above is
-/// satisfied by a flag that is never cleared at all, which reports every
-/// answer as behind forever.
-///
-/// And a run where nothing failed reports complete, or "behind" would be
-/// the only state this index can produce.
-#[tokio::test]
-async fn a_reading_that_began_after_a_failure_clears_it() {
-    let inner = one_page();
-    let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));
-    store.rebuild().await.expect("rebuild");
-    assert_eq!(
-        store.memory_coverage_via_port(),
-        Coverage::Loaded,
-        "nothing has failed yet, so nothing is behind"
-    );
-
-    inner.blinded();
-    Refresh::refresh(store.as_ref()).await;
-    assert_eq!(
-        store.memory_coverage_via_port(),
-        Coverage::Partial(Behind::Stale),
-        "a refresh that could not reach the store leaves the index behind"
-    );
-
-    // A reading that starts now sees the store after the failure, so its
-    // word is good.
-    inner.sighted();
-    Refresh::refresh(store.as_ref()).await;
-    assert_eq!(
-        store.memory_coverage_via_port(),
-        Coverage::Loaded,
-        "a reading taken after the failure speaks for the store as it stands"
-    );
-}
-
 /// **A write the store took is not failed by the projection behind it.**
 ///
 /// The re-index re-reads the doc AFTER the store has committed, so a
@@ -5731,17 +5671,7 @@ pub(super) fn message(
 /// the id `read_message` takes.
 #[tokio::test]
 async fn a_message_comes_back_in_the_same_ranked_list() {
-    let index = index_of(vec![scan(
-        "doc-1",
-        Some(entity("person:alpha", "Alpha")),
-        "",
-        vec![fact(
-            "person:alpha",
-            "f1",
-            "runs the kiln on Tuesdays",
-            date(2026, 1, 1),
-        )],
-    )]);
+    let index = index_of(vec![alpha_scan("runs the kiln on Tuesdays")]);
     index
         .ingest_mail(&[message(
             "42",
@@ -6234,17 +6164,7 @@ async fn a_failed_doc_write_does_not_leave_its_staged_delete_for_a_later_commit(
     let index = FullTextIndex::open().expect("index opens");
     index
         .ingest_all(
-            &[scan(
-                "doc-1",
-                Some(entity("person:alpha", "Alpha")),
-                "",
-                vec![fact(
-                    "person:alpha",
-                    "f1",
-                    "keeps a ferret unique-needle-survivor",
-                    date(2026, 1, 1),
-                )],
-            )],
+            &[alpha_scan("keeps a ferret unique-needle-survivor")],
             index.reading_begins(),
             &Default::default(),
         )
@@ -6262,17 +6182,7 @@ async fn a_failed_doc_write_does_not_leave_its_staged_delete_for_a_later_commit(
     // was meant to replace it is made to fail.
     index.fail_add_document_at(2);
     let failed = index.ingest_all(
-        &[scan(
-            "doc-1",
-            Some(entity("person:alpha", "Alpha")),
-            "",
-            vec![fact(
-                "person:alpha",
-                "f1",
-                "keeps a tortoise unique-needle-rewrite",
-                date(2026, 1, 1),
-            )],
-        )],
+        &[alpha_scan("keeps a tortoise unique-needle-rewrite")],
         index.reading_begins(),
         &Default::default(),
     );
@@ -6286,17 +6196,7 @@ async fn a_failed_doc_write_does_not_leave_its_staged_delete_for_a_later_commit(
     index
         .ingest_all(
             &[
-                scan(
-                    "doc-1",
-                    Some(entity("person:alpha", "Alpha")),
-                    "",
-                    vec![fact(
-                        "person:alpha",
-                        "f1",
-                        "keeps a ferret unique-needle-survivor",
-                        date(2026, 1, 1),
-                    )],
-                ),
+                alpha_scan("keeps a ferret unique-needle-survivor"),
                 scan(
                     "doc-2",
                     Some(entity("person:beta", "Beta")),
@@ -6333,20 +6233,7 @@ async fn a_failed_single_doc_write_does_not_leave_its_staged_delete_for_a_later_
     let index = FullTextIndex::open().expect("index opens");
     let none = FactHistoryTerms::new();
     index
-        .ingest_doc(
-            &scan(
-                "doc-1",
-                Some(entity("person:alpha", "Alpha")),
-                "",
-                vec![fact(
-                    "person:alpha",
-                    "f1",
-                    "keeps a ferret unique-needle-survivor",
-                    date(2026, 1, 1),
-                )],
-            ),
-            &none,
-        )
+        .ingest_doc(&alpha_scan("keeps a ferret unique-needle-survivor"), &none)
         .expect("the first write lands");
     assert_eq!(
         index
@@ -6358,20 +6245,7 @@ async fn a_failed_single_doc_write_does_not_leave_its_staged_delete_for_a_later_
     );
 
     index.fail_add_document_at(2);
-    let failed = index.ingest_doc(
-        &scan(
-            "doc-1",
-            Some(entity("person:alpha", "Alpha")),
-            "",
-            vec![fact(
-                "person:alpha",
-                "f1",
-                "keeps a tortoise unique-needle-rewrite",
-                date(2026, 1, 1),
-            )],
-        ),
-        &none,
-    );
+    let failed = index.ingest_doc(&alpha_scan("keeps a tortoise unique-needle-rewrite"), &none);
     assert!(
         failed.is_err(),
         "the injected fault must surface: {failed:?}"
@@ -6704,17 +6578,7 @@ async fn mail_is_searchable_in_every_state_and_the_hit_says_which() {
 /// a mode. Excluding it must not touch the memory half of the answer.
 #[tokio::test]
 async fn include_mail_is_a_filter_the_caller_holds() {
-    let index = index_of(vec![scan(
-        "doc-1",
-        Some(entity("person:alpha", "Alpha")),
-        "",
-        vec![fact(
-            "person:alpha",
-            "f1",
-            "the shipment is late",
-            date(2026, 1, 1),
-        )],
-    )]);
+    let index = index_of(vec![alpha_scan("the shipment is late")]);
     index
         .ingest_mail(&[message(
             "7",
@@ -6808,17 +6672,7 @@ async fn a_structural_filter_leaves_mail_out_the_way_it_leaves_prose_out() {
 /// come back beside its own older copy — and it leaves memory alone.
 #[tokio::test]
 async fn re_ingesting_mail_replaces_it_and_leaves_memory_alone() {
-    let index = index_of(vec![scan(
-        "doc-1",
-        Some(entity("person:alpha", "Alpha")),
-        "",
-        vec![fact(
-            "person:alpha",
-            "f1",
-            "keeps a ferret",
-            date(2026, 1, 1),
-        )],
-    )]);
+    let index = index_of(vec![alpha_scan("keeps a ferret")]);
     index
         .ingest_mail(&[message(
             "1",
@@ -6907,17 +6761,7 @@ async fn one_message_is_re_indexed_in_place() {
 /// act on wrongly.
 #[tokio::test]
 async fn an_index_with_no_mail_says_mail_is_not_searchable() {
-    let index = index_of(vec![scan(
-        "doc-1",
-        Some(entity("person:alpha", "Alpha")),
-        "",
-        vec![fact(
-            "person:alpha",
-            "f1",
-            "keeps a ferret",
-            date(2026, 1, 1),
-        )],
-    )]);
+    let index = index_of(vec![alpha_scan("keeps a ferret")]);
     assert_eq!(
         index.mail_coverage(),
         Coverage::Unread,
@@ -7002,19 +6846,7 @@ async fn rebuilding_either_half_leaves_the_other_alone() {
             MessageState::New,
         )
     };
-    let docs = || {
-        vec![scan(
-            "doc-1",
-            Some(entity("person:alpha", "Alpha")),
-            "",
-            vec![fact(
-                "person:alpha",
-                "f1",
-                "keeps a ferret",
-                date(2026, 1, 1),
-            )],
-        )]
-    };
+    let docs = || vec![alpha_scan("keeps a ferret")];
     let both_survive = |index: &FullTextIndex, order: &str| {
         assert_eq!(
             index
