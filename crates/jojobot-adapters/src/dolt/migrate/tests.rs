@@ -1781,298 +1781,482 @@ async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
     }
 }
 
-/// **The shape migration 0018 declares is the one that recovers it.**
-///
-/// The interruption cases for the other shapes drive migration lists this
-/// module writes for itself. Those prove a shape works and NOT that any
-/// shipped migration asks for it: put 0018 back to the column shape this
-/// widening exists to replace and every one of them stays green, because
-/// none of them reads that line.
-///
-/// So this drives the real list. The widening is put back into the state a
-/// death in the window leaves — the column at its old type, the ledger row
-/// gone, the marker committed — and the start has to apply it again. The
-/// column shape answers "already reached" here, because 0013 created the
-/// column; only the type shape answers for what 0018 does.
-#[tokio::test]
-async fn an_interrupted_shipped_widening_is_recognized_by_the_columns_type() {
-    let scratch = Scratch::new("migrate-interrupted-shipped-widening");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("shippedwidening")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-
-    // The state a death in the window leaves when the statement did NOT
-    // take effect: the column back at the type 0013 gave it, the ledger
-    // row taken away, the marker committed.
-    sqlx::raw_sql("ALTER TABLE type_field MODIFY COLUMN holds VARCHAR(16) NOT NULL")
-        .execute(&pool)
-        .await
-        .expect("the column goes back to its old type");
+/// The state a death in the window leaves: the version's ledger row taken away and its marker
+/// committed. What the death also left undone is the caller's to put back first.
+async fn leave_begun(pool: &sqlx::MySqlPool, version: &str) {
     sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0018_type_field_holds_wider")
-        .execute(&pool)
+        .bind(version)
+        .execute(pool)
         .await
         .expect("the ledger row goes");
-    mark_begun(&pool, "0018_type_field_holds_wider")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0018_type_field_holds_wider".to_string()],
-        "the shipped widening that did NOT land is applied",
-    );
-
-    // **Read by a route that is not the probe**: the declaration that
-    // overflows the old width is what the widening is FOR, so the store
-    // taking it is the evidence. A probe agreeing with itself is not.
-    sqlx::query(
-        "INSERT INTO type_field (type_name, key_name, ordinal, holds)
-             VALUES ('contract-stay', 'part_of', 0, ?)",
-    )
-    .bind("reference:project")
-    .execute(&pool)
-    .await
-    .expect("…and the cell takes the token the old width refused");
-
-    store.stop().await;
+    mark_begun(pool, version).await.expect("the marker lands");
 }
 
-/// **The shape `0045_entity_former_handle_key_add` declares is the one
-/// that recovers it.**
-///
-/// The old `0045` was one `ALTER` carrying four clauses — a width change,
-/// a new column, and a primary key swap — and its own landed-check asked
-/// only about the column. A death after the column landed but before the
-/// key swap left the table on the single-column key behind a ledger
-/// saying the whole change was in.
-///
-/// Split into one clause per file, the riskiest pair is the key swap
-/// itself: MySQL refuses `ADD PRIMARY KEY` while one already stands, so
-/// the drop and the add are two files, and the table carries no primary
-/// key between them. This drives the real list, the way `0018`'s own
-/// test does. The schema is put back to the state a death between the
-/// drop and the add leaves — the key already dropped, the add's ledger
-/// row gone, its marker committed — and the start has to finish the swap
-/// alone: nothing but the add migration can put a `PRIMARY` index back
-/// once the drop has run, so [`Leaves::Index`] answers "not yet reached"
-/// here rather than the false "already reached" the old single-column
-/// check would have given `Leaves::Column("entity_former_handle",
-/// "ordinal")`.
+/// **An interrupted change that only one direction can recover is recognized by what it
+/// leaves.** Each section puts a store in the state a death in the window leaves when the
+/// change did NOT take effect (the ledger row gone, the marker committed, the change undone),
+/// and the start has to apply it again. One store serves every section, and each has a database
+/// of its own so no section leans on another's state.
 #[tokio::test]
-async fn an_interrupted_primary_key_swap_is_recognized_by_whether_the_key_is_there() {
-    let scratch = Scratch::new("migrate-interrupted-key-swap");
+async fn an_interrupted_change_is_recognized_by_what_it_leaves() {
+    let scratch = Scratch::new("migrate-interrupted-one-direction");
     let path = scratch.0.clone();
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("keyswappartway")
-        .await
-        .expect("a database of its own");
 
-    run(&pool).await.expect("the schema");
+    // ---- an_interrupted_shipped_widening_is_recognized_by_the_columns_type
+    // **The shape migration 0018 declares is the one that recovers it.**
+    //
+    // The interruption cases for the other shapes drive migration lists this
+    // module writes for itself. Those prove a shape works and NOT that any
+    // shipped migration asks for it: put 0018 back to the column shape this
+    // widening exists to replace and every one of them stays green, because
+    // none of them reads that line.
+    //
+    // So this drives the real list. The widening is put back into the state a
+    // death in the window leaves — the column at its old type, the ledger row
+    // gone, the marker committed — and the start has to apply it again. The
+    // column shape answers "already reached" here, because 0013 created the
+    // column; only the type shape answers for what 0018 does.
+    {
+        let pool = store
+            .database("shippedwidening")
+            .await
+            .expect("a database of its own");
 
-    // The state a death in the window leaves when the add did NOT take
-    // effect: the drop already landed (no primary key stands), the add's
-    // ledger row taken away, its marker committed.
-    sqlx::raw_sql("ALTER TABLE entity_former_handle DROP PRIMARY KEY")
-        .execute(&pool)
-        .await
-        .expect("the key goes back to dropped");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0045_entity_former_handle_key_add")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0045_entity_former_handle_key_add")
-        .await
-        .expect("the marker lands");
+        run(&pool).await.expect("the schema");
 
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0045_entity_former_handle_key_add".to_string()],
-        "the key add that did NOT land is applied on its own, not the whole 0045 replayed",
-    );
+        // The state a death in the window leaves when the statement did NOT
+        // take effect: the column back at the type 0013 gave it, the ledger
+        // row taken away, the marker committed.
+        sqlx::raw_sql("ALTER TABLE type_field MODIFY COLUMN holds VARCHAR(16) NOT NULL")
+            .execute(&pool)
+            .await
+            .expect("the column goes back to its old type");
+        leave_begun(&pool, "0018_type_field_holds_wider").await;
 
-    // **Read by a route that is not the probe**: the composite key is
-    // what the swap is FOR, so the store enforcing it is the evidence. A
-    // former handle past the old sixty-four-byte width, written twice at
-    // two different ordinals, proves the width and the key together —
-    // either one still wrong and this fails: too narrow refuses the
-    // insert outright, and a key that never moved off `former_handle`
-    // alone refuses the second row as a duplicate.
-    let long_handle = format!("person:{}", "a".repeat(100));
-    sqlx::query(
-        "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
-             VALUES (?, 'badge0001', '2026-01-01', 1)",
-    )
-    .bind(&long_handle)
-    .execute(&pool)
-    .await
-    .expect("the first event lands at the widened former_handle");
-    sqlx::query(
-        "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
-             VALUES (?, 'badge0002', '2026-01-02', 2)",
-    )
-    .bind(&long_handle)
-    .execute(&pool)
-    .await
-    .expect(
-        "…and a second event under the same former handle, at a different ordinal, is kept \
-             rather than colliding on a key that never moved",
-    );
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0018_type_field_holds_wider".to_string()],
+            "the shipped widening that did NOT land is applied",
+        );
 
-    store.stop().await;
-}
-
-/// **The shape `0024_rhythm_kind_takes_its_name` declares is the one that
-/// recovers it.** The statement is a bare `DELETE`, and the schema is
-/// identical before it and after it: nothing but the rows themselves can
-/// tell "not yet run" from "ran and found nothing to delete", which is
-/// exactly what [`Leaves::NoRows`] asks.
-#[tokio::test]
-async fn an_interrupted_rhythm_kind_delete_is_recognized_by_the_types_row_being_gone() {
-    let scratch = Scratch::new("migrate-interrupted-rhythm-kind");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("rhythmkindpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-
-    // The state a death in the window leaves when the delete did NOT
-    // take effect: the type's row for `rhythm` back in place, the ledger
-    // row taken away, the marker committed. `owner` defaults to `type`,
-    // which is exactly the row the delete is for.
-    sqlx::query(
-        "INSERT INTO type_field (type_name, key_name, ordinal, holds)
-             VALUES ('rhythm', 'cadence_days', 0, 'int')",
-    )
-    .execute(&pool)
-    .await
-    .expect("the type's row for rhythm goes back in");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0024_rhythm_kind_takes_its_name")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0024_rhythm_kind_takes_its_name")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0024_rhythm_kind_takes_its_name".to_string()],
-        "the delete that did NOT land is reissued",
-    );
-
-    // **Read by a route that is not the probe**: the type's own row for
-    // `rhythm` is gone, while a kind's row of the same name still takes
-    // a write — proving the delete took its `owner = 'type'` clause
-    // rather than the name alone.
-    sqlx::query(
-        "INSERT INTO type_field (type_name, key_name, ordinal, holds, owner)
-             VALUES ('rhythm', 'name', 0, 'varchar(191)', 'kind')",
-    )
-    .execute(&pool)
-    .await
-    .expect("the kind's own row for rhythm still takes a write");
-
-    store.stop().await;
-}
-
-/// **The shape `0107_trip_kind_takes_its_name` declares is the one that
-/// recovers it.** The statement is a bare `DELETE` scoped to the software's own
-/// rows. Paired in the same run: a type of that name a caller declared is not
-/// deleted, and a kind's row of that name is not either.
-#[tokio::test]
-async fn an_interrupted_trip_kind_delete_is_recognized_by_the_shipped_types_row_being_gone() {
-    let scratch = Scratch::new("migrate-interrupted-trip-kind");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("tripkindpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-
-    // The state a death in the window leaves when the delete did NOT take
-    // effect: the shipped type's row back in place, the ledger row taken away,
-    // the marker committed.
-    sqlx::query(
-        "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin)
-             VALUES ('trip', 'leaves_on', 0, 'date', 'shipped')",
-    )
-    .execute(&pool)
-    .await
-    .expect("the type's row for trip goes back in");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0107_trip_kind_takes_its_name")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0107_trip_kind_takes_its_name")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0107_trip_kind_takes_its_name".to_string()],
-        "the delete that did NOT land is reissued",
-    );
-    let left: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM type_field WHERE type_name = 'trip' AND owner = 'type'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("the rows count");
-    assert_eq!(left, 0, "the shipped type's row is gone");
-
-    // **The delete took its origin and its owner**, not the name alone: a type a
-    // caller declared under the name is still there to be displaced by the seed,
-    // and so is a kind's row.
-    for (key, origin, owner) in [("a", "declared", "type"), ("b", "shipped", "kind")] {
+        // **Read by a route that is not the probe**: the declaration that
+        // overflows the old width is what the widening is FOR, so the store
+        // taking it is the evidence. A probe agreeing with itself is not.
         sqlx::query(
-            "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin, owner)
-                 VALUES ('trip', ?, 0, 'date', ?, ?)",
+            "INSERT INTO type_field (type_name, key_name, ordinal, holds)
+                 VALUES ('contract-stay', 'part_of', 0, ?)",
         )
-        .bind(key)
-        .bind(origin)
-        .bind(owner)
+        .bind("reference:project")
         .execute(&pool)
         .await
-        .expect("the row takes a write");
+        .expect("…and the cell takes the token the old width refused");
     }
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0107_trip_kind_takes_its_name")
+
+    // ---- an_interrupted_primary_key_swap_is_recognized_by_whether_the_key_is_there
+    // **The shape `0045_entity_former_handle_key_add` declares is the one
+    // that recovers it.**
+    //
+    // The old `0045` was one `ALTER` carrying four clauses — a width change,
+    // a new column, and a primary key swap — and its own landed-check asked
+    // only about the column. A death after the column landed but before the
+    // key swap left the table on the single-column key behind a ledger
+    // saying the whole change was in.
+    //
+    // Split into one clause per file, the riskiest pair is the key swap
+    // itself: MySQL refuses `ADD PRIMARY KEY` while one already stands, so
+    // the drop and the add are two files, and the table carries no primary
+    // key between them. This drives the real list, the way `0018`'s own
+    // test does. The schema is put back to the state a death between the
+    // drop and the add leaves — the key already dropped, the add's ledger
+    // row gone, its marker committed — and the start has to finish the swap
+    // alone: nothing but the add migration can put a `PRIMARY` index back
+    // once the drop has run, so [`Leaves::Index`] answers "not yet reached"
+    // here rather than the false "already reached" the old single-column
+    // check would have given `Leaves::Column("entity_former_handle",
+    // "ordinal")`.
+    {
+        let pool = store
+            .database("keyswappartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the add did NOT take
+        // effect: the drop already landed (no primary key stands), the add's
+        // ledger row taken away, its marker committed.
+        sqlx::raw_sql("ALTER TABLE entity_former_handle DROP PRIMARY KEY")
+            .execute(&pool)
+            .await
+            .expect("the key goes back to dropped");
+        leave_begun(&pool, "0045_entity_former_handle_key_add").await;
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0045_entity_former_handle_key_add".to_string()],
+            "the key add that did NOT land is applied on its own, not the whole 0045 replayed",
+        );
+
+        // **Read by a route that is not the probe**: the composite key is
+        // what the swap is FOR, so the store enforcing it is the evidence. A
+        // former handle past the old sixty-four-byte width, written twice at
+        // two different ordinals, proves the width and the key together —
+        // either one still wrong and this fails: too narrow refuses the
+        // insert outright, and a key that never moved off `former_handle`
+        // alone refuses the second row as a duplicate.
+        let long_handle = format!("person:{}", "a".repeat(100));
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+                 VALUES (?, 'badge0001', '2026-01-01', 1)",
+        )
+        .bind(&long_handle)
         .execute(&pool)
         .await
-        .expect("the ledger row goes again");
-    run(&pool).await.expect("the start runs it again");
-    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM type_field WHERE type_name = 'trip'")
+        .expect("the first event lands at the widened former_handle");
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+                 VALUES (?, 'badge0002', '2026-01-02', 2)",
+        )
+        .bind(&long_handle)
+        .execute(&pool)
+        .await
+        .expect(
+            "…and a second event under the same former handle, at a different ordinal, is kept \
+                 rather than colliding on a key that never moved",
+        );
+    }
+
+    // ---- an_interrupted_rhythm_kind_delete_is_recognized_by_the_types_row_being_gone
+    // **The shape `0024_rhythm_kind_takes_its_name` declares is the one that
+    // recovers it.** The statement is a bare `DELETE`, and the schema is
+    // identical before it and after it: nothing but the rows themselves can
+    // tell "not yet run" from "ran and found nothing to delete", which is
+    // exactly what [`Leaves::NoRows`] asks.
+    {
+        let pool = store
+            .database("rhythmkindpartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the delete did NOT
+        // take effect: the type's row for `rhythm` back in place, the ledger
+        // row taken away, the marker committed. `owner` defaults to `type`,
+        // which is exactly the row the delete is for.
+        sqlx::query(
+            "INSERT INTO type_field (type_name, key_name, ordinal, holds)
+                 VALUES ('rhythm', 'cadence_days', 0, 'int')",
+        )
+        .execute(&pool)
+        .await
+        .expect("the type's row for rhythm goes back in");
+        leave_begun(&pool, "0024_rhythm_kind_takes_its_name").await;
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0024_rhythm_kind_takes_its_name".to_string()],
+            "the delete that did NOT land is reissued",
+        );
+
+        // **Read by a route that is not the probe**: the type's own row for
+        // `rhythm` is gone, while a kind's row of the same name still takes
+        // a write — proving the delete took its `owner = 'type'` clause
+        // rather than the name alone.
+        sqlx::query(
+            "INSERT INTO type_field (type_name, key_name, ordinal, holds, owner)
+                 VALUES ('rhythm', 'name', 0, 'varchar(191)', 'kind')",
+        )
+        .execute(&pool)
+        .await
+        .expect("the kind's own row for rhythm still takes a write");
+    }
+
+    // ---- an_interrupted_trip_kind_delete_is_recognized_by_the_shipped_types_row_being_gone
+    // **The shape `0107_trip_kind_takes_its_name` declares is the one that
+    // recovers it.** The statement is a bare `DELETE` scoped to the software's own
+    // rows. Paired in the same run: a type of that name a caller declared is not
+    // deleted, and a kind's row of that name is not either.
+    {
+        let pool = store
+            .database("tripkindpartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the delete did NOT take
+        // effect: the shipped type's row back in place, the ledger row taken away,
+        // the marker committed.
+        sqlx::query(
+            "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin)
+                 VALUES ('trip', 'leaves_on', 0, 'date', 'shipped')",
+        )
+        .execute(&pool)
+        .await
+        .expect("the type's row for trip goes back in");
+        leave_begun(&pool, "0107_trip_kind_takes_its_name").await;
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0107_trip_kind_takes_its_name".to_string()],
+            "the delete that did NOT land is reissued",
+        );
+        let left: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM type_field WHERE type_name = 'trip' AND owner = 'type'",
+        )
         .fetch_one(&pool)
         .await
         .expect("the rows count");
-    assert_eq!(
-        kept, 2,
-        "only the software's own type row went; the caller's type and the kind's row stay: \
-         {kept} left"
-    );
+        assert_eq!(left, 0, "the shipped type's row is gone");
+
+        // **The delete took its origin and its owner**, not the name alone: a type a
+        // caller declared under the name is still there to be displaced by the seed,
+        // and so is a kind's row.
+        for (key, origin, owner) in [("a", "declared", "type"), ("b", "shipped", "kind")] {
+            sqlx::query(
+                "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin, owner)
+                     VALUES ('trip', ?, 0, 'date', ?, ?)",
+            )
+            .bind(key)
+            .bind(origin)
+            .bind(owner)
+            .execute(&pool)
+            .await
+            .expect("the row takes a write");
+        }
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0107_trip_kind_takes_its_name")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes again");
+        run(&pool).await.expect("the start runs it again");
+        let kept: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM type_field WHERE type_name = 'trip'")
+                .fetch_one(&pool)
+                .await
+                .expect("the rows count");
+        assert_eq!(
+            kept, 2,
+            "only the software's own type row went; the caller's type and the kind's row stay: \
+             {kept} left"
+        );
+    }
+
+    // ---- an_interrupted_fact_status_archive_backfill_is_recognized_by_a_retired_status_left_standing
+    // **The shape `0046_fact_status_archived` declares is the one that
+    // recovers it.** The statement is an `UPDATE` that leaves the schema
+    // exactly as it found it, so nothing but the rows can tell whether it
+    // ran. Unlike `0035`, nothing downstream renames a column this one
+    // touches, so the full list is safe to reissue against.
+    {
+        let pool = store
+            .database("factstatusarchivedpartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the rewrite did NOT
+        // take effect: a claim still carrying one of the retired tokens, the
+        // ledger row taken away, the marker committed.
+        sqlx::query(
+            "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
+                 VALUES ('person:contract-already-here', 'f1', 'a claim overtaken by a later one', \
+                 'testimony', 'retracted', '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a claim carrying a retired status lands");
+        leave_begun(&pool, "0046_fact_status_archived").await;
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0046_fact_status_archived".to_string()],
+            "the rewrite that did NOT land is reissued",
+        );
+
+        // **Read by a route that is not the probe**: the claim's own status
+        // column now reads `archived`.
+        let status: String = sqlx::query_scalar(
+            "SELECT status FROM fact WHERE entity = 'person:contract-already-here' AND id = 'f1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the claim is readable");
+        assert_eq!(status, "archived");
+    }
+
+    // ---- an_interrupted_fact_write_status_archive_backfill_is_recognized_by_a_retired_status_left_standing
+    // **The same shape, over `fact_write`.** `0047_fact_write_status_archived`
+    // repeats `0046`'s rewrite on the table that carries a copy of the
+    // status at each write, and needs the same recovery.
+    {
+        let pool = store
+            .database("factwritestatusarchivedpartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the rewrite did NOT
+        // take effect: a write still carrying one of the retired tokens, the
+        // ledger row taken away, the marker committed.
+        sqlx::query(
+            "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, \
+                 recorded_at)
+                 VALUES ('person:contract-already-here', 'f1', 1, 'a claim overtaken by a later one', \
+                 'testimony', 'negated', '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a write carrying a retired status lands");
+        leave_begun(&pool, "0047_fact_write_status_archived").await;
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0047_fact_write_status_archived".to_string()],
+            "the rewrite that did NOT land is reissued",
+        );
+
+        // **Read by a route that is not the probe**: the write's own status
+        // column now reads `archived`.
+        let status: String = sqlx::query_scalar(
+            "SELECT status FROM fact_write WHERE entity = 'person:contract-already-here' \
+                 AND fact_id = 'f1' AND ordinal = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the write is readable");
+        assert_eq!(status, "archived");
+    }
+
+    // ---- an_interrupted_entity_source_widening_is_recognized_by_the_columns_type
+    // **The shape `0019_entity_source_wider` declares is the one that
+    // recovers it.** The column is there either way, so only its declared
+    // type tells "not yet widened" from "widened", the same question
+    // `0018`'s own test drives for `type_field.holds`.
+    {
+        let pool = store
+            .database("entitysourcewidepartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the widening did NOT
+        // take effect: the column back at the width 0008 gave it, the
+        // ledger row taken away, the marker committed.
+        sqlx::raw_sql("ALTER TABLE entity MODIFY COLUMN source VARCHAR(191) NOT NULL")
+            .execute(&pool)
+            .await
+            .expect("the column goes back to its old width");
+        leave_begun(&pool, "0019_entity_source_wider").await;
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0019_entity_source_wider".to_string()],
+            "the widening that did NOT land is applied",
+        );
+
+        // **Read by a route that is not the probe**: a source label past the
+        // old hundred-and-ninety-one-byte width is what the widening is FOR.
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, boot, prose)
+                 VALUES ('person:contract-already-here', 'person', 'Already Here', ?, 'on-demand', '')",
+        )
+        .bind("s".repeat(200))
+        .execute(&pool)
+        .await
+        .expect("…and the row takes the label the old width refused");
+    }
+
+    // ---- an_interrupted_entity_crm_widening_is_recognized_by_the_columns_type
+    // **The shape `0020_entity_crm_wider` declares is the one that recovers
+    // it.** The same question as `0019`, over the column beside it.
+    {
+        let pool = store
+            .database("entitycrmwidepartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the widening did NOT
+        // take effect: the column back at the width 0008 gave it, the
+        // ledger row taken away, the marker committed.
+        sqlx::raw_sql("ALTER TABLE entity MODIFY COLUMN crm VARCHAR(191) NULL")
+            .execute(&pool)
+            .await
+            .expect("the column goes back to its old width");
+        leave_begun(&pool, "0020_entity_crm_wider").await;
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0020_entity_crm_wider".to_string()],
+            "the widening that did NOT land is applied",
+        );
+
+        // **Read by a route that is not the probe**: a crm label past the
+        // old hundred-and-ninety-one-byte width is what the widening is FOR.
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, crm, boot, prose)
+                 VALUES ('person:contract-already-here', 'person', 'Already Here', 'contract-fixture', ?, \
+                 'on-demand', '')",
+        )
+        .bind("c".repeat(200))
+        .execute(&pool)
+        .await
+        .expect("…and the row takes the label the old width refused");
+    }
+
+    // ---- an_interrupted_former_handle_widening_is_recognized_by_the_columns_type
+    // **The shape `0045_entity_former_handle_width` declares is the one
+    // that recovers it.** The old `0045` was one `ALTER` carrying four
+    // clauses; split apart (see `an_interrupted_primary_key_swap_…` above
+    // for the rest of that history), this clause's own landed-check has to
+    // answer for it alone, the way `0018`'s test drives the real list
+    // rather than the mechanism's own synthetic fixture.
+    {
+        let pool = store
+            .database("formerhandlewidepartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the widening did NOT
+        // take effect: the column back at the width 0042 gave it, the
+        // ledger row taken away, the marker committed.
+        sqlx::raw_sql(
+            "ALTER TABLE entity_former_handle MODIFY COLUMN former_handle VARCHAR(64) NOT NULL",
+        )
+        .execute(&pool)
+        .await
+        .expect("the column goes back to its old width");
+        leave_begun(&pool, "0045_entity_former_handle_width").await;
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0045_entity_former_handle_width".to_string()],
+            "the width clause that did NOT land is applied on its own, not the whole 0045 \
+                 replayed",
+        );
+
+        // **Read by a route that is not the probe**: a former handle past
+        // the old sixty-four-byte width is what the widening is FOR.
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at)
+                 VALUES (?, 'badge0001', '2026-01-01')",
+        )
+        .bind(format!("thing:{}", "h".repeat(90)))
+        .execute(&pool)
+        .await
+        .expect("…and the row takes the handle the old width refused");
+    }
 
     store.stop().await;
 }
@@ -2147,290 +2331,6 @@ async fn an_interrupted_fact_write_backfill_is_recognized_by_a_claim_with_no_wri
     .await
     .expect("the claim's first write landed");
     assert_eq!(content, "not yet given a write of its own");
-
-    store.stop().await;
-}
-
-/// **The shape `0046_fact_status_archived` declares is the one that
-/// recovers it.** The statement is an `UPDATE` that leaves the schema
-/// exactly as it found it, so nothing but the rows can tell whether it
-/// ran. Unlike `0035`, nothing downstream renames a column this one
-/// touches, so the full list is safe to reissue against.
-#[tokio::test]
-async fn an_interrupted_fact_status_archive_backfill_is_recognized_by_a_retired_status_left_standing()
- {
-    let scratch = Scratch::new("migrate-interrupted-fact-status-archived");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("factstatusarchivedpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-
-    // The state a death in the window leaves when the rewrite did NOT
-    // take effect: a claim still carrying one of the retired tokens, the
-    // ledger row taken away, the marker committed.
-    sqlx::query(
-        "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
-             VALUES ('person:contract-already-here', 'f1', 'a claim overtaken by a later one', \
-             'testimony', 'retracted', '2026-01-01')",
-    )
-    .execute(&pool)
-    .await
-    .expect("a claim carrying a retired status lands");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0046_fact_status_archived")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0046_fact_status_archived")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0046_fact_status_archived".to_string()],
-        "the rewrite that did NOT land is reissued",
-    );
-
-    // **Read by a route that is not the probe**: the claim's own status
-    // column now reads `archived`.
-    let status: String = sqlx::query_scalar(
-        "SELECT status FROM fact WHERE entity = 'person:contract-already-here' AND id = 'f1'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("the claim is readable");
-    assert_eq!(status, "archived");
-
-    store.stop().await;
-}
-
-/// **The same shape, over `fact_write`.** `0047_fact_write_status_archived`
-/// repeats `0046`'s rewrite on the table that carries a copy of the
-/// status at each write, and needs the same recovery.
-#[tokio::test]
-async fn an_interrupted_fact_write_status_archive_backfill_is_recognized_by_a_retired_status_left_standing()
- {
-    let scratch = Scratch::new("migrate-interrupted-fact-write-status-archived");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("factwritestatusarchivedpartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-
-    // The state a death in the window leaves when the rewrite did NOT
-    // take effect: a write still carrying one of the retired tokens, the
-    // ledger row taken away, the marker committed.
-    sqlx::query(
-        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, \
-             recorded_at)
-             VALUES ('person:contract-already-here', 'f1', 1, 'a claim overtaken by a later one', \
-             'testimony', 'negated', '2026-01-01')",
-    )
-    .execute(&pool)
-    .await
-    .expect("a write carrying a retired status lands");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0047_fact_write_status_archived")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0047_fact_write_status_archived")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0047_fact_write_status_archived".to_string()],
-        "the rewrite that did NOT land is reissued",
-    );
-
-    // **Read by a route that is not the probe**: the write's own status
-    // column now reads `archived`.
-    let status: String = sqlx::query_scalar(
-        "SELECT status FROM fact_write WHERE entity = 'person:contract-already-here' \
-             AND fact_id = 'f1' AND ordinal = 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("the write is readable");
-    assert_eq!(status, "archived");
-
-    store.stop().await;
-}
-
-/// **The shape `0019_entity_source_wider` declares is the one that
-/// recovers it.** The column is there either way, so only its declared
-/// type tells "not yet widened" from "widened", the same question
-/// `0018`'s own test drives for `type_field.holds`.
-#[tokio::test]
-async fn an_interrupted_entity_source_widening_is_recognized_by_the_columns_type() {
-    let scratch = Scratch::new("migrate-interrupted-entity-source-widening");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("entitysourcewidepartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-
-    // The state a death in the window leaves when the widening did NOT
-    // take effect: the column back at the width 0008 gave it, the
-    // ledger row taken away, the marker committed.
-    sqlx::raw_sql("ALTER TABLE entity MODIFY COLUMN source VARCHAR(191) NOT NULL")
-        .execute(&pool)
-        .await
-        .expect("the column goes back to its old width");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0019_entity_source_wider")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0019_entity_source_wider")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0019_entity_source_wider".to_string()],
-        "the widening that did NOT land is applied",
-    );
-
-    // **Read by a route that is not the probe**: a source label past the
-    // old hundred-and-ninety-one-byte width is what the widening is FOR.
-    sqlx::query(
-        "INSERT INTO entity (id, kind, name, source, boot, prose)
-             VALUES ('person:contract-already-here', 'person', 'Already Here', ?, 'on-demand', '')",
-    )
-    .bind("s".repeat(200))
-    .execute(&pool)
-    .await
-    .expect("…and the row takes the label the old width refused");
-
-    store.stop().await;
-}
-
-/// **The shape `0020_entity_crm_wider` declares is the one that recovers
-/// it.** The same question as `0019`, over the column beside it.
-#[tokio::test]
-async fn an_interrupted_entity_crm_widening_is_recognized_by_the_columns_type() {
-    let scratch = Scratch::new("migrate-interrupted-entity-crm-widening");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("entitycrmwidepartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-
-    // The state a death in the window leaves when the widening did NOT
-    // take effect: the column back at the width 0008 gave it, the
-    // ledger row taken away, the marker committed.
-    sqlx::raw_sql("ALTER TABLE entity MODIFY COLUMN crm VARCHAR(191) NULL")
-        .execute(&pool)
-        .await
-        .expect("the column goes back to its old width");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0020_entity_crm_wider")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0020_entity_crm_wider")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0020_entity_crm_wider".to_string()],
-        "the widening that did NOT land is applied",
-    );
-
-    // **Read by a route that is not the probe**: a crm label past the
-    // old hundred-and-ninety-one-byte width is what the widening is FOR.
-    sqlx::query(
-        "INSERT INTO entity (id, kind, name, source, crm, boot, prose)
-             VALUES ('person:contract-already-here', 'person', 'Already Here', 'contract-fixture', ?, \
-             'on-demand', '')",
-    )
-    .bind("c".repeat(200))
-    .execute(&pool)
-    .await
-    .expect("…and the row takes the label the old width refused");
-
-    store.stop().await;
-}
-
-/// **The shape `0045_entity_former_handle_width` declares is the one
-/// that recovers it.** The old `0045` was one `ALTER` carrying four
-/// clauses; split apart (see `an_interrupted_primary_key_swap_…` above
-/// for the rest of that history), this clause's own landed-check has to
-/// answer for it alone, the way `0018`'s test drives the real list
-/// rather than the mechanism's own synthetic fixture.
-#[tokio::test]
-async fn an_interrupted_former_handle_widening_is_recognized_by_the_columns_type() {
-    let scratch = Scratch::new("migrate-interrupted-former-handle-widening");
-    let path = scratch.0.clone();
-    let mut store = crate::dolt::Dolt::start(&path, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("formerhandlewidepartway")
-        .await
-        .expect("a database of its own");
-
-    run(&pool).await.expect("the schema");
-
-    // The state a death in the window leaves when the widening did NOT
-    // take effect: the column back at the width 0042 gave it, the
-    // ledger row taken away, the marker committed.
-    sqlx::raw_sql(
-        "ALTER TABLE entity_former_handle MODIFY COLUMN former_handle VARCHAR(64) NOT NULL",
-    )
-    .execute(&pool)
-    .await
-    .expect("the column goes back to its old width");
-    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
-        .bind("0045_entity_former_handle_width")
-        .execute(&pool)
-        .await
-        .expect("the ledger row goes");
-    mark_begun(&pool, "0045_entity_former_handle_width")
-        .await
-        .expect("the marker lands");
-
-    assert_eq!(
-        run(&pool).await.expect("the start completes the schema"),
-        vec!["0045_entity_former_handle_width".to_string()],
-        "the width clause that did NOT land is applied on its own, not the whole 0045 \
-             replayed",
-    );
-
-    // **Read by a route that is not the probe**: a former handle past
-    // the old sixty-four-byte width is what the widening is FOR.
-    sqlx::query(
-        "INSERT INTO entity_former_handle (former_handle, badge, changed_at)
-             VALUES (?, 'badge0001', '2026-01-01')",
-    )
-    .bind(format!("thing:{}", "h".repeat(90)))
-    .execute(&pool)
-    .await
-    .expect("…and the row takes the handle the old width refused");
 
     store.stop().await;
 }
