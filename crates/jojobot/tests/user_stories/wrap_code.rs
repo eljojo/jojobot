@@ -59,6 +59,16 @@ async fn runs_on_the_page(story: &Story) -> HashMap<String, String> {
 
 /// A beat that names the run, so the run can be found in `list_runs` by what it
 /// was working on.
+/// Wrap a run and keep the code the wrap hands back.
+async fn wrap_for_a_code(run: &Session) -> String {
+    run.call("wrap_session", json!({"story": "told"}))
+        .await
+        .json()["wrap_code"]
+        .as_str()
+        .expect("a code")
+        .to_string()
+}
+
 async fn working_on(who: &Session, focus: &str, entry: &str) {
     who.call("journal", json!({"entry": entry, "focus": focus}))
         .await;
@@ -198,13 +208,7 @@ async fn story_refuses_a_code(asking: &Session, code: &str) {
 async fn a_newer_run_ends_the_window_and_is_left_alone() {
     let (story, first) = Story::begin_with_session("bot:otto").await;
     working_on(&first, "the run that wrapped", "did the work").await;
-    let code = first
-        .call("wrap_session", json!({"story": "told"}))
-        .await
-        .json()["wrap_code"]
-        .as_str()
-        .expect("a code")
-        .to_string();
+    let code = wrap_for_a_code(&first).await;
 
     // ── a newer run of the bot starts, and has written nothing yet ──────────
     //
@@ -243,13 +247,7 @@ async fn a_newer_run_ends_an_open_window_at_its_first_write() {
     // so it has no card yet and the older run's wrap cannot see it.
     let newer = story.as_bot("otto").await;
 
-    let code = older
-        .call("wrap_session", json!({"story": "told"}))
-        .await
-        .json()["wrap_code"]
-        .as_str()
-        .expect("a code")
-        .to_string();
+    let code = wrap_for_a_code(&older).await;
     let (_, reopened) = story
         .call(
             "start_here",
@@ -287,13 +285,7 @@ async fn using_the_code_abandons_no_other_run_of_the_bot() {
     // A second run of the same bot, answering `new` to the offer.
     let wrapping = story.as_bot("otto").await;
     working_on(&wrapping, "the run that wraps", "did the work").await;
-    let code = wrapping
-        .call("wrap_session", json!({"story": "told"}))
-        .await
-        .json()["wrap_code"]
-        .as_str()
-        .expect("a code")
-        .to_string();
+    let code = wrap_for_a_code(&wrapping).await;
 
     let (_, reopened) = story
         .call(
@@ -321,13 +313,7 @@ async fn answering_new_to_the_offer_starts_a_newer_run_and_ends_the_window() {
     // A second run wraps and is handed a code.
     let wrapping = story.as_bot("otto").await;
     working_on(&wrapping, "the run that wraps", "did the work").await;
-    let code = wrapping
-        .call("wrap_session", json!({"story": "told"}))
-        .await
-        .json()["wrap_code"]
-        .as_str()
-        .expect("a code")
-        .to_string();
+    let code = wrap_for_a_code(&wrapping).await;
 
     // A third boot is offered the open run and answers `new`. That is a newer
     // run starting, before it has written anything.
@@ -355,13 +341,7 @@ async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
     let (story, first) = Story::begin_with_session("bot:otto").await;
     first.add("person:milhouse", "Milhouse").await;
     working_on(&first, "the run that reopens", "did the work").await;
-    let code = first
-        .call("wrap_session", json!({"story": "told"}))
-        .await
-        .json()["wrap_code"]
-        .as_str()
-        .expect("a code")
-        .to_string();
+    let code = wrap_for_a_code(&first).await;
 
     // Before the code is used, the memory and mail verbs refuse the wrapped run
     // as they refuse the journal. This is the half the writes below depend on:
@@ -780,13 +760,7 @@ async fn after_two_hours_the_code_is_refused_saying_when_the_window_closed() {
     let story = Story::begin_pretending_it_is("bot:otto", "2026-10-20").await;
     let first = story.session().await;
     working_on(&first, "the run that wrapped", "did the work").await;
-    let code = first
-        .call("wrap_session", json!({"story": "told"}))
-        .await
-        .json()["wrap_code"]
-        .as_str()
-        .expect("a code")
-        .to_string();
+    let code = wrap_for_a_code(&first).await;
 
     let next_day = story.restarted_pretending_it_is("2026-10-21").await;
     let refused = next_day
