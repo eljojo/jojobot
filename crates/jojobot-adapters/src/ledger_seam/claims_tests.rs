@@ -317,7 +317,23 @@ async fn a_warm_boot_loads_the_claims_from_the_snapshot_and_replays_only_the_tai
             .await
             .unwrap();
         assert_eq!(covered, first.range().last, "the snapshot covers the batch");
-        let second = seal("claims:second", covered, &marge_events());
+        // **A member of another family sits before the claims members of the tail**, so a claims
+        // event's index among the batch's members is not its index among the claims: the
+        // position of each entry follows the batch, not a count of the claims.
+        let mut members = vec![crate::teaching_log::codec::encode(
+            &jojobot_domain::teaching::events::TeachingEvent::Cleared {
+                run: jojobot_domain::teaching::events::RunId("marge".into()),
+            },
+        )];
+        members.extend(encoded(&marge_events()));
+        let second = SealedBatch::seal(
+            BatchId("claims:second".into()),
+            covered,
+            jiff::Timestamp::now(),
+            1,
+            members,
+        )
+        .unwrap();
         log.append(covered, &second).await.unwrap();
         covered
     };
