@@ -41,6 +41,14 @@ impl Jojobot {
             .as_deref()
             .map(str::trim)
             .filter(|a| !a.is_empty())
+            // **An agent that hosts a live run is not finished** because a run it once
+            // hosted wrapped: the boot goes on and resumes the live run.
+            && self
+                .sessions
+                .live_by_agent(agent)
+                .await
+                .map_err(session_error)?
+                .is_none()
             && let Some(run) = self
                 .sessions
                 .wrapped_by_agent(agent)

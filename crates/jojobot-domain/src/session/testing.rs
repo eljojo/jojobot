@@ -283,6 +283,17 @@ impl Sessions for InMemorySessions {
             .cloned())
     }
 
+    async fn live_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        Ok(self
+            .sessions
+            .lock()
+            .expect("session lock")
+            .iter()
+            .filter(|run| run.state == SessionState::Active && run.agent.as_deref() == Some(agent))
+            .max_by_key(|run| (run.started_at, &run.id))
+            .cloned())
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         let mut found: Vec<Session> = self
             .sessions

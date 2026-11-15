@@ -405,6 +405,26 @@ impl Sessions for FoldedSessions {
         }
     }
 
+    async fn live_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        self.readable()?;
+        match self.held(|image| {
+            image
+                .agent_runs
+                .get(agent)
+                .into_iter()
+                .flatten()
+                .filter_map(|id| image.run(id))
+                .filter(|run| {
+                    run.state == SessionState::Active && run.agent.as_deref() == Some(agent)
+                })
+                .max_by_key(|run| (run.started_at, &run.id))
+                .cloned()
+        }) {
+            Some(run) => Ok(run),
+            None => self.inner.live_by_agent(agent).await,
+        }
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         self.readable()?;
         match self.held(|image| {

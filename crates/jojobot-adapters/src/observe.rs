@@ -117,6 +117,7 @@ operations!(SessionOperation {
     SetTimezone => "set_timezone",
     SetAgent => "set_agent",
     WrappedByAgent => "wrapped_by_agent",
+    LiveByAgent => "live_by_agent",
     SetStatedDay => "set_stated_day",
     SetWrapWindow => "set_wrap_window",
     Close => "close",

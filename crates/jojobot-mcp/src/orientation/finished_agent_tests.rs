@@ -627,3 +627,73 @@ async fn p1_previous_host_sid_cannot_boot_after_wrap() {
         "{refused}"
     );
 }
+
+/// **An agent that hosts a live run is not finished because an old run it hosted is.**
+/// The agent hosted a run that wrapped, and now hosts a live run of another bot. A boot
+/// that names the agent after a compaction, with no key, resumes the live run: refusing
+/// it as finished orders a working session to stop.
+#[tokio::test]
+async fn a_compacted_boot_by_an_agent_with_a_live_run_is_not_told_it_is_finished() {
+    live_agent_journey(&handler()).await;
+}
+
+/// The same case over the real store, whose lookup is a query of its own.
+#[tokio::test]
+async fn a_compacted_boot_by_an_agent_with_a_live_run_is_not_told_it_is_finished_over_dolt() {
+    let scratch = jojobot_adapters::testing::Scratch::new("live-agent");
+    let mut store = jojobot_adapters::testing::start_unhurried(
+        &scratch.0,
+        jojobot_adapters::testing::free_port(),
+    )
+    .await
+    .expect("the real store comes up");
+    let pool = jojobot_adapters::testing::migrated_database(&store, "live_agent")
+        .await
+        .expect("the schema");
+    let sessions = std::sync::Arc::new(jojobot_adapters::dolt::sessions::DoltSessions::open(pool));
+    let (jojobot, _) = crate::session::testing::with_sessions_port_and_memory(sessions);
+    live_agent_journey(&jojobot).await;
+    store.stop().await;
+}
+
+async fn live_agent_journey(jojobot: &Jojobot) {
+    make_bot(jojobot, "gamma").await;
+    make_bot(jojobot, "delta").await;
+    let old = boot_args(
+        jojobot,
+        serde_json::json!({"bot":"gamma", "resume":"new", "agent":"shared-agent"}),
+    )
+    .await;
+    wrap(jojobot, sid_of(&old).expect("key")).await;
+
+    let live = boot_args(
+        jojobot,
+        serde_json::json!({"bot":"delta", "resume":"new", "claim":"dev-dispatch"}),
+    )
+    .await;
+    assert_eq!(live["status"], serde_json::Value::Null, "{live}");
+    let run = jojobot
+        .sessions
+        .sessions_of(&EntityId("bot:delta".into()))
+        .await
+        .expect("the runs of delta")
+        .remove(0)
+        .id;
+    jojobot
+        .sessions
+        .set_agent(&run, "shared-agent")
+        .await
+        .expect("the live run is hosted by the agent");
+
+    let answer = boot_args(
+        jojobot,
+        serde_json::json!({"bot":"delta", "compacted":true, "agent":"shared-agent"}),
+    )
+    .await;
+    let text = answer.to_string();
+    assert!(
+        !text.contains("end the turn and do nothing"),
+        "an active run was told it is finished: {answer}"
+    );
+    assert_ne!(answer["status"], "blocked", "{answer}");
+}

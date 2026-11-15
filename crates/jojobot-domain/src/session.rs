@@ -1773,6 +1773,11 @@ pub trait Sessions: Send + Sync {
     /// rather than reading every run. The most recent wrap wins.
     async fn wrapped_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError>;
 
+    /// **The live run this agent hosts now.** Only a run whose current host is the agent
+    /// counts, never one that kept it in its history, and the newest start wins. A boot
+    /// that names an agent with a live run is not finished, whatever wrapped before it.
+    async fn live_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError>;
+
     /// **Record the day a resume most recently set this run to**, replacing
     /// whatever it carried — [`Session::stated_day`], persisted exactly the
     /// way [`set_timezone`](Sessions::set_timezone) already persists the

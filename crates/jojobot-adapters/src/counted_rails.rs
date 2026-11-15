@@ -180,6 +180,13 @@ impl Sessions for CountedSessions {
         self.inner.wrapped_by_agent(agent).await
     }
 
+    async fn live_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        self.calls.hit("live_by_agent", Kind::Read);
+        self.calls.hang_if_armed("live_by_agent").await;
+        self.calls.outage().map_err(SessionError::Store)?;
+        self.inner.live_by_agent(agent).await
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         self.calls.hit("sessions_of", Kind::Read);
         self.inner.sessions_of(bot).await

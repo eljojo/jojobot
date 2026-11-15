@@ -21,6 +21,14 @@ impl Sessions for Observed<dyn Sessions> {
         .await
     }
 
+    async fn live_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        self.result(
+            Operation::Sessions(SessionOperation::LiveByAgent),
+            self.inner.live_by_agent(agent),
+        )
+        .await
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         self.result(
             Operation::Sessions(SessionOperation::SessionsOf),

@@ -176,6 +176,14 @@ impl Sessions for Mentioning {
         Ok(run)
     }
 
+    async fn live_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        let mut run = self.inner.live_by_agent(agent).await?;
+        if let Some(run) = &mut run {
+            Self::render_session(run, &self.known().await?);
+        }
+        Ok(run)
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         let known = self.known().await?;
         let former = self.former().await?;

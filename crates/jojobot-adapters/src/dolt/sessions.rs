@@ -900,6 +900,30 @@ impl Sessions for DoltSessions {
         Ok(wrapped)
     }
 
+    async fn live_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // The session row's own agent is the run's current host; the history of earlier
+        // hosts is not read.
+        let ids: Vec<(String,)> =
+            sqlx::query_as("SELECT id FROM session WHERE agent = ? AND state = 'active'")
+                .bind(agent)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        let mut live: Option<Session> = None;
+        for (id,) in ids {
+            let run = self.read_in(&mut tx, &SessionId(id)).await?;
+            if live
+                .as_ref()
+                .is_none_or(|held| (run.started_at, &run.id) > (held.started_at, &held.id))
+            {
+                live = Some(run);
+            }
+        }
+        crate::writer::sql::commit(tx).await.map_err(store)?;
+        Ok(live)
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         let rows: Vec<(String, String)> =
             sqlx::query_as("SELECT id, started_at FROM session WHERE bot = ?")
