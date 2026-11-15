@@ -13,7 +13,7 @@
 
 use serde_json::json;
 
-use super::dsl::{Answer, Story};
+use super::dsl::Story;
 
 const DESK: &str = "thing:standing-desk";
 const BOOTS: &str = "thing:boots";
@@ -27,16 +27,7 @@ async fn overdue(s: &super::dsl::Session) -> Vec<String> {
             json!({"fields": [{"key": "due_on"}], "overdue": {"as_of": ASKED}}),
         )
         .await;
-    ids(&listed)
-}
-
-fn ids(answer: &Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .expect("objects")
-        .iter()
-        .map(|o| o["id"].as_str().expect("an id").to_string())
-        .collect()
+    listed.ids()
 }
 
 #[tokio::test]
@@ -203,7 +194,7 @@ async fn a_thing_the_old_build_left_holding_both_runs_out_and_ended_is_not_owed(
         )
         .await;
     assert!(
-        ids(&due).is_empty(),
+        due.ids().is_empty(),
         "the due view does not list it either: {}",
         due.raw()
     );

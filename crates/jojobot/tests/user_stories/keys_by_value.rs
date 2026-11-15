@@ -16,7 +16,7 @@
 
 use serde_json::json;
 
-use super::dsl::{Answer, Session, Story};
+use super::dsl::{Session, Story};
 
 /// The chores board and the declaration that makes `due` a date, `size` a number
 /// and `touches` a list. The shelf holds a word where a number goes and a word
@@ -70,22 +70,12 @@ async fn a_board(s: &Session) -> Vec<String> {
     records
 }
 
-/// The handles an answer named, in answer order.
-fn handles_of(answer: &Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .unwrap_or_else(|| panic!("a recall answers with objects: {}", answer.raw()))
-        .iter()
-        .filter_map(|o| o["id"].as_str().map(str::to_string))
-        .collect()
-}
-
 /// What a `where` over the chores names, in answer order.
 async fn ask(s: &Session, line: &str) -> Vec<String> {
     let answer = s
         .call("recall", json!({ "kind": "thing", "where": line }))
         .await;
-    handles_of(&answer)
+    answer.ids()
 }
 
 /// What a `where` names, in a stable order, for the shapes that have none to
@@ -104,7 +94,7 @@ async fn in_order(s: &Session, key: &str, direction: &str) -> Vec<String> {
             json!({ "kind": "thing", "order": { "key": key, "direction": direction } }),
         )
         .await;
-    handles_of(&answer)
+    answer.ids()
 }
 
 /// The names, in the order a sorted answer lists them.
@@ -199,7 +189,7 @@ async fn a_question_over_values_names_the_chores_that_hold_them() {
         )
         .await;
     assert_eq!(
-        handles_of(&filtered),
+        filtered.ids(),
         [FENCE, GATE, SHELF],
         "a filter and an order together"
     );

@@ -2821,6 +2821,16 @@ impl Answer {
             .unwrap_or_else(|e| panic!("the {} is not json: {e}: {}", self.what, self.body))
     }
 
+    /// **The ids of the objects a read listed, in the order it listed them.**
+    pub fn ids(&self) -> Vec<String> {
+        self.json()["objects"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a recall answers with objects: {}", self.raw()))
+            .iter()
+            .filter_map(|object| object["id"].as_str().map(str::to_string))
+            .collect()
+    }
+
     /// **What the answer taught, as the lines it carried under `teaching`.**
     /// Empty when the key is absent. A story reads a teaching as structure:
     /// a first answer's lines are the reference, and a later answer either

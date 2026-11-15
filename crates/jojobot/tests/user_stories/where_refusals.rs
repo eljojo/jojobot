@@ -74,16 +74,6 @@ async fn a_board(s: &Session) {
     .await;
 }
 
-/// The handles an answer named, in order.
-fn handles_of(answer: &Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .unwrap_or_else(|| panic!("a recall answers with objects: {}", answer.raw()))
-        .iter()
-        .filter_map(|o| o["id"].as_str().map(str::to_string))
-        .collect()
-}
-
 /// The advice a refusal carries, as one string.
 fn advice(refusal: &Answer) -> String {
     refusal.json()["how_to_proceed"]
@@ -144,12 +134,7 @@ async fn a_parse_refusal_names_the_spelling_that_works() {
     let fixed = s
         .call("recall", json!({ "kind": "thing", "where": fix }))
         .await;
-    assert_eq!(
-        handles_of(&fixed),
-        ["thing:sweep-the-porch"],
-        "{}",
-        fixed.raw()
-    );
+    assert_eq!(fixed.ids(), ["thing:sweep-the-porch"], "{}", fixed.raw());
 
     s.refused(
         "recall",
@@ -164,7 +149,7 @@ async fn a_parse_refusal_names_the_spelling_that_works() {
         )
         .await;
     assert_eq!(
-        handles_of(&fixed),
+        fixed.ids(),
         ["thing:fix-the-gate", "thing:sweep-the-porch"],
         "{}",
         fixed.raw()
@@ -211,12 +196,7 @@ async fn a_key_held_on_records_names_the_scope_that_asks_it() {
             json!({"kind": "thing", "where": "colour = red", "scope": "record"}),
         )
         .await;
-    assert_eq!(
-        handles_of(&fixed),
-        ["thing:fix-the-gate"],
-        "{}",
-        fixed.raw()
-    );
+    assert_eq!(fixed.ids(), ["thing:fix-the-gate"], "{}", fixed.raw());
 
     // Through the view: the refusal names the view, and the scope beside it answers.
     s.refused("recall", json!({"view": "marked-things"}))
@@ -229,12 +209,7 @@ async fn a_key_held_on_records_names_the_scope_that_asks_it() {
             json!({"view": "marked-things", "scope": "record"}),
         )
         .await;
-    assert_eq!(
-        handles_of(&fixed),
-        ["thing:fix-the-gate"],
-        "{}",
-        fixed.raw()
-    );
+    assert_eq!(fixed.ids(), ["thing:fix-the-gate"], "{}", fixed.raw());
 
     // The negative: a key no scope holds is a spelling mistake, and the refusal
     // does not send the caller to a scope.
@@ -278,12 +253,7 @@ async fn a_licence_refusal_names_the_type_to_declare() {
     let fixed = s
         .call("recall", json!({"kind": "thing", "where": "size > 3"}))
         .await;
-    assert_eq!(
-        handles_of(&fixed),
-        ["thing:fix-the-gate"],
-        "{}",
-        fixed.raw()
-    );
+    assert_eq!(fixed.ids(), ["thing:fix-the-gate"], "{}", fixed.raw());
 
     let refusal = s
         .refused(
@@ -309,7 +279,7 @@ async fn a_licence_refusal_names_the_type_to_declare() {
         )
         .await;
     assert_eq!(
-        handles_of(&fixed),
+        fixed.ids(),
         ["thing:fix-the-gate", "thing:paint-the-fence"],
         "{}",
         fixed.raw()
@@ -353,7 +323,7 @@ async fn an_order_on_a_key_nothing_holds_is_refused_not_tied() {
         )
         .await;
     assert_eq!(
-        handles_of(&ordered),
+        ordered.ids(),
         [
             "thing:sweep-the-porch",
             "thing:fix-the-gate",
@@ -439,12 +409,7 @@ async fn the_refusal_of_a_recall_that_narrows_nothing_lists_where() {
     a_board(&s).await;
     s.refused("recall", json!({})).await.says("where");
     let fixed = s.call("recall", json!({"where": "status = done"})).await;
-    assert_eq!(
-        handles_of(&fixed),
-        ["thing:sweep-the-porch"],
-        "{}",
-        fixed.raw()
-    );
+    assert_eq!(fixed.ids(), ["thing:sweep-the-porch"], "{}", fixed.raw());
     story.finish().await;
 }
 
@@ -466,7 +431,7 @@ async fn a_view_and_a_caller_combine_without_silence() {
     .await;
     // The view's own question, and a caller's where in its place, whole.
     let own = s.call("recall", json!({"view": "marked-things"})).await;
-    assert_eq!(handles_of(&own), ["thing:paint-the-fence"], "{}", own.raw());
+    assert_eq!(own.ids(), ["thing:paint-the-fence"], "{}", own.raw());
     let replaced = s
         .call(
             "recall",
@@ -474,7 +439,7 @@ async fn a_view_and_a_caller_combine_without_silence() {
         )
         .await;
     assert_eq!(
-        handles_of(&replaced),
+        replaced.ids(),
         ["thing:sweep-the-porch"],
         "{}",
         replaced.raw()
@@ -569,7 +534,7 @@ async fn an_order_holds_across_the_pages_of_an_answer() {
             )
             .await;
         pages += 1;
-        seen.extend(handles_of(&page));
+        seen.extend(page.ids());
         match page.json()["not_shown"]["offset"].as_u64() {
             Some(next) => offset = next,
             None => break,

@@ -12,21 +12,14 @@
 
 use serde_json::json;
 
-use super::dsl::{Answer, Session, Story};
-
-/// The handles an answer lists, in order.
-fn listed(answer: &Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .expect("objects")
-        .iter()
-        .map(|o| o["id"].as_str().expect("an id").to_string())
-        .collect()
-}
+use super::dsl::{Session, Story};
 
 /// What defrag's queue holds now.
 async fn queue(defrag: &Session) -> Vec<String> {
-    listed(&defrag.call("recall", json!({"unreviewed": true})).await)
+    defrag
+        .call("recall", json!({"unreviewed": true}))
+        .await
+        .ids()
 }
 
 /// What defrag's own boot fronts: the queue block of its identity.
@@ -135,7 +128,10 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
     assert!(!back.contains(&"person:bart".to_string()), "{back:?}");
 
     // ── the shipped view and defrag's boot name the same queue ──────────────
-    let by_view = listed(&defrag.call("recall", json!({"view": "unreviewed"})).await);
+    let by_view = defrag
+        .call("recall", json!({"view": "unreviewed"}))
+        .await
+        .ids();
     assert_eq!(by_view, back, "the view asks the same question");
     // The premise the page cut rests on: the queue is longer than one page (the
     // shipped views wait for defrag too), so ten are shown and the rest named.
@@ -731,7 +727,10 @@ async fn an_archive_by_defrag_takes_the_thing_out_of_its_queue_and_one_by_anothe
     );
 
     // ── the queue: defrag's archive left it, the other bot's did not ────────
-    let by_view = listed(&defrag.call("recall", json!({"view": "unreviewed"})).await);
+    let by_view = defrag
+        .call("recall", json!({"view": "unreviewed"}))
+        .await
+        .ids();
     assert!(
         !by_view.contains(&"thread:alpha".to_string()),
         "defrag's archive is a review: {by_view:?}"

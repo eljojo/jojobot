@@ -10,21 +10,14 @@
 
 use serde_json::json;
 
-use super::dsl::{Answer, Session, Story};
-
-/// The handles an answer lists, in order.
-fn listed(answer: &Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .expect("objects")
-        .iter()
-        .map(|o| o["id"].as_str().expect("an id").to_string())
-        .collect()
-}
+use super::dsl::{Session, Story};
 
 /// What defrag's queue holds now.
 async fn queue(defrag: &Session) -> Vec<String> {
-    listed(&defrag.call("recall", json!({"unreviewed": true})).await)
+    defrag
+        .call("recall", json!({"unreviewed": true}))
+        .await
+        .ids()
 }
 
 /// How many live review marks a thing holds.
@@ -201,14 +194,13 @@ async fn the_queue_beside_a_parent_lists_only_that_containers_things() {
         assert!(whole.contains(&handle.to_string()), "{whole:?}");
     }
 
-    let camping = listed(
-        &defrag
-            .call(
-                "recall",
-                json!({"unreviewed": true, "parent": "thing:springfield-camping"}),
-            )
-            .await,
-    );
+    let camping = defrag
+        .call(
+            "recall",
+            json!({"unreviewed": true, "parent": "thing:springfield-camping"}),
+        )
+        .await
+        .ids();
     let mut sorted = camping.clone();
     sorted.sort();
     assert_eq!(sorted, ["thing:delta", "thing:gamma"], "{camping:?}");
@@ -219,23 +211,21 @@ async fn the_queue_beside_a_parent_lists_only_that_containers_things() {
             json!({"handle": camping.join(","), "reviewed": true}),
         )
         .await;
-    let rest = listed(
-        &defrag
-            .call(
-                "recall",
-                json!({"unreviewed": true, "parent": "thing:springfield-camping"}),
-            )
-            .await,
-    );
+    let rest = defrag
+        .call(
+            "recall",
+            json!({"unreviewed": true, "parent": "thing:springfield-camping"}),
+        )
+        .await
+        .ids();
     assert!(rest.is_empty(), "{rest:?}");
-    let hall = listed(
-        &defrag
-            .call(
-                "recall",
-                json!({"unreviewed": true, "parent": "thing:springfield-hall"}),
-            )
-            .await,
-    );
+    let hall = defrag
+        .call(
+            "recall",
+            json!({"unreviewed": true, "parent": "thing:springfield-hall"}),
+        )
+        .await
+        .ids();
     let mut sorted = hall.clone();
     sorted.sort();
     assert_eq!(sorted, ["thing:sigma", "thing:tau"], "{hall:?}");
