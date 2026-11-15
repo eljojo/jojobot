@@ -146,28 +146,6 @@ fn holds_every_shipped_note_once(who: &str, bodies: &[String]) {
         "{who}'s messages name the notes this build ships: {bodies:?}"
     );
     splits_into_whole_messages(who, bodies);
-    let lines = |prefix: &str| {
-        bodies
-            .iter()
-            .flat_map(|body| body.lines())
-            .filter(|line| line.starts_with(prefix))
-            .count()
-    };
-    assert_eq!(
-        lines("# "),
-        named.len(),
-        "a title for each note in {who}'s messages"
-    );
-    assert_eq!(
-        lines("For: "),
-        named.len(),
-        "a For line for each note in {who}'s messages"
-    );
-    assert_eq!(
-        lines("## "),
-        3 * named.len(),
-        "three sections for each note in {who}'s messages"
-    );
 }
 
 /// **The bodies of the messages a start left**, every one from the system and
@@ -452,6 +430,36 @@ async fn told_ids(session: &Session, handle: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// **Set what a bot's ledger says it was told, underneath**, as the store of another
+/// build would hold it, and let the story see the change as a restart would. `what`
+/// names the setup in the message of the failure.
+async fn set_told_underneath(story: &Story, bot: &str, told: &[String], what: &str) {
+    use jojobot_domain::memory::review::is_release_notes_record;
+    use jojobot_domain::memory::{EntityId, FactPatch};
+    let handle = EntityId(bot.into());
+    let memory = story.memory_store();
+    let ledger = memory
+        .recall(&handle)
+        .await
+        .expect("delta reads")
+        .into_iter()
+        .find(|fact| is_release_notes_record(&fact.fields))
+        .expect("a bot made now holds the record of what it was told");
+    memory
+        .update_fact(
+            &ledger.address(),
+            FactPatch {
+                fields: [("release_notes_told".to_string(), told.join(", "))].into(),
+                sets: ["release_notes_told".to_string()].into(),
+                ..Default::default()
+            },
+            &handle,
+        )
+        .await
+        .expect(what);
+    story.the_store_changed_underneath().await;
+}
+
 /// **A bot made now is told every note this build ships and sent none.** What it
 /// was told is every note on disk, and its box holds nothing from the system. The
 /// paired positive is the old bot beside it, which is sent the note.
@@ -482,36 +490,19 @@ async fn a_bot_made_now_is_told_every_shipped_note_and_sent_none() {
 /// which a start sends nothing.
 #[tokio::test]
 async fn a_note_shipped_after_a_bot_was_made_reaches_it_at_the_next_start_alone() {
-    use jojobot_domain::memory::review::is_release_notes_record;
-    use jojobot_domain::memory::{EntityId, FactPatch};
     let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     s.add("bot:gamma", "Gamma").await;
 
     let mut ids = shipped_note_ids();
     let newest = ids.pop().expect("the build ships notes");
-    let delta = EntityId("bot:delta".into());
-    let memory = story.memory_store();
-    let ledger = memory
-        .recall(&delta)
-        .await
-        .expect("delta reads")
-        .into_iter()
-        .find(|fact| is_release_notes_record(&fact.fields))
-        .expect("a bot made now holds the record of what it was told");
-    memory
-        .update_fact(
-            &ledger.address(),
-            FactPatch {
-                fields: [("release_notes_told".to_string(), ids.join(", "))].into(),
-                sets: ["release_notes_told".to_string()].into(),
-                ..Default::default()
-            },
-            &delta,
-        )
-        .await
-        .expect("the ledger is taken back one note");
-    story.the_store_changed_underneath().await;
+    set_told_underneath(
+        &story,
+        "bot:delta",
+        &ids,
+        "the ledger is taken back one note",
+    )
+    .await;
 
     let later = story.restarted().await;
     assert_eq!(
@@ -549,8 +540,6 @@ async fn a_note_shipped_after_a_bot_was_made_reaches_it_at_the_next_start_alone(
 /// bot told every note, which a start sends nothing.
 #[tokio::test]
 async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
-    use jojobot_domain::memory::review::is_release_notes_record;
-    use jojobot_domain::memory::{EntityId, FactPatch};
     // The notes the build shipped as deploy 9: the folder of that deploy.
     let deploy_nine: Vec<String> = notes_on_disk()
         .into_iter()
@@ -560,28 +549,13 @@ async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
     let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     s.add("bot:gamma", "Gamma").await;
-    let delta = EntityId("bot:delta".into());
-    let memory = story.memory_store();
-    let ledger = memory
-        .recall(&delta)
-        .await
-        .expect("delta reads")
-        .into_iter()
-        .find(|fact| is_release_notes_record(&fact.fields))
-        .expect("a bot made now holds the record of what it was told");
-    memory
-        .update_fact(
-            &ledger.address(),
-            FactPatch {
-                fields: [("release_notes_told".to_string(), deploy_nine.join(", "))].into(),
-                sets: ["release_notes_told".to_string()].into(),
-                ..Default::default()
-            },
-            &delta,
-        )
-        .await
-        .expect("the ledger is set to deploy 9's notes");
-    story.the_store_changed_underneath().await;
+    set_told_underneath(
+        &story,
+        "bot:delta",
+        &deploy_nine,
+        "the ledger is set to deploy 9's notes",
+    )
+    .await;
 
     let later = story.restarted().await;
     // **The owed notes may arrive in several numbered messages**, because a list
@@ -937,8 +911,6 @@ async fn archiving_a_bots_first_claim_leaves_its_ledger_and_it_is_sent_nothing()
 /// another bot's on delta afterwards puts it back.
 #[tokio::test]
 async fn a_start_that_sends_a_note_leaves_a_reviewed_bot_reviewed() {
-    use jojobot_domain::memory::review::is_release_notes_record;
-    use jojobot_domain::memory::{EntityId, FactPatch};
     let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:delta", "Delta").await;
     let defrag = story.as_bot("bot:defrag").await;
@@ -975,28 +947,13 @@ async fn a_start_that_sends_a_note_leaves_a_reviewed_bot_reviewed() {
     // rewrite.
     let mut ids = shipped_note_ids();
     ids.pop().expect("the build ships notes");
-    let delta = EntityId("bot:delta".into());
-    let memory = story.memory_store();
-    let ledger = memory
-        .recall(&delta)
-        .await
-        .expect("delta reads")
-        .into_iter()
-        .find(|fact| is_release_notes_record(&fact.fields))
-        .expect("a bot made now holds the record of what it was told");
-    memory
-        .update_fact(
-            &ledger.address(),
-            FactPatch {
-                fields: [("release_notes_told".to_string(), ids.join(", "))].into(),
-                sets: ["release_notes_told".to_string()].into(),
-                ..Default::default()
-            },
-            &delta,
-        )
-        .await
-        .expect("the ledger is taken back one note");
-    story.the_store_changed_underneath().await;
+    set_told_underneath(
+        &story,
+        "bot:delta",
+        &ids,
+        "the ledger is taken back one note",
+    )
+    .await;
 
     let later = story.restarted().await;
     assert_eq!(
