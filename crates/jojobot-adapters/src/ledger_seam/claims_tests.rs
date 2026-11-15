@@ -244,6 +244,36 @@ fn marge_events() -> Vec<Event<ClaimEvent>> {
     ]
 }
 
+/// **A store opened before its migrations ran has no snapshot table, and the seam still opens.**
+/// The upgrade gate and a restore open the log over a recording older than the table; there is no
+/// snapshot to restore there, so the boot replays the log from zero as it did before the seam
+/// booted from a snapshot.
+#[tokio::test]
+async fn a_store_with_no_snapshot_table_opens_the_seam_by_replay() {
+    let scratch = Scratch::new("seam-no-snapshot-table");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
+    sqlx::query("DROP TABLE log_snapshot")
+        .execute(&store)
+        .await
+        .expect("the snapshot table goes, as a recording older than it has none");
+    let writer = Writer::default();
+    let pool = crate::writer::sql::Pool::from(store.clone());
+    let seam = {
+        let (opener, pool) = (writer.clone(), pool);
+        writer
+            .run(async move { opener.ensure_seam(&pool).await })
+            .await
+            .expect("the seam opens over a store with no snapshot table")
+    };
+    assert!(
+        !seam.boot_report().from_snapshot,
+        "a boot with no snapshot table started from a snapshot"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A warm boot loads the claims from the snapshot and replays only the batches after it.**
 /// The log holds a batch of claims events, a snapshot that covers it, and one batch after the
 /// snapshot. A second writer's seam, as a restarted process opens it, restores the claims from

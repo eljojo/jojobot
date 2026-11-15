@@ -164,7 +164,16 @@ impl jojobot_domain::log::LogStore for BootLog<'_> {
     async fn load_snapshot(
         &self,
     ) -> Result<Option<jojobot_domain::log::ValidatedSnapshot>, jojobot_domain::log::LogError> {
-        self.0.load_snapshot().await
+        match self.0.load_snapshot().await {
+            // **A store opened before its migrations ran holds no snapshot table**: the upgrade
+            // gate and a restore open the log over a recording older than it. There is nothing
+            // to restore there, so the boot replays the log from zero. The serving boot opens
+            // the seam after the migrations, where the table is always held.
+            Err(jojobot_domain::log::LogError::Store(why)) if why.contains("table not found") => {
+                Ok(None)
+            }
+            other => other,
+        }
     }
 
     async fn store_snapshot(
