@@ -7,7 +7,7 @@
 use jojobot_domain::app::operations::OperationSpec;
 use serde_json::json;
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
 
 const APP: &str = "beta";
 const OTHER_APP: &str = "gamma";
@@ -37,6 +37,18 @@ fn creating(spec: serde_json::Value) -> serde_json::Value {
 
 fn bound_to_the_app() -> serde_json::Value {
     json!({"kind": "bot-request", "fields": [{"key": "bound_app", "value": APP}]})
+}
+
+/// The bot a request names, reporting to the manager, and the machine it runs on.
+async fn a_bot_and_a_machine(marge: &Session) {
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("machine:theta", "Theta").await;
 }
 
 #[tokio::test]
@@ -238,14 +250,7 @@ async fn only_the_app_a_request_names_writes_its_status() {
         Story::begin_serving_apps("bot:marge", vec![(APP, grant()), (OTHER_APP, grant())]).await;
     let (first, second) = (&tokens[0], &tokens[1]);
     let marge = story.session().await;
-    marge
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "homer", "name": "Homer",
-                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
-        )
-        .await;
-    marge.add("machine:theta", "Theta").await;
+    a_bot_and_a_machine(&marge).await;
     marge
         .call("add_entity", creating(spec("bot:homer", "machine:theta")))
         .await;
@@ -348,14 +353,7 @@ async fn observed(story: &Story, token: &str, handle: &str) -> serde_json::Value
 async fn clearing_a_spec_key_raises_the_generation_and_the_generation_stays() {
     let story = Story::begin("bot:marge").await;
     let marge = story.session().await.asking_whole();
-    marge
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "homer", "name": "Homer",
-                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
-        )
-        .await;
-    marge.add("machine:theta", "Theta").await;
+    a_bot_and_a_machine(&marge).await;
     let created = marge
         .call("add_entity", creating(spec("bot:homer", "machine:theta")))
         .await;
@@ -411,14 +409,7 @@ async fn clearing_an_older_desired_claim_keeps_the_generation() {
     )
     .await;
     let marge = story.session().await.asking_whole();
-    marge
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "homer", "name": "Homer",
-                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
-        )
-        .await;
-    marge.add("machine:theta", "Theta").await;
+    a_bot_and_a_machine(&marge).await;
     let older = marge
         .call("add_entity", creating(spec("bot:homer", "machine:theta")))
         .await
@@ -489,14 +480,7 @@ async fn clearing_an_older_desired_claim_keeps_the_generation() {
 #[tokio::test]
 async fn updating_the_entity_raises_the_generation_of_a_request() {
     let (_story, marge) = Story::begin_with_session("bot:marge").await;
-    marge
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "homer", "name": "Homer",
-                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
-        )
-        .await;
-    marge.add("machine:theta", "Theta").await;
+    a_bot_and_a_machine(&marge).await;
     marge
         .call("add_entity", creating(spec("bot:homer", "machine:theta")))
         .await;
@@ -686,14 +670,7 @@ async fn naming_a_manager_beside_the_target_does_not_change_who_judges_it() {
 #[tokio::test]
 async fn taking_back_an_older_partial_spec_carries_the_next_generation() {
     let (_story, marge) = Story::begin_with_session("bot:marge").await;
-    marge
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "homer", "name": "Homer",
-                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
-        )
-        .await;
-    marge.add("machine:theta", "Theta").await;
+    a_bot_and_a_machine(&marge).await;
     marge
         .call("add_entity", creating(spec("bot:homer", "machine:theta")))
         .await;
@@ -767,14 +744,7 @@ async fn taking_back_an_older_partial_spec_carries_the_next_generation() {
 #[tokio::test]
 async fn archiving_a_claim_of_a_request_carries_the_next_generation() {
     let (_story, marge) = Story::begin_with_session("bot:marge").await;
-    marge
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "homer", "name": "Homer",
-                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
-        )
-        .await;
-    marge.add("machine:theta", "Theta").await;
+    a_bot_and_a_machine(&marge).await;
     marge
         .call("add_entity", creating(spec("bot:homer", "machine:theta")))
         .await;
@@ -843,14 +813,7 @@ async fn archiving_a_claim_of_a_request_carries_the_next_generation() {
 #[tokio::test]
 async fn merging_a_spec_onto_a_request_carries_the_next_generation() {
     let (_story, marge) = Story::begin_with_session("bot:marge").await;
-    marge
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "homer", "name": "Homer",
-                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
-        )
-        .await;
-    marge.add("machine:theta", "Theta").await;
+    a_bot_and_a_machine(&marge).await;
     marge
         .call("add_entity", creating(spec("bot:homer", "machine:theta")))
         .await;
@@ -914,14 +877,7 @@ async fn merging_a_spec_onto_a_request_carries_the_next_generation() {
 #[tokio::test]
 async fn taking_back_a_covered_carrier_carries_the_next_generation() {
     let (_story, marge) = Story::begin_with_session("bot:marge").await;
-    marge
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "homer", "name": "Homer",
-                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
-        )
-        .await;
-    marge.add("machine:theta", "Theta").await;
+    a_bot_and_a_machine(&marge).await;
     marge
         .call("add_entity", creating(spec("bot:homer", "machine:theta")))
         .await;
