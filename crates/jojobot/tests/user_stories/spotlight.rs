@@ -67,8 +67,6 @@ async fn a_bot_finds_its_own_past_work_and_not_another_bots() {
     theirs
         .says("came to the opposite view")
         .never_says("it stays hand-cut for now");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -103,5 +101,4 @@ async fn a_run_never_outranks_what_the_operator_wrote() {
     );
 
     s.wrap("looked up the chainring").await;
-    story.finish().await;
 }

@@ -74,5 +74,4 @@ async fn the_text_that_makes_a_list_says_which_setting_fits_and_how_to_tick() {
         ["stove:open", "tent:open"],
         "the ticked entry went to the end of the rotation and is still open"
     );
-    story.finish().await;
 }

@@ -47,7 +47,7 @@ async fn some_other_read(otto: &Session) -> Value {
 /// ordinary read; the same read before the edit carries nothing.
 #[tokio::test]
 async fn an_edit_by_another_session_is_named_on_the_next_answer() {
-    let (story, otto, other, claim) = otto_holds_homer().await;
+    let (_story, otto, other, claim) = otto_holds_homer().await;
     assert!(some_other_read(&otto).await.get("held_changed").is_none());
 
     other
@@ -67,13 +67,12 @@ async fn an_edit_by_another_session_is_named_on_the_next_answer() {
     assert_eq!(changed.len(), 1, "{next}");
     assert_eq!(changed[0]["handle"], "person:homer", "{next}");
     assert_eq!(changed[0]["claims_edited"], json!([claim]), "{next}");
-    story.finish().await;
 }
 
 /// **A claim added by another session is named as new.**
 #[tokio::test]
 async fn a_claim_added_by_another_session_is_named_as_new() {
-    let (story, otto, other, _) = otto_holds_homer().await;
+    let (_story, otto, other, _) = otto_holds_homer().await;
 
     let added = other
         .call(
@@ -93,14 +92,13 @@ async fn a_claim_added_by_another_session_is_named_as_new() {
         json!([added]),
         "{next}"
     );
-    story.finish().await;
 }
 
 /// **A change is told once.** The answer after the one that carried it carries
 /// nothing.
 #[tokio::test]
 async fn a_change_is_told_once() {
-    let (story, otto, other, claim) = otto_holds_homer().await;
+    let (_story, otto, other, claim) = otto_holds_homer().await;
     other
         .call(
             "update_fact",
@@ -110,7 +108,6 @@ async fn a_change_is_told_once() {
     assert!(some_other_read(&otto).await.get("held_changed").is_some());
 
     assert!(some_other_read(&otto).await.get("held_changed").is_none());
-    story.finish().await;
 }
 
 /// **A write to something the session does not hold adds nothing to its
@@ -119,7 +116,7 @@ async fn a_change_is_told_once() {
 /// comes.
 #[tokio::test]
 async fn an_unrelated_edit_adds_nothing() {
-    let (story, otto, other, claim) = otto_holds_homer().await;
+    let (_story, otto, other, claim) = otto_holds_homer().await;
     other
         .call(
             "update_fact",
@@ -139,7 +136,6 @@ async fn an_unrelated_edit_adds_nothing() {
         .await;
 
     assert!(some_other_read(&otto).await.get("held_changed").is_none());
-    story.finish().await;
 }
 
 /// **A session's own write is not news to it.** Otto edits the claim and hears
@@ -148,7 +144,7 @@ async fn an_unrelated_edit_adds_nothing() {
 /// that does come.
 #[tokio::test]
 async fn a_session_is_not_told_of_its_own_edit() {
-    let (story, otto, other, claim) = otto_holds_homer().await;
+    let (_story, otto, other, claim) = otto_holds_homer().await;
 
     let edit = otto
         .call(
@@ -180,7 +176,6 @@ async fn a_session_is_not_told_of_its_own_edit() {
         next["held_changed"][0].get("claims_edited").is_none(),
         "Otto's own edit is not named beside the other session's claim: {next}"
     );
-    story.finish().await;
 }
 
 /// **A report of compaction clears what the session holds**, so a change made
@@ -188,7 +183,7 @@ async fn a_session_is_not_told_of_its_own_edit() {
 /// change, made and read without a compaction between, is told.
 #[tokio::test]
 async fn a_compaction_report_clears_what_is_held() {
-    let (story, otto, other, claim) = otto_holds_homer().await;
+    let (_story, otto, other, claim) = otto_holds_homer().await;
     other
         .call(
             "update_fact",
@@ -214,7 +209,6 @@ async fn a_compaction_report_clears_what_is_held() {
 
     assert!(reported.get("held_changed").is_none(), "{reported}");
     assert!(some_other_read(&otto).await.get("held_changed").is_none());
-    story.finish().await;
 }
 
 /// **A resent request id answers with its first receipt and carries no notice.**
@@ -222,7 +216,7 @@ async fn a_compaction_report_clears_what_is_held() {
 /// stored, which holds no notice.
 #[tokio::test]
 async fn a_repeat_of_a_write_carries_no_notice() {
-    let (story, otto, other, claim) = otto_holds_homer().await;
+    let (_story, otto, other, claim) = otto_holds_homer().await;
     other
         .call(
             "update_fact",
@@ -238,14 +232,13 @@ async fn a_repeat_of_a_write_carries_no_notice() {
     assert!(first.get("held_changed").is_some(), "{first}");
     assert!(repeat.get("held_changed").is_none(), "{repeat}");
     assert_eq!(repeat["repeat"], true, "{repeat}");
-    story.finish().await;
 }
 
 /// **A held thing that this answer serves again is not also named.** It comes
 /// back whole, and the notice would only repeat what the answer shows.
 #[tokio::test]
 async fn a_thing_served_again_is_not_named_beside_itself() {
-    let (story, otto, other, claim) = otto_holds_homer().await;
+    let (_story, otto, other, claim) = otto_holds_homer().await;
     other
         .call(
             "update_fact",
@@ -261,13 +254,12 @@ async fn a_thing_served_again_is_not_named_beside_itself() {
 
     assert_eq!(again["objects"][0]["id"], "person:homer", "{again}");
     assert!(again.get("held_changed").is_none(), "{again}");
-    story.finish().await;
 }
 
 /// **A rename and an archive by another session are named.**
 #[tokio::test]
 async fn a_rename_and_an_archive_by_another_session_are_named() {
-    let (story, otto, other, _) = otto_holds_homer().await;
+    let (_story, otto, other, _) = otto_holds_homer().await;
     other
         .call(
             "update_entity",
@@ -292,7 +284,6 @@ async fn a_rename_and_an_archive_by_another_session_are_named() {
         .await;
     let archived = some_other_read(&otto).await;
     assert_eq!(archived["held_changed"][0]["archived"], true, "{archived}");
-    story.finish().await;
 }
 
 /// **A message another run of the bot processed is named, and one the session
@@ -342,7 +333,6 @@ async fn a_message_another_run_processed_is_named_and_one_this_run_processed_is_
             .get("held_changed")
             .is_none()
     );
-    story.finish().await;
 }
 
 /// **A message another run of the bot quarantined is named, with its state and
@@ -414,7 +404,6 @@ async fn a_message_another_run_quarantined_is_named_once_without_its_words() {
             .is_none(),
         "a change is told once"
     );
-    story.finish().await;
 }
 
 /// **A claim held on its own is told when another session wrote it before this
@@ -468,7 +457,6 @@ async fn a_claim_another_session_wrote_before_this_one_did_is_named() {
         .unwrap_or_default();
     assert_eq!(told.len(), 1, "the claim is named once: {next}");
     assert_eq!(told[0]["claim"], "edited", "{next}");
-    story.finish().await;
 }
 
 /// **"It shouldn't show me the same text twice."** Otto was served Homer and the
@@ -478,7 +466,7 @@ async fn a_claim_another_session_wrote_before_this_one_did_is_named() {
 /// changes him, he comes back whole beside the notice.
 #[tokio::test]
 async fn a_thing_the_session_holds_unchanged_comes_back_as_its_handle() {
-    let (story, otto, other, claim) = otto_holds_homer().await;
+    let (_story, otto, other, claim) = otto_holds_homer().await;
     // **No `reship` key, as a default session sends it**; the explicit `false`
     // below must read the same.
     let ask = json!({"subject": "person:homer", "facts": true});
@@ -527,7 +515,6 @@ async fn a_thing_the_session_holds_unchanged_comes_back_as_its_handle() {
         "{changed}"
     );
     assert!(changed.get("held_collapsed").is_none(), "{changed}");
-    story.finish().await;
 }
 
 /// **A second merge into a thing the session holds is news to it, even when the
@@ -592,7 +579,6 @@ async fn a_second_merge_into_a_held_thing_comes_back_whole_without_a_new_part() 
         "the name that came over is in the read: {merged}"
     );
     assert!(merged.get("held_collapsed").is_none(), "{merged}");
-    story.finish().await;
 }
 
 /// **Every verb that can hand a handle back publishes the call that returns the
@@ -624,7 +610,6 @@ async fn a_listing_the_session_holds_unchanged_collapses_and_reship_lists_it_who
         .json();
     assert!(whole.to_string().contains("Homer"), "{whole}");
     assert!(whole.get("held_collapsed").is_none(), "{whole}");
-    story.finish().await;
 }
 
 /// **A notice names a change and serves none of the new words.** Otto holds
@@ -633,7 +618,7 @@ async fn a_listing_the_session_holds_unchanged_collapses_and_reship_lists_it_who
 /// notice did not give Otto the new text, so it is not text Otto already holds.
 #[tokio::test]
 async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
-    let (story, otto, other, claim) = otto_holds_homer().await;
+    let (_story, otto, other, claim) = otto_holds_homer().await;
     other
         .call(
             "update_fact",
@@ -652,7 +637,6 @@ async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
         .json();
     assert!(read.to_string().contains("likes donuts and beer"), "{read}");
     assert!(read.get("held_collapsed").is_none(), "{read}");
-    story.finish().await;
 }
 
 /// **A search that reaches a thing the session was already served, unchanged,
@@ -661,7 +645,7 @@ async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
 /// have him whole. The same search with `reship: true` returns him whole.
 #[tokio::test]
 async fn a_search_hit_on_a_thing_already_recalled_comes_back_as_its_handle() {
-    let (story, otto, _other, _claim) = otto_holds_homer().await;
+    let (_story, otto, _other, _claim) = otto_holds_homer().await;
 
     // **No `reship` key, as a default session sends it**; the explicit `false`
     // below must read the same.
@@ -708,7 +692,6 @@ async fn a_search_hit_on_a_thing_already_recalled_comes_back_as_its_handle() {
         "Homer comes back with more than his handle: {homer}"
     );
     assert!(whole.to_string().contains("likes donuts"), "{whole}");
-    story.finish().await;
 }
 
 /// **A wider window of a history the session was already served is served.** A
@@ -717,7 +700,7 @@ async fn a_search_hit_on_a_thing_already_recalled_comes_back_as_its_handle() {
 /// carries the write the first left out, and is not a handle.
 #[tokio::test]
 async fn a_wider_history_window_of_an_unmoved_thing_is_served() {
-    let (story, otto, _other, _claim) = otto_holds_homer().await;
+    let (_story, otto, _other, _claim) = otto_holds_homer().await;
     for mood in ["mood-a", "mood-b", "mood-c"] {
         otto.call(
             "capture",
@@ -749,5 +732,4 @@ async fn a_wider_history_window_of_an_unmoved_thing_is_served() {
         .json();
     assert!(wider.get("held_collapsed").is_none(), "{wider}");
     assert!(wider.to_string().contains("mood-b"), "{wider}");
-    story.finish().await;
 }

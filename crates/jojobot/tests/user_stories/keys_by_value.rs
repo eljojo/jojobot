@@ -193,7 +193,6 @@ async fn a_question_over_values_names_the_chores_that_hold_them() {
         [FENCE, GATE, SHELF],
         "a filter and an order together"
     );
-    story.finish().await;
 }
 
 /// **A question asked after a write is answered for the chores as they are
@@ -357,7 +356,6 @@ async fn an_answer_follows_every_kind_of_write_to_a_chore() {
         "with the push taken back the gate is due on the day it was"
     );
     assert_eq!(ask_sorted(&s, "due = 2026-10-12").await, sorted([GATE]));
-    story.finish().await;
 }
 
 /// **A leaf that names a handle is answered for the handle a reader sees.** The
@@ -388,5 +386,4 @@ async fn a_leaf_naming_a_handle_is_answered_for_the_handle_a_reader_sees() {
         ask_sorted(&s, "owner != person:apu").await,
         sorted([FENCE, GATE])
     );
-    story.finish().await;
 }

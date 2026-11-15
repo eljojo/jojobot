@@ -110,7 +110,6 @@ async fn a_retraction_names_the_run_that_made_it() {
         .await;
     let after = writes_on(&s, "thing:delta").await;
     all_name(&written_since(&before, &after), gamma.run(), 2);
-    story.finish().await;
 }
 
 /// **A fold names the run that made it**, on the account the survivor keeps.
@@ -133,7 +132,6 @@ async fn a_merge_names_the_run_that_made_it() {
         .await;
     let after = writes_on(&s, "thing:sigma").await;
     all_name(&written_since(&before, &after), gamma.run(), 1);
-    story.finish().await;
 }
 
 /// **A restore names the run that put the thing back**, on the claim that
@@ -161,7 +159,6 @@ async fn a_restore_names_the_run_that_made_it() {
         .await;
     let after = writes_on(&s, "thing:omega").await;
     all_name(&written_since(&before, &after), gamma.run(), 1);
-    story.finish().await;
 }
 
 /// **A role's claim and its release name the run that held it.**
@@ -188,7 +185,6 @@ async fn a_role_claim_and_a_release_name_the_run() {
         .await;
     let released = writes_on(&s, "role:gamma").await;
     all_name(&written_since(&claimed, &released), held.run(), 1);
-    story.finish().await;
 }
 
 /// **Taking the stored due moment off a thing names the run that did.**
@@ -216,5 +212,4 @@ async fn clearing_a_stored_due_moment_names_the_run_that_did() {
         .await;
     let after = writes_on(&s, "thing:tau").await;
     all_name(&written_since(&before, &after), gamma.run(), 1);
-    story.finish().await;
 }

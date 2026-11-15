@@ -101,7 +101,6 @@ async fn a_standard_records_read_weighs_what_the_claims_weigh() {
          ({standard}) by about the {paragraphs} characters of reasons, less its \
          {line}-character line"
     );
-    story.finish().await;
 }
 
 /// **A named boot does not grow with the roster.** The booting bot is listed and
@@ -129,5 +128,4 @@ async fn a_named_boot_does_not_grow_with_the_roster() {
         large < small + 400,
         "thirty colleagues moved the boot from {small} to {large} characters"
     );
-    story.finish().await;
 }

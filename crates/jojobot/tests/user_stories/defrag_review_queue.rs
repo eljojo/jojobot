@@ -225,8 +225,6 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
         asked["objects"][0]["fields"]["defragged_at"].is_string(),
         "asked for by name it is there: {asked}"
     );
-
-    story.finish().await;
 }
 
 /// What `recall` lists as the live records of a thing, by their words, the
@@ -355,7 +353,6 @@ async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes
         )
         .await;
     forged.number("/live", 3).number("/ceiling", 3);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -419,7 +416,6 @@ async fn defrag_marks_a_thread_that_borrowed_over_its_ceiling_and_the_mark_takes
         "{}",
         still_over.raw()
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -448,7 +444,6 @@ async fn a_thing_defrag_creates_is_reviewed_and_a_thing_another_bot_creates_wait
     )
     .await;
     assert!(queue(&defrag).await.contains(&"person:lisa".to_string()));
-    story.finish().await;
 }
 
 /// The facts `recall` lists for a thing, whole, and the object that carries them.
@@ -541,7 +536,6 @@ async fn a_read_of_a_marked_thing_leaves_the_review_mark_out_and_names_the_argum
         )
         .await;
     assert!(!queue(&defrag).await.contains(&"person:lisa".to_string()));
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -603,7 +597,6 @@ async fn a_search_leaves_the_review_mark_out_names_it_in_left_out_and_returns_it
         asked.get("left_out").is_none(),
         "notes were taught once: {asked}"
     );
-    story.finish().await;
 }
 
 /// The status a recall of `subject` with every record serves for `address`.
@@ -664,7 +657,6 @@ async fn defrag_archives_another_sessions_testimony_as_any_bot_does() {
         status_of(&defrag, "thread:alpha", &written[1]).await,
         "archived"
     );
-    story.finish().await;
 }
 
 /// **An archive by defrag is a review.** Defrag read the claim and took it out
@@ -739,5 +731,4 @@ async fn an_archive_by_defrag_takes_the_thing_out_of_its_queue_and_one_by_anothe
         by_view.contains(&"thread:beta".to_string()),
         "another bot's archive is a change defrag has not read: {by_view:?}"
     );
-    story.finish().await;
 }

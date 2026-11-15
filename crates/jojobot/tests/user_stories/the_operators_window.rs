@@ -73,7 +73,6 @@ async fn the_homepage_lists_what_is_held_by_kind_and_what_is_due() {
     );
     // Every page carries the search box.
     assert!(home.raw().contains("class=\"find\""), "{}", home.raw());
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -114,7 +113,6 @@ async fn the_org_chart_puts_each_bot_under_the_bot_it_reports_to() {
         omega_line[omega_start..].contains("data-depth=\"0\""),
         "{raw}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -135,7 +133,6 @@ async fn a_kinds_page_lists_every_thing_of_that_kind_and_no_other() {
     }
     // Paired with the positive above: a person is not in the list of places.
     assert!(!table.contains("person:homer"), "{table}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -162,5 +159,4 @@ async fn the_search_box_finds_what_a_bot_wrote_and_says_when_nothing_is_found() 
         none.raw()
     );
     assert!(!none.raw().contains("id=\"found\""), "{}", none.raw());
-    story.finish().await;
 }

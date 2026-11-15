@@ -63,6 +63,4 @@ async fn an_object_says_the_day_it_was_last_learned_about_and_a_stale_key_says_i
         object.get("fields_as_of").is_none(),
         "same-day keys carry nothing: {object}"
     );
-
-    story.finish().await;
 }

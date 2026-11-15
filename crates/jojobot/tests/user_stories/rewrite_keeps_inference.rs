@@ -58,7 +58,6 @@ async fn a_later_run_rewrites_an_earlier_runs_inference_and_it_stays_an_inferenc
         .claim(&note)
         .says("the wheel squeaks when loaded")
         .says("\"provenance\":\"inference\"");
-    story.finish().await;
 }
 
 /// **The same rewrite of an observation is still refused**, and says what to
@@ -96,7 +95,6 @@ async fn a_later_run_rewriting_an_observation_still_has_to_say_how_it_is_known()
         .claim(&seen)
         .says("the wheel squeaks")
         .never_says("when loaded");
-    story.finish().await;
 }
 
 /// **And the operator's words are not rewritten in place by another run**,
@@ -123,7 +121,6 @@ async fn a_later_run_rewriting_testimony_with_no_provenance_is_still_refused() {
         .claim(&said)
         .says("the handcart is red")
         .never_says("the handcart is blue");
-    story.finish().await;
 }
 
 /// **A receipt certifies the words that were checked.** A later run that
@@ -170,5 +167,4 @@ async fn a_later_runs_rewrite_reopens_a_settled_inference_unless_it_brings_a_rec
         .await
         .json();
     assert_eq!(kept["standing"], "settled", "{kept}");
-    story.finish().await;
 }

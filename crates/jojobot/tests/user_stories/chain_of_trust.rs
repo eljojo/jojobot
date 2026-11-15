@@ -135,8 +135,6 @@ async fn a_bot_that_writes_a_voucher_is_refused_and_nothing_is_stored() {
 
     // ── nothing was stored under the kind ───────────────────────────────────
     s.list("voucher").await.number("/count", 0);
-
-    story.finish().await;
 }
 
 /// "A voucher is refused. How does a session get one?"
@@ -181,7 +179,6 @@ async fn a_refused_voucher_write_names_the_door_that_issues_one() {
         .await;
     assert!(none.is_none(), "asking for a code starts no session");
     asked.says("\"challenge\"");
-    story.finish().await;
 }
 
 /// "A voucher exists. Can a bot edit it, rename it or take it back?"
@@ -252,8 +249,6 @@ async fn a_voucher_the_engine_issued_is_not_edited_renamed_or_taken_back_by_a_bo
             json!({"handle": "bot:patty", "name": "Patty the second"}),
         )
         .await;
-
-    story.finish().await;
 }
 
 /// "A voucher exists. Can a bot rename it, fold it into something, archive it,
@@ -357,8 +352,6 @@ async fn a_bot_cannot_rename_merge_or_archive_a_voucher_nor_rename_into_one() {
             json!({"handle": "bot:patty", "reason": "tidying"}),
         )
         .await;
-
-    story.finish().await;
 }
 
 // ── the operator's code ──────────────────────────────────────────────────────
@@ -501,8 +494,6 @@ async fn a_code_goes_to_the_operator_alone_and_a_boot_that_presents_it_is_given_
         .await
         .says("already");
     s.list("voucher").await.number("/count", 1);
-
-    story.finish().await;
 }
 
 /// "I started the assistant by hand. Does the same code do for it?"
@@ -609,8 +600,6 @@ async fn the_assistants_code_grants_the_root_which_turns_the_gate_on_and_dies_wi
     .number("/count", 1);
     let (still, _) = story.call("start_here", json!({"bot": "patty"})).await;
     still.says("\"gate\":\"gated\"");
-
-    story.finish().await;
 }
 
 /// "I asked twice, and I typed it wrong."
@@ -716,8 +705,6 @@ async fn a_pending_code_is_not_replaced_and_three_wrong_codes_void_a_challenge()
         .await;
     assert!(booted.is_some(), "the fresh code boots");
     s.list("voucher").await.number("/count", 1);
-
-    story.finish().await;
 }
 
 /// "I waited too long, and the server restarted."
@@ -772,8 +759,6 @@ async fn a_code_is_dead_after_its_window_and_after_a_restart() {
         )
         .await
         .says("ask for a new code");
-
-    story.finish().await;
 }
 
 /// "Can a code be asked for with nobody to send it to, or for nobody?"
@@ -855,8 +840,6 @@ async fn no_code_is_made_without_an_operator_or_a_bot_and_no_bot_writes_a_challe
     s.call("recall", json!({"subject": challenge}))
         .await
         .says("\"state\":\"issued\"");
-
-    story.finish().await;
 }
 
 /// "The assistant's run is wrapped. Can a code ride in on its wrap code?"
@@ -913,6 +896,4 @@ async fn a_wrap_code_reopening_takes_no_code_and_spends_none() {
         .await;
     assert!(booted.is_some(), "the unspent code boots a new run");
     s.list("voucher").await.number("/count", 1);
-
-    story.finish().await;
 }

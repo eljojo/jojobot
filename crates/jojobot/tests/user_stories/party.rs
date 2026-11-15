@@ -387,6 +387,4 @@ async fn throwing_a_birthday_party() {
     s.has_no_verb("count_of", &["capture", "search"]).await;
 
     s.wrap("menu still open").await;
-
-    story.finish().await;
 }

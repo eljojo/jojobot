@@ -63,7 +63,6 @@ async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missi
 
     s.wrap("searched through a store that came and went, and was told so")
         .await;
-    story.finish().await;
 }
 
 /// **A server that read its store when it started answers from what it read when
@@ -87,7 +86,6 @@ async fn a_server_that_scanned_its_store_at_start_is_not_unscanned_when_the_stor
 
     s.wrap("searched after the store went away, from what was read at the start")
         .await;
-    story.finish().await;
 }
 
 /// **A write the store committed is findable by search, or search says it is
@@ -152,8 +150,6 @@ async fn a_write_that_lands_with_the_fold_behind_is_found_by_search() {
 
     s.wrap("wrote while the fold was behind and found every write by search")
         .await;
-    restarted.finish().await;
-    story.finish().await;
 }
 
 /// **The pair of the story above**: on a server whose fold followed the write,
@@ -170,5 +166,4 @@ async fn a_capture_the_fold_followed_is_found_by_search() {
 
     s.wrap("wrote with the fold following and found it by search")
         .await;
-    story.finish().await;
 }

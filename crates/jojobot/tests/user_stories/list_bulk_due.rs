@@ -143,7 +143,6 @@ async fn a_batch_whose_ending_step_fails_names_every_item_landed_and_a_resend_fi
     assert!(clean.get("finished_a_cut_batch").is_none(), "{clean}");
     assert_eq!(read_states(&s, "list:marge-errands").await.len(), 3);
     assert_eq!(due_on(&s, "list:marge-errands").await, None);
-    story.finish().await;
 }
 
 /// **A batch that ends what a list owes and is cut at its third item is finished
@@ -193,5 +192,4 @@ async fn a_cut_batch_that_ends_what_a_list_owes_is_finished_by_the_same_call_eac
         "each chore once"
     );
     assert_eq!(due_on(&s, "list:homer-chores").await, None);
-    story.finish().await;
 }

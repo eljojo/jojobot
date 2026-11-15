@@ -79,8 +79,6 @@ async fn a_key_that_keeps_its_newest_write_is_cleared_by_following_the_sentence(
         .await;
     after.says("\"hat\":\"bowler\"");
     after.never_says("\"mood\":\"queasy\"");
-
-    story.finish().await;
 }
 
 /// **A counter has no single record behind it, and the sentence still reaches
@@ -170,8 +168,6 @@ async fn a_counter_key_is_cleared_by_following_the_sentence() {
         .await;
     writes.number("/objects/0/history/count", 4);
     writes.says("\"cleared\":true");
-
-    story.finish().await;
 }
 
 /// **A clear sent to an older record takes the key off that record only, and
@@ -237,8 +233,6 @@ async fn a_clear_sent_to_an_older_record_leaves_the_value_and_one_sent_to_the_ba
         )
         .await;
     after.never_says("\"mood\":");
-
-    story.finish().await;
 }
 
 const DESK: &str = "thing:standing-desk";
@@ -340,5 +334,4 @@ async fn clearing_an_older_expiry_claim_keeps_the_date_and_the_desk_owed() {
     let fields = &desk["fields"];
     assert_eq!(fields["runs_out"], json!(null), "{}", gone.raw());
     assert_eq!(fields["due_on"], json!(null), "{}", gone.raw());
-    story.finish().await;
 }

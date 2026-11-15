@@ -112,7 +112,6 @@ async fn a_records_read_leads_with_each_claim_and_says_how_many_details_it_left_
     )
     .await
     .never_says("details_left_out");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -168,7 +167,6 @@ async fn reading_records_by_address_and_searching_follow_the_same_default() {
         .says("higher than the last one")
         .says("the mover said the price would hold")
         .never_says("details_left_out");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -202,7 +200,6 @@ async fn a_page_shows_the_claim_and_puts_its_details_behind_a_marker() {
     // Escaped: what a person typed never becomes markup.
     assert!(!html.contains("higher</b>"), "{html}");
     assert!(html.contains("&lt;b&gt;higher&lt;/b&gt;"), "{html}");
-    story.finish().await;
 }
 
 /// **The entity keys a read serves are untouched by the records default**, and
@@ -243,5 +240,4 @@ async fn a_default_read_still_shows_what_a_creation_is_asked_about() {
     )
     .await
     .says("merge_entities");
-    story.finish().await;
 }

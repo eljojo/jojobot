@@ -20,5 +20,4 @@ async fn post_message_says_before_the_post_that_a_folded_bots_mail_goes_to_its_s
     ] {
         assert!(text.contains("`folded`"), "{text}");
     }
-    story.finish().await;
 }

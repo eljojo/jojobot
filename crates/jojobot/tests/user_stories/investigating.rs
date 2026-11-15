@@ -458,6 +458,4 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.has_no_verb("decision", &["capture", "search"]).await;
 
     s.wrap("asked what the record could not answer").await;
-
-    story.finish().await;
 }

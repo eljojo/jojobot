@@ -237,8 +237,6 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
         "a boot naming {named} kind(s) is a build that ships almost none, or a list that came \
          back empty and read as an answer",
     );
-
-    story.finish().await;
 }
 
 /// **A caller meets `fix_by` in the boot's orientation, where it first learns
@@ -366,7 +364,6 @@ async fn a_named_boot_lists_the_caller_and_counts_the_rest_while_an_anonymous_on
         roster.len() - BOTS_LISTED,
         "{entities}"
     );
-    story.finish().await;
 }
 
 /// The other half of the pair: an anonymous boot of a roster under the cap lists
@@ -402,7 +399,6 @@ async fn a_boot_of_a_small_roster_lists_every_bot_to_a_caller_choosing_one() {
         roster.len() - 1,
         "{entities}"
     );
-    story.finish().await;
 }
 
 /// **The refusal for a bot that does not exist lists the roster the same way**:
@@ -459,8 +455,6 @@ async fn the_refusal_for_an_unknown_bot_lists_twenty_bots_and_counts_the_rest() 
         .collect();
     assert_eq!(listed, few, "{refusal}");
     assert!(refusal.get("bots_left_out").is_none(), "{refusal}");
-    small.finish().await;
-    story.finish().await;
 }
 
 /// **A compaction report beside a skill is refused**, as `bot` beside `skill`
@@ -494,7 +488,6 @@ async fn a_compaction_report_beside_a_skill_is_refused_rather_than_dropped() {
     // Paired: the skill alone is read.
     let read = story.skill("recommend").await;
     assert_eq!(read["skill"]["name"], "recommend", "{read}");
-    story.finish().await;
 }
 
 /// **The route the refusal and the essay name reaches the bots a capped roster
@@ -546,5 +539,4 @@ async fn the_route_to_the_bots_a_capped_roster_left_out_returns_them() {
         "list_entities kind bot does not return {past_the_cap}: {}",
         all.raw()
     );
-    story.finish().await;
 }

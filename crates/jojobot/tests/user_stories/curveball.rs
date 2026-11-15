@@ -142,6 +142,4 @@ async fn a_curveball_collides_with_the_week() {
 
     s.wrap("the week has a new shape, told in three pieces")
         .await;
-
-    story.finish().await;
 }

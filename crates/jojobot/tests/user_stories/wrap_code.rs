@@ -614,7 +614,6 @@ async fn a_live_handover_is_a_wrap_the_next_agent_reads_and_the_role_is_free_at_
         fresh.is_some(),
         "the next agent is handed a fresh run, not the wrapped one"
     );
-    story.finish().await;
 }
 
 /// **A run that went quiet without wrapping leaves a resume note, and once the
@@ -707,7 +706,6 @@ async fn a_run_that_went_quiet_leaves_a_resume_note_and_is_picked_up_by_its_name
         wrapped["wrap_code"].is_string(),
         "the first wrap of the resumed run hands back its code: {wrapped}"
     );
-    story.finish().await;
 }
 
 /// **For two hours after a wrap its code reopens the run as a normal session,
@@ -861,7 +859,7 @@ async fn the_code_opens_the_run_an_hour_and_fifty_nine_minutes_after_the_wrap_an
         runs_on_the_page(&inside).await["the run at the edge"],
         "wrapped"
     );
-    inside.finish().await;
+    drop(inside);
 
     let (outside, code) = wrap_in_a_fresh_world().await;
     let later = outside
@@ -881,5 +879,4 @@ async fn the_code_opens_the_run_an_hour_and_fifty_nine_minutes_after_the_wrap_an
         runs_on_the_page(&outside).await["the run at the edge"],
         "wrapped"
     );
-    outside.finish().await;
 }

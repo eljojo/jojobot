@@ -219,5 +219,4 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
         .says("\"thought_ages_after_runs\":\"7\"");
 
     s.wrap("kept a thread's ceiling above its writers").await;
-    story.finish().await;
 }

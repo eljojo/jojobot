@@ -133,7 +133,7 @@ async fn a_store_holding_a_topic_named_defrag_still_boots_defrag_and_keeps_why()
             .is_some_and(|why| !why.trim().is_empty()),
         "the bot says why it was created beside a resembling thing: {told}"
     );
-    neighbour.finish().await;
+    drop(neighbour);
 
     let alone = Story::begin("bot:otto").await;
     let plain = alone
@@ -150,7 +150,6 @@ async fn a_store_holding_a_topic_named_defrag_still_boots_defrag_and_keeps_why()
         plain["objects"][0]["fields"].get("told_apart_by").is_none(),
         "with no neighbour there was nothing to be told apart from: {plain}"
     );
-    alone.finish().await;
 }
 
 /// **A shipped bot that an operator's store holds without its box gets the box at
@@ -187,5 +186,4 @@ async fn a_prefilled_defrag_with_no_box_gets_one_at_the_start_and_a_boxless_othe
     // Said of a bot that exists: the refusal sends the caller to the boot that
     // opens its box, and not to a bot of the same name that it is "the name of".
     .says("start_here");
-    story.finish().await;
 }

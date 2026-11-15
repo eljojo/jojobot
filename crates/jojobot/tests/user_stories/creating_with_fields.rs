@@ -52,7 +52,6 @@ async fn one_call_makes_a_piece_of_work_and_says_where_it_stands() {
     next.says("work:phi");
     // The index knows the new thing and what it was said with.
     s.find("Phi").await.says("work:phi");
-    story.finish().await;
 }
 
 /// **A field the kind refuses leaves nothing behind.** The same call with a
@@ -85,7 +84,6 @@ async fn a_refused_field_refuses_the_whole_call_and_creates_nothing() {
         .json();
     assert_eq!(made["id"], "work:sigma", "{made}");
     s.list("work").await.says("work:sigma");
-    story.finish().await;
 }
 
 /// **A key that only labels a claim is refused in a creation's settings, by
@@ -138,7 +136,6 @@ async fn a_label_in_a_creations_settings_is_refused_and_the_route_lands() {
             .is_some_and(|a| a.starts_with("bot:sigma#")),
         "{captured}"
     );
-    story.finish().await;
 }
 
 /// **A link to a handle nobody holds leaves nothing behind either.** It is
@@ -166,7 +163,6 @@ async fn a_link_to_nothing_blocks_the_call_and_creates_nothing() {
     // Pointed at somebody who exists, the same call lands.
     s.call("add_entity", sent("person:lisa")).await;
     s.list("work").await.says("work:first-mix");
-    story.finish().await;
 }
 
 /// **A handle the build supplies cannot be taken by a creation that carries
@@ -214,7 +210,6 @@ async fn a_supplied_handle_is_refused_with_fields_as_it_is_without() {
         .await
         .json();
     assert_eq!(made["id"], "view:my-friends", "{made}");
-    story.finish().await;
 }
 
 /// **The keys that make a thing fall due are worked out on creation, as on a
@@ -246,7 +241,6 @@ async fn a_promise_made_with_its_day_has_its_due_moment_stored() {
         )
         .await;
     owed.says("promise:return-the-wrench");
-    story.finish().await;
 }
 
 /// **A value that names nothing is refused over the wire, under any key.** A
@@ -297,5 +291,4 @@ async fn a_field_that_names_nothing_is_refused_under_any_key_and_a_sentence_is_n
 
     s.wrap("wrote fields that name things and one that did not")
         .await;
-    story.finish().await;
 }

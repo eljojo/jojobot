@@ -59,7 +59,6 @@ async fn a_batch_carries_the_possible_subject_note_its_items_earned_once() {
         "{}",
         later.raw()
     );
-    story.finish().await;
 }
 
 /// Items that each earn a different teaching: every teaching rides, once.
@@ -102,7 +101,6 @@ async fn a_batch_carries_every_teaching_its_items_earned_once() {
     let mut got = lines.clone();
     got.sort();
     assert_eq!(got, expected, "{}", batch.raw());
-    story.finish().await;
 }
 
 /// A batch cut at the second item spends nothing it did not deliver, and the same
@@ -138,7 +136,6 @@ async fn a_cut_batch_resent_delivers_the_note_its_first_item_earned() {
         "the finishing receipt delivers the note the first item earned: {}",
         finished.raw()
     );
-    story.finish().await;
 }
 
 /// **A batch's receipt serves one suggestion, and the one it drops is not
@@ -191,7 +188,6 @@ async fn a_batch_serves_one_suggestion_and_the_dropped_one_is_not_spent() {
         "the step the batch dropped is still owed: {}",
         later.raw()
     );
-    story.finish().await;
 }
 
 /// **A batch too big for the lean budget drops its note whole, names it, and
@@ -242,5 +238,4 @@ async fn a_batch_too_big_for_the_budget_names_its_dropped_note_and_spends_nothin
         "nothing was spent for the dropped note: {}",
         later.raw()
     );
-    story.finish().await;
 }

@@ -75,5 +75,4 @@ async fn a_controller_sees_a_bot_has_mail_waiting_then_sees_it_taken() {
     assert_eq!(status, 200, "{taken}");
     assert_eq!(row_of(&taken, "bot:gamma")["new"], 0, "{taken}");
     assert!(row_of(&taken, "bot:gamma")["oldest_new_sent_at"].is_null());
-    story.finish().await;
 }

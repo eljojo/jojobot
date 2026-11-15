@@ -70,7 +70,6 @@ async fn a_checklist_reads_how_many_of_its_entries_are_ticked_and_leaves_a_dropp
         ticked(&s, "list:checklist").await,
         json!({"done": 0, "of": 24, "reads": "0 of 24 done"})
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -87,7 +86,6 @@ async fn a_queue_reads_how_many_are_done_and_how_many_are_still_open() {
         ticked(&s, "list:errands").await,
         json!({"done": 3, "open": 7})
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -111,7 +109,6 @@ async fn a_rotation_reads_how_many_turns_it_has_taken_and_has_no_done() {
     // turns go with it.
     tick(&s, "list:phi-checklist", &at[1], "dropped").await;
     assert_eq!(ticked(&s, "list:phi-checklist").await, json!({"turns": 3}));
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -147,7 +144,6 @@ async fn a_list_that_links_work_reads_its_ticks_and_the_works_progress_apart() {
     let list = the_list(&s, "list:checklist").await;
     assert_eq!(list["ticked"]["done"], 0, "{list}");
     assert_eq!(list["progress"]["done"], 2, "{list}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -174,5 +170,4 @@ async fn a_list_that_holds_nothing_says_nothing_about_ticks() {
         list.get("ticked").is_none(),
         "a list whose only entry is dropped holds nothing: {list}"
     );
-    story.finish().await;
 }

@@ -76,7 +76,6 @@ async fn the_same_name_under_another_kind_lands_only_with_a_reason_and_the_reaso
 
     s.wrap("made the place beside the organisation, with the why")
         .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -119,7 +118,6 @@ async fn a_name_that_contains_another_lands_only_with_a_reason() {
     s.recall("place:moes-tavern").await.says("alley");
 
     s.wrap("made the annex with the why").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -146,7 +144,6 @@ async fn a_near_slug_keeps_the_token_alone() {
     .says("person:contract-nearslugg");
 
     s.wrap("a typo's distance needs no reason").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -185,7 +182,6 @@ async fn a_rename_onto_a_name_that_resembles_another_lands_only_with_a_reason_an
     s.recall("place:moes-tavern").await.says("premises");
 
     s.wrap("renamed with the why").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -230,7 +226,6 @@ async fn a_new_name_that_resembles_another_lands_only_with_a_reason_and_keeps_it
         .says("sign");
 
     s.wrap("renamed the display name with the why").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -260,7 +255,6 @@ async fn a_reason_sent_where_none_was_needed_is_kept() {
     s.recall("person:contract-nearslugg").await.says("cousin");
 
     s.wrap("a reason nobody asked for is still kept").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -332,7 +326,6 @@ async fn a_later_refusal_and_a_search_show_what_tells_a_kept_apart_thing_from_th
     );
 
     s.wrap("the reason tells the two apart in a list").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -378,7 +371,6 @@ async fn a_move_that_keeps_its_name_is_never_screened_and_a_new_handle_is() {
     .says("place:moes");
 
     s.wrap("moved without a refusal and renamed with one").await;
-    story.finish().await;
 }
 
 /// The `told_apart_by` a recall of the thing reports, as one string.
@@ -468,7 +460,6 @@ async fn a_second_override_keeps_the_first_reason_and_a_repeated_reason_is_not_a
 
     s.wrap("three overrides on one thing kept every reason once")
         .await;
-    story.finish().await;
 }
 
 /// **The same on `update_entity`**: a name change that needs its own override
@@ -524,5 +515,4 @@ async fn an_update_that_needs_an_override_adds_its_reason_beside_the_earlier_one
 
     s.wrap("two renames of the display name kept both reasons")
         .await;
-    story.finish().await;
 }

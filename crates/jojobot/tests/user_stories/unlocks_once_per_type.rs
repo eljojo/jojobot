@@ -107,8 +107,6 @@ async fn a_run_of_things_missing_the_same_keys_is_told_once_and_other_keys_are_t
         type_steps(&same_again).is_empty(),
         "the second thing missing only done_by is not told again: {same_again}"
     );
-
-    story.finish().await;
 }
 
 /// A new session is told again on its first create, whatever an earlier one was told.
@@ -129,5 +127,4 @@ async fn a_new_session_is_told_again_on_its_first_create() {
         the_step(),
         "a new session is told on its first create: {told_again}"
     );
-    story.finish().await;
 }

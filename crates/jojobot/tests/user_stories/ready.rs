@@ -118,8 +118,6 @@ async fn what_can_be_started_and_what_stops_the_rest() {
         "{}",
         after.raw()
     );
-
-    story.finish().await;
 }
 
 /// "What does the whole plan for the shed look like, and what stops each piece?"
@@ -202,8 +200,6 @@ async fn the_whole_plan_and_what_stops_each_piece_come_in_one_call() {
         "the finished piece is left out and counted: {}",
         plan.raw()
     );
-
-    story.finish().await;
 }
 
 /// "Ready includes what I have already started. How do I get only what I have
@@ -278,7 +274,6 @@ async fn the_ready_answer_says_where_narrows_it_and_an_ordinary_read_does_not() 
         "an ordinary read names no ready line: {}",
         plain.raw()
     );
-    story.finish().await;
 }
 
 /// "Can I start painting the door?" asked of a piece of work that was archived.
@@ -323,7 +318,6 @@ async fn an_archived_piece_of_work_is_not_ready_when_named_and_says_why() {
         "{}",
         after.raw()
     );
-    story.finish().await;
 }
 
 /// "What can I start on the shed?" The ready view takes the project as `parent`
@@ -397,7 +391,6 @@ async fn the_ready_view_narrows_to_one_project_and_a_walk_lists_what_it_unblocks
         "{}",
         unblocks.raw()
     );
-    story.finish().await;
 }
 
 /// "Is Kenny ready?" asked of the man who will frame the walls. Readiness is a
@@ -485,5 +478,4 @@ async fn the_ready_view_turns_a_person_away_and_still_answers_for_work() {
         "the refusal names the address it turned away: {}",
         by_record.raw()
     );
-    story.finish().await;
 }

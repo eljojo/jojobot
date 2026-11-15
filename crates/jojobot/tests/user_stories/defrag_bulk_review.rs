@@ -104,7 +104,6 @@ async fn defrag_marks_several_things_reviewed_in_one_call() {
         );
     }
     assert!(!queue(&defrag).await.contains(&"person:bart".to_string()));
-    story.finish().await;
 }
 
 /// **Another bot's bulk mark is refused and marks nothing**, as a single mark
@@ -128,7 +127,6 @@ async fn a_bulk_mark_by_another_bot_is_refused_and_marks_nothing() {
         assert!(waiting.contains(&handle.to_string()), "{waiting:?}");
         assert_eq!(marks_of(&defrag, handle).await, 0, "{handle}");
     }
-    story.finish().await;
 }
 
 /// **A bulk mark is whole or not at all**: a handle in the list that names
@@ -162,7 +160,6 @@ async fn a_bulk_mark_with_a_missing_handle_or_another_edit_marks_nothing() {
         assert!(waiting.contains(&handle.to_string()), "{waiting:?}");
         assert_eq!(marks_of(&defrag, handle).await, 0, "{handle}");
     }
-    story.finish().await;
 }
 
 /// **The queue reads one container at a time**: `unreviewed` beside `parent`
@@ -229,7 +226,6 @@ async fn the_queue_beside_a_parent_lists_only_that_containers_things() {
     let mut sorted = hall.clone();
     sorted.sort();
     assert_eq!(sorted, ["thing:sigma", "thing:tau"], "{hall:?}");
-    story.finish().await;
 }
 
 /// **A bulk mark sent again under its `request_id` is a repeat**: the second
@@ -253,5 +249,4 @@ async fn a_bulk_mark_sent_again_under_its_request_id_is_a_repeat() {
     for handle in people {
         assert_eq!(marks_of(&defrag, handle).await, 1, "{handle}");
     }
-    story.finish().await;
 }

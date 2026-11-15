@@ -141,7 +141,6 @@ async fn a_bot_whose_floor_is_eight_rules_boots_with_eight_once_somebody_else_sa
     );
 
     s.wrap("gave gamma its seats").await;
-    story.finish().await;
 }
 
 /// **A boot never declines, so what it cannot cut is held to the ceiling where
@@ -315,7 +314,6 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
     .says("characters");
 
     s.wrap("kept the floor under the ceiling").await;
-    story.finish().await;
 }
 
 /// **An edit to a bot is held to the boot ceiling as a capture is.** The seat
@@ -397,7 +395,6 @@ async fn an_edit_to_a_bot_that_would_take_its_boot_over_the_ceiling_is_refused()
     .await;
 
     s.wrap("held edits to a bot to the boot ceiling").await;
-    story.finish().await;
 }
 
 /// **The ceiling a boot may not cross**, as the refusal itself states it.
@@ -521,7 +518,6 @@ async fn a_charter_that_would_take_the_boot_over_the_ceiling_is_refused_naming_t
     .await;
 
     s.wrap("held a charter to the ceiling").await;
-    story.finish().await;
 }
 
 /// **Creating a bot grows every other bot's snapshot, and never refuses.** A
@@ -593,7 +589,6 @@ async fn creating_a_bot_says_which_bots_it_pushes_over_the_ceiling() {
     again.never_says("pushes_over");
 
     s.wrap("added colleagues beside a full boot").await;
-    story.finish().await;
 }
 
 /// **A boot the world grew past the ceiling says so, and names what to drop.**
@@ -653,7 +648,6 @@ async fn a_boot_the_world_grew_past_the_ceiling_says_so_and_names_what_to_drop()
     }
 
     s.wrap("added a person beside a full boot").await;
-    story.finish().await;
 }
 
 /// **A charter is measured as the boot composes it.** The boot serves the
@@ -681,7 +675,6 @@ async fn a_charter_is_measured_with_the_layer_the_build_ships() {
 
     s.wrap("filled two bots to the ceiling and compared their boots")
         .await;
-    story.finish().await;
 }
 
 /// One rule on `bot`, written by the session's own bot — a claim with the
@@ -830,7 +823,6 @@ async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_addres
     one.never_says("Keep the recycling");
 
     s.wrap("saw the unseated rules and fetched one").await;
-    story.finish().await;
 }
 
 /// **The list is bounded by a count of things, and past it the rest are
@@ -955,7 +947,6 @@ async fn a_boot_lists_a_bounded_number_of_unseated_rules_and_counts_the_rest_by_
     assert!(omega_size <= BOOT_CEILING as usize, "{omega_size}");
 
     s.wrap("booted a bot holding sixty rules").await;
-    story.finish().await;
 }
 
 /// **The groups a boot counts the left-out rules under are bounded in number
@@ -1049,7 +1040,6 @@ async fn a_boot_bounds_the_purpose_groups_it_counts_and_the_length_of_each_name(
     );
 
     s.wrap("booted a bot whose rules carry many purposes").await;
-    story.finish().await;
 }
 
 /// **The call a boot names for loading rules returns the ones in force, and
@@ -1119,7 +1109,6 @@ async fn loading_a_bots_rules_by_status_active_leaves_out_the_retired_and_counts
     .never_says("a rule in force");
 
     s.wrap("loaded a bot's rules in force").await;
-    story.finish().await;
 }
 
 /// **The floor a write measures counts the unseated listing**, because the
@@ -1164,7 +1153,6 @@ async fn the_floor_a_write_measures_counts_the_unseated_listing() {
 
     s.wrap("filled two bots to the ceiling, one holding many rules")
         .await;
-    story.finish().await;
 }
 
 /// **A bot is made first and starred after, and the star is held to the ceiling.**
@@ -1235,7 +1223,6 @@ async fn a_bot_made_then_starred_is_held_to_the_ceiling() {
     // A starred rule is stamped when it lands, so the refusal says how much room
     // that held back.
     .says("stamp_margin");
-    story.finish().await;
 }
 
 /// **The refusal at the floor names the summary that keeps its sources, and a
@@ -1328,7 +1315,6 @@ async fn a_refusal_at_the_floor_names_the_summary_that_keeps_its_sources_and_fol
         .says("7 w w");
 
     s.wrap("summarised the rules and kept their sources").await;
-    story.finish().await;
 }
 
 /// Whether an answer's teaching list carries the lesson about unstarred rules.
@@ -1419,7 +1405,6 @@ async fn unstarring_three_rules_is_taught_organizing_when_the_record_names_nothi
     alone.says("organizing");
 
     s.wrap("unstarred rules and was taught to file them").await;
-    story.finish().await;
 }
 
 /// **Three unstars, then one edit of the record beside them: the edit is taught
@@ -1470,7 +1455,6 @@ async fn three_unstars_then_an_edit(stands_for: bool) -> bool {
     }
     let taught = taught_unstarred(&edited);
     s.wrap("unstarred rules and edited their summary").await;
-    story.finish().await;
     taught
 }
 
@@ -1595,7 +1579,6 @@ async fn a_bot_creation_with_oversized_aliases_is_refused_whatever_it_sets() {
         .await;
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
     refusal.never_says("floor_parts");
-    story.finish().await;
 }
 
 /// **A rule written plain is starred afterwards through the claim's own
@@ -1655,7 +1638,6 @@ async fn a_plain_rule_is_starred_later_through_update_fact_and_the_next_boot_car
         "{}",
         gone.json()
     );
-    story.finish().await;
 }
 
 /// The addresses a refused star names as seated.
@@ -1802,7 +1784,6 @@ async fn a_star_into_full_seats_is_refused_until_the_writer_unstars_one() {
         .call("start_here", json!({"bot": "sigma", "brief": true}))
         .await;
     assert_eq!(carried_rules(&boot.json()), sorted(&[&second, &plain]));
-    story.finish().await;
 }
 
 /// **A bot already over its seats, as a store written before rule 591 holds,
@@ -1867,7 +1848,6 @@ async fn a_bot_over_its_seats_boots_with_the_newest_and_takes_no_star_until_it_f
     let boot = boot.json();
     assert_eq!(carried_rules(&boot), sorted(&[middle, newest]), "{boot}");
     assert!(boot["identity"].get("unstar_to_fit").is_none(), "{boot}");
-    story.finish().await;
 }
 
 /// **A refusal asks only for choices it shows.** Sigma, from a store written
@@ -1935,7 +1915,6 @@ async fn a_bot_five_rules_over_two_seats_can_follow_the_refusal_with_only_the_ru
         unstarred < named.len(),
         "the refusal asked for every rule it named, so it names more than it needs: {refused}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -1993,5 +1972,4 @@ async fn lean_receipts_keep_call_specific_notes_on_each_write() {
         missing.is_empty(),
         "missing contextual warnings: {missing:?}"
     );
-    story.finish().await;
 }

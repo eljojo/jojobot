@@ -51,7 +51,6 @@ async fn a_charter_whose_change_record_was_refused_is_told_to_change_and_not_to_
         held.raw()
     );
     change_naming_the_rule(&delta.refused("set_charter", args).await);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -73,7 +72,6 @@ async fn a_restore_whose_history_claim_was_refused_is_told_to_change() {
     change_naming_the_rule(&s.refused("archive_entity", args.clone()).await);
     s.list("person").await.says("person:milhouse");
     change_naming_the_rule(&s.refused("archive_entity", args).await);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -87,7 +85,6 @@ async fn a_rename_whose_box_was_refused_is_told_to_change() {
     change_naming_the_rule(&gamma.refused("rename_entity", args.clone()).await);
     gamma.recall("bot:epsilon").await.says("Delta");
     change_naming_the_rule(&gamma.refused("rename_entity", args).await);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -113,7 +110,6 @@ async fn a_rename_whose_reason_was_refused_is_told_to_change() {
     change_naming_the_rule(&s.refused("rename_entity", args.clone()).await);
     s.recall("place:moes-tavern").await.says("back room");
     change_naming_the_rule(&s.refused("rename_entity", args).await);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -134,7 +130,6 @@ async fn a_post_whose_delivery_was_refused_is_told_to_change() {
     change_naming_the_rule(&gamma.refused("post_message", args.clone()).await);
     assert_eq!(story.mail_held_by("bot:delta").await, (1, 0, 0));
     change_naming_the_rule(&gamma.refused("post_message", args).await);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -161,7 +156,6 @@ async fn a_capture_whose_due_moment_could_not_come_off_is_told_to_change() {
         .await
         .says("The operator keeps the desk.");
     change_naming_the_rule(&s.refused("capture", args).await);
-    story.finish().await;
 }
 
 /// The manual `request_ids_in_parts` puts: a heading and two sections.
@@ -187,7 +181,6 @@ async fn a_document_put_whose_second_section_was_refused_is_told_to_change() {
         "{half}"
     );
     change_naming_the_rule(&s.refused("put_document", args).await);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -205,7 +198,6 @@ async fn a_beat_whose_focus_was_refused_is_told_to_change() {
     let beats: Value = s.recall(&handle).await.json()["objects"][0]["fields"]["beats"].clone();
     assert_eq!(beats, "2", "the entry landed");
     change_naming_the_rule(&s.refused("journal", args).await);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -220,7 +212,6 @@ async fn a_beat_whose_working_on_was_refused_is_told_to_change() {
     story.refuses_every_commit_of("working_on", RULE);
     change_naming_the_rule(&otto.refused("journal", args.clone()).await);
     change_naming_the_rule(&otto.refused("journal", args).await);
-    story.finish().await;
 }
 
 /// A paragraph long enough that a section of sixty of them is cut into pieces.
@@ -264,5 +255,4 @@ async fn a_section_move_whose_first_piece_was_refused_is_told_to_change() {
     story.refuses_every_commit_of("chunk-0", RULE);
     change_naming_the_rule(&s.refused("update_fact", args.clone()).await);
     change_naming_the_rule(&s.refused("update_fact", args).await);
-    story.finish().await;
 }

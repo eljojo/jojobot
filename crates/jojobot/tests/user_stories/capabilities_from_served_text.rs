@@ -81,7 +81,6 @@ async fn a_cold_session_numbers_ordinances_and_recalls_one_by_its_number() {
     )
     .await
     .says(PARKING);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -171,7 +170,6 @@ async fn a_cold_session_declares_a_view_that_takes_a_project_and_runs_it() {
         .await;
     missing.says("lane");
     assert_eq!(missing.json()["fix_by"], "change", "{}", missing.raw());
-    story.finish().await;
 }
 
 /// How many records of a thing say `content`, read from the thing's own facts.
@@ -223,7 +221,6 @@ async fn a_cold_session_sends_a_request_id_on_the_first_call_and_a_repeat_writes
         2,
         "a call sent without an id cannot be told from a new one"
     );
-    story.finish().await;
 }
 
 /// **A capability arrives as an argument on a verb that exists, and the document
@@ -249,7 +246,6 @@ async fn a_capability_arrives_as_an_argument_and_the_document_verbs_are_served_v
             "{verb} is a served verb: {served:?}"
         );
     }
-    story.finish().await;
 }
 
 /// Text of exactly `len` characters, with no blank line in it.
@@ -395,5 +391,4 @@ async fn a_cold_session_with_a_plan_too_long_for_a_claim_finds_the_document_verb
     )
     .await
     .says("replaces");
-    story.finish().await;
 }

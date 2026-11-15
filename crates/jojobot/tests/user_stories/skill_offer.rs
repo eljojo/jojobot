@@ -69,7 +69,6 @@ async fn the_first_check_in_offers_the_rhythms_skill_and_the_second_does_not() {
     let second = check_in(&s, "gave the tablet again").await;
     assert!(!offers(&second, "rhythms"), "{}", second.raw());
     second.says("\"due_on\":\"2026-10-31\"");
-    story.finish().await;
 }
 
 /// **A session that read the skill first is not offered it** — and another
@@ -99,7 +98,6 @@ async fn a_session_that_read_the_rhythms_skill_is_not_offered_it() {
 
     let unread = check_in(&s, "gave the tablet").await;
     assert!(offers(&unread, "rhythms"), "{}", unread.raw());
-    story.finish().await;
 }
 
 /// **The first write on a project offers the projects skill once, and an
@@ -139,7 +137,6 @@ async fn a_write_on_a_project_offers_the_projects_skill_once_and_a_person_offers
         )
         .await;
     assert!(!offers(&after, "projects"), "{}", after.raw());
-    story.finish().await;
 }
 
 /// **A session that read the projects skill is not offered it on a project** —
@@ -174,5 +171,4 @@ async fn a_session_that_read_the_projects_skill_is_not_offered_it() {
         )
         .await;
     assert!(offers(&offered, "projects"), "{}", offered.raw());
-    story.finish().await;
 }

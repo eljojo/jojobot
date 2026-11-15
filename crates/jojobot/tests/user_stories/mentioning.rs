@@ -272,7 +272,6 @@ async fn a_claim_that_mentions_a_renamed_thing_is_served_again_under_the_new_nam
         .await
         .says("place:shelbyville")
         .never_says("place:shelbyvile");
-    story.finish().await;
 }
 
 /// **The payoff this file's own header used to say it could not show.** For
@@ -595,7 +594,6 @@ async fn a_quarantine_reason_that_names_a_thing_follows_it_through_a_rename() {
     .never_says("@thing:handcart");
 
     s.wrap("set a copy aside").await;
-    story.finish().await;
 }
 
 /// **"This is waiting on that." Then that gets a better name.**
@@ -664,8 +662,6 @@ async fn a_link_under_a_key_nobody_declared_follows_its_target_through_a_rename(
     )
     .await
     .never_says("thing:handcart");
-
-    story.finish().await;
 }
 
 /// **"I wrote it the way it is stored." It is turned back.**
@@ -762,7 +758,6 @@ async fn the_way_a_link_is_stored_is_refused_when_a_caller_writes_it() {
         .await
         .says("\"blocks\":\"work:sigma\"")
         .never_says("k7h2mn");
-    story.finish().await;
 }
 
 /// **A bot's outbox follows it through a rename.** Mail is stored under the
@@ -829,7 +824,6 @@ async fn a_renamed_bots_outbox_still_lists_the_mail_it_sent_under_its_old_handle
         .says(&id(&after));
 
     s.wrap("renamed a bot and asked after its outbox").await;
-    story.finish().await;
 }
 
 /// **Search follows a rename into a claim whose only link to the renamed thing
@@ -890,7 +884,6 @@ async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_o
 
     s.wrap("renamed a place and searched for a claim that mentions it")
         .await;
-    story.finish().await;
 }
 
 /// **Search follows a rename into a claim whose only mention of the renamed thing
@@ -937,7 +930,6 @@ async fn search_follows_a_rename_into_a_claim_that_mentions_the_thing_only_in_it
 
     s.wrap("renamed a place and searched for a claim that names it in its details")
         .await;
-    story.finish().await;
 }
 
 /// **The reason an archive records names a thing by its handle, in the answer to
@@ -986,5 +978,4 @@ async fn the_reason_an_archive_records_reads_back_with_the_handle_it_names() {
         "a later read serves a badge: {}",
         read.json()
     );
-    story.finish().await;
 }

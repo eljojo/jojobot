@@ -44,5 +44,4 @@ async fn an_edit_sent_to_a_folded_handle_names_the_survivor_and_the_survivor_tak
     s.call("recall", json!({"subject": SURVIVOR}))
         .await
         .says("Kettle Mk Two");
-    story.finish().await;
 }

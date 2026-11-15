@@ -54,7 +54,6 @@ async fn a_read_of_runs_says_once_that_it_left_their_prose_out_and_how_to_ask() 
         .json();
     assert!(note(&asked).is_none(), "prose was asked for: {asked}");
     assert!(asked["objects"][0]["prose"].is_string(), "{asked}");
-    story.finish().await;
 }
 
 /// **Things with no prose say nothing about it.** Three people hold claims and
@@ -82,7 +81,6 @@ async fn a_read_of_things_with_no_prose_says_nothing_of_prose() {
         .json();
     assert_eq!(read["count"].as_u64(), Some(3), "{read}");
     assert!(note(&read).is_none(), "{read}");
-    story.finish().await;
 }
 
 /// **A bot's page is its charter, and the charter already says it was left
@@ -103,7 +101,6 @@ async fn a_bots_charter_note_is_not_said_twice() {
         .json();
     assert_eq!(read["objects"][0]["charter_elided"], true, "{read}");
     assert!(note(&read).is_none(), "{read}");
-    story.finish().await;
 }
 
 /// **A thing's page is its prose**, written beneath the server because no
@@ -160,7 +157,6 @@ async fn a_read_of_a_thing_with_a_page_says_its_prose_was_left_out() {
         Some("Milhouse lives next door."),
         "{asked}"
     );
-    story.finish().await;
 }
 
 /// **A read of several things counts only the ones whose page it left out.**
@@ -202,7 +198,6 @@ async fn a_kind_read_counts_only_the_pages_it_left_out() {
         .json();
     assert_eq!(alone["objects"][0]["id"], "person:nelson", "{alone}");
     assert!(note(&alone).is_none(), "nelson has no page: {alone}");
-    story.finish().await;
 }
 
 /// **A walk names the pages it reached and left out too**, in the same one
@@ -274,5 +269,4 @@ async fn a_walk_names_the_pages_it_reached_and_left_out() {
         .json();
     assert_eq!(reached(&walk), ["person:lisa"], "{walk}");
     assert!(note(&walk).is_none(), "lisa has no page: {walk}");
-    story.finish().await;
 }

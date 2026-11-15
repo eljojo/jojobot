@@ -81,7 +81,6 @@ async fn a_rules_marks_belong_to_the_rule_and_not_to_the_bot() {
     assert_eq!(by_thing["count"], 0, "no bot holds starred: {by_thing}");
 
     s.wrap("wrote a rule with its marks").await;
-    story.finish().await;
 }
 
 /// **Asking for a mark by `keys` is told where the mark lives.** The six marks
@@ -150,7 +149,6 @@ async fn asking_for_a_mark_by_keys_is_told_the_mark_is_on_the_claim() {
         .says("\"starred\":\"true\"");
 
     s.wrap("asked for a mark by keys").await;
-    story.finish().await;
 }
 
 /// **A check-in's source is the check-in's, and the loop still advances.**
@@ -218,5 +216,4 @@ async fn a_check_ins_source_does_not_fold_onto_its_loop_and_the_loop_still_advan
     .says("rhythm:weekly-review");
 
     s.wrap("checked a loop in with a source").await;
-    story.finish().await;
 }

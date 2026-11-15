@@ -88,7 +88,6 @@ async fn a_thing_whose_schedule_cannot_be_read_is_owed_first_with_its_reason() {
         wrench.get("unreadable_because").is_none(),
         "a dated one carries no reason: {wrench}"
     );
-    story.finish().await;
 }
 
 /// **The day a schedule became unreadable is kept, so the thing's lateness
@@ -141,5 +140,4 @@ async fn a_later_write_leaves_the_day_a_schedule_became_unreadable() {
         "2026-09-01",
         "a schedule that broke earlier keeps the day it broke: {body}"
     );
-    story.finish().await;
 }

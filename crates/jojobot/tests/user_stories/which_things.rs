@@ -160,8 +160,6 @@ async fn a_caller_says_which_things_in_one_line() {
         ask("touches contains skills").await.is_empty(),
         "a piece of an item is not an item"
     );
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -190,7 +188,6 @@ async fn a_relative_date_means_the_askers_day() {
         ["thing:epsilon", "thing:gamma"],
         "two weeks before the eighteenth is the fourth of November"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -233,8 +230,6 @@ async fn a_scope_says_whether_a_term_asks_the_thing_or_a_record() {
     // **The refusal names the argument that would find it**, which the call did
     // not send; the key's own name is the call's echo and proves nothing.
     refused.says("scope: \\\"record\\\"");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -291,8 +286,6 @@ async fn an_order_is_one_key_and_a_direction_read_the_way_the_key_was_declared()
     )
     .await
     .says("sideways");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -386,8 +379,6 @@ async fn a_comparison_needs_the_declaration_of_the_kind_named_and_every_mistake_
     // The refusal lists, in order, the keys the things do hold: words the line
     // never sent. (`status` alone would match the answer's own `"status"` field.)
     misspelt.says("due, note, owner, rank, size, status, touches");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -421,7 +412,6 @@ async fn a_walk_keeps_what_an_expression_says() {
     )
     .await
     .says("filters");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -524,8 +514,6 @@ async fn a_view_holds_the_line_its_order_and_its_scope_and_a_rename_does_not_bre
     )
     .await
     .says("person:ned-flanders");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -612,8 +600,6 @@ async fn a_view_with_an_old_filter_record_keeps_answering_and_the_line_is_added_
     s.refused("recall", json!({ "view": "unscoped" }))
         .await
         .says("verdict");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -655,7 +641,6 @@ async fn a_kinds_own_declaration_licenses_what_a_call_naming_the_kind_asks() {
     )
     .await
     .says("regarding");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -708,7 +693,6 @@ async fn a_call_naming_no_kind_asks_each_objects_own_kind_and_counts_what_it_lef
         .await;
     assert_eq!(handles_of(&named), ["promise:gamma"]);
     named.never_says("left_out_unlicensed");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -775,5 +759,4 @@ async fn a_hostile_where_is_refused_on_every_door_and_the_server_answers_the_nex
         which(&s, "status != done").await,
         ["thing:delta", "thing:gamma"]
     );
-    story.finish().await;
 }

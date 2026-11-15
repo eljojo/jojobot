@@ -53,5 +53,4 @@ async fn a_run_stating_its_days_is_swept_two_stated_days_after_its_last_beat() {
         body["session"]["choices"][0]["working_on"], "the shelves",
         "{body}"
     );
-    story.finish().await;
 }

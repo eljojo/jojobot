@@ -138,8 +138,6 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
 
     s.wrap("one person again, and the repair is on the record")
         .await;
-
-    story.finish().await;
 }
 
 /// **An address held from before a merge still reaches its claim, and the verb
@@ -180,8 +178,6 @@ async fn an_address_held_from_before_a_merge_still_reaches_its_claim() {
         said.contains("update_fact"),
         "and it names a verb the held address still works with: {said}"
     );
-
-    story.finish().await;
 }
 
 /// **A merge reaches a pointer wearing a rename's OLD name too.** A rename
@@ -269,8 +265,6 @@ async fn a_merge_follows_a_pointer_drawn_before_the_folded_sides_own_rename() {
 
     s.wrap("found the neighbor was filed three times over, and put it right")
         .await;
-
-    story.finish().await;
 }
 
 /// **The correction lands on a spelling that resembles somebody else** —
@@ -328,8 +322,6 @@ async fn a_rename_onto_a_spelling_that_resembles_someone_else_is_confirmed_and_l
 
     s.wrap("confirmed the two were different people and pushed the correction through")
         .await;
-
-    story.finish().await;
 }
 
 /// **A dated series is the ordinary shape of a recurring thing.** Rehearsals
@@ -371,7 +363,6 @@ async fn three_dated_visits_filed_under_one_parent_are_not_refused() {
     }
 
     s.wrap("filed three rehearsals as three records").await;
-    story.finish().await;
 }
 
 /// **A date sets two entries apart only under one parent.** Beside the dated
@@ -418,7 +409,6 @@ async fn a_different_date_sets_two_entries_apart_only_under_the_same_parent() {
 
     s.wrap("the date exemption left the other near-misses refused")
         .await;
-    story.finish().await;
 }
 
 /// **A numbered series is the ordinary shape of a queue.** Work items q-1001,
@@ -458,7 +448,6 @@ async fn numbered_siblings_under_one_parent_are_not_refused() {
     }
 
     s.wrap("filed a numbered series as separate records").await;
-    story.finish().await;
 }
 
 /// **The numbered exemption is a different number under the same parent and
@@ -510,7 +499,6 @@ async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apa
 
     s.wrap("the numbered exemption left the other near-misses refused")
         .await;
-    story.finish().await;
 }
 
 /// **Two numbered roots are refused, and the refusal says a series lands under
@@ -543,7 +531,6 @@ async fn a_numbered_root_refused_beside_another_is_told_to_make_the_series_under
 
     s.wrap("a numbered series refused at the root named its way forward")
         .await;
-    story.finish().await;
 }
 
 /// An added numeric part names another member of a series, whose refusal at
@@ -569,7 +556,6 @@ async fn a_numbered_root_with_an_added_part_is_told_to_make_the_series_under_one
         .says("override_token");
     s.wrap("an added numbered part at the root named its way forward")
         .await;
-    story.finish().await;
 }
 
 /// **A pair that differs by a letter is not a series**, so its refusal does not
@@ -600,7 +586,6 @@ async fn a_root_one_letter_from_another_is_refused_without_the_series_advice() {
     refused.never_says("`parent`");
 
     s.wrap("a letter apart is refused as before").await;
-    story.finish().await;
 }
 
 /// "I filed the council twice, once under its own office." **A thing is not
@@ -645,5 +630,4 @@ async fn a_thing_is_not_folded_into_its_own_descendant_and_the_refusal_names_the
         )
         .await;
     assert!(merged.get("claims_moved").is_some(), "{merged}");
-    story.finish().await;
 }

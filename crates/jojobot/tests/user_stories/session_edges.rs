@@ -65,5 +65,4 @@ async fn a_second_wrap_with_the_same_closing_story_does_not_tell_it_twice() {
         "the same story is told once: {prose}"
     );
     assert!(prose.contains("a last change"), "{prose}");
-    story.finish().await;
 }

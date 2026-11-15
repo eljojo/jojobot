@@ -64,7 +64,6 @@ async fn a_parent_that_names_nothing_is_refused_with_the_nearest_handles() {
             "{what}: the refusal names the nearest handles, {SHED} among them: {refused}"
         );
     }
-    story.finish().await;
 }
 
 /// **A parent that exists and holds nothing still answers empty**, as an empty
@@ -96,7 +95,6 @@ async fn a_real_parent_that_holds_no_work_still_answers_empty() {
         .await
         .json();
     assert_eq!(work["count"], 1, "{work}");
-    story.finish().await;
 }
 
 /// **A view that takes a parent through an input behaves the same.** `board` and
@@ -127,5 +125,4 @@ async fn a_view_whose_input_is_the_parent_refuses_a_misspelt_project_too() {
             "{view}: the real project answers: {found}"
         );
     }
-    story.finish().await;
 }

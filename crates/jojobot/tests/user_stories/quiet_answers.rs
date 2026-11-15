@@ -58,8 +58,6 @@ async fn the_ordinary_answers_of_the_ordinary_verbs_carry_no_null_keys() {
     // spelled out.
     recalled.says("likes the diner");
     recalled.never_says("happened_at");
-
-    story.finish().await;
 }
 
 /// "I read a lot before I wrote anything. Did I miss what the claims are for?"
@@ -108,8 +106,6 @@ async fn a_session_that_reads_first_is_taught_on_its_first_read_of_a_claim() {
             written.raw()
         );
     }
-
-    story.finish().await;
 }
 
 /// "My first look at the diner was a search." A search that surfaces a claim
@@ -156,8 +152,6 @@ async fn a_session_whose_first_look_at_a_claim_is_a_search_is_taught_there() {
             recalled.raw()
         );
     }
-
-    story.finish().await;
 }
 
 /// "I searched twice and it said the same long caveat twice." It says it once:
@@ -194,8 +188,6 @@ async fn a_second_full_search_leaves_the_caveats_out_and_an_empty_one_says_what_
         "an empty answer says what it looked through: {}",
         empty.raw()
     );
-
-    story.finish().await;
 }
 
 /// "I asked who backs two keys of the pump and got the whole pedigree, with
@@ -316,6 +308,4 @@ async fn backing_answers_the_keys_asked_for_and_a_shared_claims_note_arrives_onc
         "nothing was narrowed, so nothing is said to be left out: {}",
         whole.raw(),
     );
-
-    story.finish().await;
 }

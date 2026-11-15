@@ -115,7 +115,6 @@ async fn a_long_list_reads_in_parts_that_fit_and_never_repeats_one() {
     }
     let expected: Vec<String> = (1..=LONG).map(entry_text).collect();
     assert_eq!(all, expected, "every entry once and in order");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -143,7 +142,6 @@ async fn how_far_along_a_long_list_is_counts_every_entry_and_not_the_page_shown(
         ticked["done"], 1,
         "the tick on an unshown entry counts: {ticked}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -161,7 +159,6 @@ async fn a_list_of_five_reads_whole_with_nothing_left_out() {
         "nothing was left out: {}",
         read.raw()
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -188,7 +185,6 @@ async fn an_offset_past_the_last_entry_says_nothing_is_left_to_read() {
         "an offset past the last entry says so: {}",
         past.raw()
     );
-    story.finish().await;
 }
 
 /// The `content` of every record an answer carries on its first object.
@@ -243,7 +239,6 @@ async fn a_list_read_with_its_records_pages_its_entries_and_then_its_records() {
     let mut expected_records = vec!["Packing".to_string()];
     expected_records.extend(expected);
     assert_eq!(records, expected_records, "every record once and in order");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -296,5 +291,4 @@ async fn a_browse_of_lists_never_serves_a_long_list_whole_and_names_how_to_read_
         .await;
     assert_eq!(on.json()["objects"][0]["id"], "list:marge-errands");
     assert_eq!(texts(&on), vec![entry_text(1)]);
-    story.finish().await;
 }

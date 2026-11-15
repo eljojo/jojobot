@@ -113,5 +113,4 @@ async fn a_long_type_and_key_set_is_told_once_per_set_and_once_per_session() {
         ]),
         "{renewed}"
     );
-    story.finish().await;
 }

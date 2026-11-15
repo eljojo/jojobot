@@ -153,7 +153,6 @@ async fn a_week_plan_reads_what_is_due_overdue_and_ready_that_week() {
     .await;
     let none = read(&s, "list:rotation").await;
     assert!(none.get("plan").is_none(), "{none}");
-    story.finish().await;
 }
 
 /// **A plan for a day reads that day only**: what falls due on it, and what was
@@ -184,7 +183,6 @@ async fn a_day_plan_reads_that_day_only() {
         ["work:pour-the-slab", "work:hang-the-doors"],
         "{plan}"
     );
-    story.finish().await;
 }
 
 /// The two plans: this week's with three entries, the first two done, and next
@@ -273,7 +271,6 @@ async fn carrying_an_open_entry_forward_names_it_and_the_old_plan_still_reads_it
         "{old}"
     );
     assert!(old["entries"][1].get("carried_to").is_none(), "{old}");
-    story.finish().await;
 }
 
 /// The hint a tick receipt carries, whole; empty when the receipt has none,
@@ -353,7 +350,6 @@ async fn ticks_leaving_an_entry_open_on_a_plan_teach_the_carry() {
             .contains("derived_from"),
         "nothing is open after it: {receipt}"
     );
-    story.finish().await;
 }
 
 /// **A single tick on a plan carries the same line**, and a list with no period
@@ -371,7 +367,7 @@ async fn one_tick_on_a_plan_teaches_the_carry_and_a_checklist_does_not() {
         )
         .await;
     assert!(the_line(&one).contains("derived_from"), "{}", one.raw());
-    story.finish().await;
+    drop(story);
 
     let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
     let s = story.session().await;
@@ -426,7 +422,6 @@ async fn one_tick_on_a_plan_teaches_the_carry_and_a_checklist_does_not() {
             .contains("derived_from"),
         "{receipt}"
     );
-    story.finish().await;
 }
 
 /// **A capture that ticks nothing teaches nothing of the carry**, even on a plan
@@ -466,7 +461,6 @@ async fn a_capture_that_ticks_nothing_on_a_plan_does_not_teach_the_carry() {
             .contains("derived_from"),
         "{receipt}"
     );
-    story.finish().await;
 }
 
 /// **A batch of new entries on a plan ticks nothing, so it teaches nothing of the
@@ -513,7 +507,6 @@ async fn a_batch_of_entries_on_a_plan_does_not_teach_the_carry() {
             .contains("derived_from"),
         "{receipt}"
     );
-    story.finish().await;
 }
 
 /// One tick of `done` on an entry, as its own call.
@@ -556,7 +549,6 @@ async fn a_batch_that_ticks_every_open_entry_of_a_plan_does_not_teach_the_carry(
             .contains("derived_from"),
         "nothing is open after the batch: {receipt}"
     );
-    story.finish().await;
 }
 
 /// **A session is taught the carry once**: a second tick that still leaves an
@@ -611,7 +603,6 @@ async fn a_session_is_taught_the_carry_once_and_a_fresh_session_is_taught_again(
         .await;
     let third = tick_one(&other, &at[2]).await;
     assert!(the_line(&third).contains("derived_from"), "{}", third.raw());
-    story.finish().await;
 }
 
 /// **A batch spends the same teaching a single tick does**, so a batch that taught
@@ -652,7 +643,6 @@ async fn a_batch_that_taught_the_carry_leaves_the_next_single_tick_silent() {
             .contains("derived_from"),
         "this session was taught: {receipt}"
     );
-    story.finish().await;
 }
 
 /// A warning about filing the furnace's service on the plan wins over the carry
@@ -704,7 +694,6 @@ async fn a_dropped_carry_hint_does_not_spend_the_sessions_teaching() {
     let plan = read(&s, "list:errands").await;
     assert_eq!(plan["entries"][0]["address"], open, "{plan}");
     assert_eq!(plan["entries"][0]["state"], "open", "{plan}");
-    story.finish().await;
 }
 
 /// **A batch of ticks serves one suggestion too.** The ticks' words name a known
@@ -739,5 +728,4 @@ async fn a_batch_of_ticks_whose_note_wins_does_not_spend_the_carry_hint() {
         "the hint the batch dropped was never spent: {}",
         taught.raw()
     );
-    story.finish().await;
 }

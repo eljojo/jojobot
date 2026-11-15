@@ -227,7 +227,6 @@ async fn a_project_with_no_work_has_an_empty_board_and_a_misspelt_order_is_still
         held.contains(&"status"),
         "the keys held do not include the right spelling: {held:?}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]

@@ -114,6 +114,9 @@ mod contract_lean_defaults;
 mod contract_owed_receipt;
 #[path = "user_stories/contract_session_edges.rs"]
 mod contract_session_edges;
+/// What ends a story: a dropped story stops its server, and a failure still fails.
+#[path = "user_stories/contract_story_drop.rs"]
+mod contract_story_drop;
 #[path = "user_stories/contracts.rs"]
 mod contracts;
 #[path = "user_stories/coordinating.rs"]

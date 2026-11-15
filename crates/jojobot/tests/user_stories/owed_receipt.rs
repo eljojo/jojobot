@@ -70,7 +70,6 @@ async fn finishing_a_thing_through_update_entity_takes_its_due_day_off() {
         None,
         "a finished thing holds no due day"
     );
-    story.finish().await;
 }
 
 /// **A thing made already finished holds no due day**, so a creation has no
@@ -100,5 +99,4 @@ async fn a_thing_made_already_finished_holds_no_due_day() {
             "{handle} made at {status}"
         );
     }
-    story.finish().await;
 }

@@ -180,8 +180,6 @@ async fn the_asking_skills_calls_do_what_the_skill_says() {
         "`keys` narrows what each object brings back: {}",
         narrowed.raw()
     );
-
-    story.finish().await;
 }
 
 /// **The rhythm keys the skill describes, driven by hand.** A loop is written with its keys in
@@ -289,8 +287,6 @@ async fn the_rhythm_keys_the_skill_describes_work_with_handwritten_calls() {
     )
     .await;
     s.list("rhythm").await.never_says("rhythm:chain-check");
-
-    story.finish().await;
 }
 
 /// **The projects skill's call, as printed**: a project's `columns` list holds
@@ -319,7 +315,6 @@ async fn the_projects_skills_columns_call_holds_every_shipped_word() {
     let mut shorter = printed_columns;
     shorter["sets"]["columns"] = json!(columns.replace("waiting, ", ""));
     s.refused(&verb, shorter).await.says("waiting");
-    story.finish().await;
 }
 
 /// **The projects skill's checklist calls, as printed.** The list is made under
@@ -378,7 +373,6 @@ async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
         texts,
         ["print the signs", "book the room", "send the invites"]
     );
-    story.finish().await;
 }
 
 /// **The organizing skill is listed for every bot and each full container's
@@ -488,7 +482,6 @@ async fn every_full_refusal_names_the_organizing_skill() {
         "{thread}"
     );
     names_it(&thread);
-    story.finish().await;
 }
 
 /// **A bot that follows the organizing skill fits fifteen rules in five
@@ -576,5 +569,4 @@ async fn a_bot_that_follows_the_organizing_skill_reaches_its_filed_rules() {
             .all(|fact| fact["fields"]["purpose"] == "operator"),
         "{loaded}"
     );
-    story.finish().await;
 }

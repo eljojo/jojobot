@@ -162,7 +162,6 @@ async fn two_documents_merged_read_as_one_with_the_folded_sections_last() {
             Some(head) => assert_eq!(head, heading, "{id} continues a heading not in front of it"),
         }
     }
-    story.finish().await;
 }
 
 /// **A document merged into a thing, or a thing into a document, is refused with
@@ -198,7 +197,6 @@ async fn a_document_and_a_thing_do_not_merge_and_the_refusal_names_the_route() {
     // The positive: two things merge.
     s.merge_entities("thing:the-couch", "thing:handcart", "one thing twice", None)
         .await;
-    story.finish().await;
 }
 
 /// **A read as of a day before the merge returns the survivor's own sections
@@ -241,7 +239,6 @@ async fn a_read_as_of_before_the_merge_returns_only_the_survivors_own_sections()
             "as of {day} alpha's sections, then beta's, whole"
         );
     }
-    story.finish().await;
 }
 
 /// **A read as of a day, sent under a name the document no longer wears, reads
@@ -291,7 +288,6 @@ async fn a_read_as_of_under_a_former_name_matches_the_current_names() {
             "as of September {name} holds the survivor's own sections alone"
         );
     }
-    story.finish().await;
 }
 
 /// **A restore sent under a name the document no longer wears puts it back as
@@ -345,7 +341,6 @@ async fn a_restore_under_a_former_name_puts_the_document_back_as_it_stood() {
         ALPHA,
         "the September page: {restored}"
     );
-    story.finish().await;
 }
 
 const BETA_SHORT: &str =
@@ -437,5 +432,4 @@ async fn a_restore_to_a_day_before_a_merge_does_not_bring_back_the_folded_archiv
         distinct.len(),
         "no two active sections share an order key: {active_keys:?}"
     );
-    story.finish().await;
 }

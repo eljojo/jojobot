@@ -58,7 +58,6 @@ async fn a_list_takes_sink_leave_or_back_and_refuses_any_other_tick() {
         .says("leave")
         .says("back")
         .says("\"wrote\":false");
-    story.finish().await;
 }
 
 /// **`covers` is one calendar day or one ISO week, and a refusal names both
@@ -94,7 +93,6 @@ async fn a_list_covers_a_day_or_an_iso_week_and_refuses_any_other_span() {
             .says("YYYY-Www")
             .says("\"wrote\":false");
     }
-    story.finish().await;
 }
 
 /// The texts of a list's open entries, in the order `recall` serves them.
@@ -144,7 +142,6 @@ async fn entries_read_back_in_the_order_added_and_one_placed_after_the_first_sit
         read_back(&s, "list:packing").await,
         ["tent poles", "lantern", "sleeping bags", "stove"]
     );
-    story.finish().await;
 }
 
 /// **`first` puts an entry at the front, and `after` the last entry puts it
@@ -164,7 +161,6 @@ async fn first_places_at_the_front_and_after_the_last_entry_places_at_the_end() 
         read_back(&s, "list:packing").await,
         ["map", "stove", "matches", "kettle", "mugs"]
     );
-    story.finish().await;
 }
 
 /// **An entry may be a claim with an edge to a thing, and it reads back with the
@@ -190,7 +186,6 @@ async fn an_entry_with_an_edge_reads_back_with_the_link() {
     assert_eq!(entries[1]["text"], "pitch the tent");
     assert_eq!(entries[1]["link"]["object"], "work:bart-tent", "{entries}");
     assert_eq!(entries[1]["state"], "open");
-    story.finish().await;
 }
 
 /// **`after` naming something that is not an open entry of this list is
@@ -215,7 +210,6 @@ async fn after_naming_a_stranger_is_refused_with_the_entries_and_writes_nothing(
     .says("`last`")
     .says("\"wrote\":false");
     assert_eq!(read_back(&s, "list:packing").await, ["stove", "lantern"]);
-    story.finish().await;
 }
 
 /// **`after` on a subject that is not a list is refused naming the list kind.**
@@ -242,7 +236,6 @@ async fn after_on_a_subject_that_is_not_a_list_is_refused() {
     )
     .await
     .says("thing:springfield-camping");
-    story.finish().await;
 }
 
 /// **A copied entry order is dropped; the server mints it.** With no other edit
@@ -274,7 +267,6 @@ async fn a_caller_sending_an_order_key_on_an_entry_is_refused_and_an_edit_of_its
         read_back(&s, "list:packing").await,
         ["camp stove", "lantern"]
     );
-    story.finish().await;
 }
 
 /// **An entry carries its own words only, in search.** The list's name is on the
@@ -301,7 +293,6 @@ async fn an_entry_is_found_by_its_own_words_and_not_by_the_name_of_its_list() {
     let by_list_name = s.call("search", json!({"query": "Campsite"})).await;
     by_list_name.says("list:packing");
     by_list_name.never_says(&stove);
-    story.finish().await;
 }
 
 /// One entry added at the front of the packing list by this session.
@@ -358,7 +349,6 @@ async fn entries_added_at_the_same_moment_get_keys_of_their_own() {
         .filter_map(|fact| fact["fields"]["order"].as_str().map(str::to_string))
         .collect();
     assert_eq!(keys.len(), 7, "every entry has a key of its own: {keys:?}");
-    story.finish().await;
 }
 
 /// **Merging two lists keeps each list's order.** The folded list's entries
@@ -423,5 +413,4 @@ async fn two_lists_merged_keep_each_lists_order_and_every_entry_its_provenance()
             "tent", "stove", "lantern", "letter", "kettle", "bread", "bins"
         ]
     );
-    story.finish().await;
 }

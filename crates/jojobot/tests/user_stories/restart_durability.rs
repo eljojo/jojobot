@@ -83,9 +83,6 @@ async fn a_key_a_resume_replaced_is_still_told_why_after_a_restart() {
         "a key that never opened a run names no run: {}",
         stranger.raw()
     );
-    again.finish().await;
-    later.finish().await;
-    story.finish().await;
 }
 
 /// **A run wrapped before a restart still answers `wrapped` to its old key.**
@@ -122,8 +119,6 @@ async fn a_run_wrapped_before_a_restart_still_answers_wrapped_to_a_probe() {
     // The pairs: a live key is held, and a key nothing minted is gone.
     assert_eq!(standing(live.sid().to_string()).await, "held");
     assert_eq!(standing(jojobot_domain::session::mint_key()).await, "gone");
-    again.finish().await;
-    story.finish().await;
 }
 
 /// **A run taken over inside the lease cannot be taken again, even across a
@@ -149,10 +144,6 @@ async fn a_second_pick_up_inside_the_lease_is_refused_after_a_restart() {
     let later = after(&again, 4).await;
     let (_, second) = later.call("start_here", ask).await;
     second.expect("the name takes a run that has been quiet for the lease");
-    later.finish().await;
-    again.finish().await;
-    quiet.finish().await;
-    story.finish().await;
 }
 
 /// **A run that booted and has not written yet keeps its key across a
@@ -182,8 +173,6 @@ async fn a_booted_run_that_never_wrote_still_holds_its_key_after_a_restart() {
             json!({"subject": "topic:widgets", "sid": jojobot_domain::session::mint_key()}),
         )
         .await;
-    again.finish().await;
-    story.finish().await;
 }
 
 /// **A run that answered `new` at the door and has not written yet keeps its key
@@ -219,8 +208,6 @@ async fn a_run_begun_by_answering_new_that_never_wrote_still_holds_its_key_after
             json!({"subject": "topic:widgets", "sid": jojobot_domain::session::mint_key()}),
         )
         .await;
-    again.finish().await;
-    story.finish().await;
 }
 
 /// **A note of a run that never wrote is kept for seven days, and a key past
@@ -266,9 +253,6 @@ async fn a_note_of_a_run_that_never_wrote_opens_nothing_at_the_first_restart_aft
             json!({"subject": "topic:widgets", "sid": old.sid()}),
         )
         .await;
-    late.finish().await;
-    middle.finish().await;
-    story.finish().await;
 }
 
 /// **…and a note inside the window survives any number of restarts.** The pair
@@ -291,9 +275,6 @@ async fn a_note_of_a_run_that_never_wrote_survives_a_second_restart_inside_seven
         )
         .await
         .says("topic:widgets");
-    again.finish().await;
-    soon.finish().await;
-    story.finish().await;
 }
 
 /// **A run that has not written keeps its bot through a rename and a restart.**
@@ -321,8 +302,6 @@ async fn a_never_written_run_opens_as_the_renamed_bot_after_a_restart() {
         .says("epsilon");
     carried.call("journal", json!({"entry": "back"})).await;
     carried.call("list_runs", json!({})).await.says(quiet.run());
-    again.finish().await;
-    story.finish().await;
 }
 
 /// **The newest retired keys survive a restart whichever way the board lists the
@@ -418,6 +397,4 @@ async fn the_newest_retired_keys_are_the_ones_a_restart_keeps() {
         .await
         .says(kept_name.as_str())
         .says("was resumed");
-    again.finish().await;
-    story.finish().await;
 }

@@ -41,6 +41,4 @@ async fn a_name_put_on_a_shipped_view_is_listed_and_survives_a_restart() {
         .await
         .says("Weekly rounds")
         .says("My Bikes");
-
-    story.finish().await;
 }

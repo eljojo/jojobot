@@ -35,8 +35,6 @@ async fn a_read_of_a_missing_document_opens_as_a_read_does() {
         )
         .await;
     write.says("Nothing was written");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -55,6 +53,4 @@ async fn the_first_capture_of_a_session_names_all_three_corrections() {
     for verb in ["update_fact", "archive", "retract"] {
         assert!(lines.contains(verb), "{verb} is not taught: {lines}");
     }
-
-    story.finish().await;
 }

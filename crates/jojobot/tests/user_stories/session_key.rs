@@ -111,8 +111,6 @@ async fn a_name_read_from_a_record_cannot_act_as_the_session_it_names() {
         .refused("recall", json!({"subject": "role:carpool", "sid": name}))
         .await;
     refusal.says("start_here").never_says(&key);
-
-    story.finish().await;
 }
 
 /// **A run that is still writing belongs to whoever holds its key; one that has
@@ -199,8 +197,6 @@ async fn a_run_still_writing_cannot_be_taken_by_its_name_and_a_quiet_one_can() {
     .says(&name)
     .says("resumed")
     .never_says(&key);
-
-    story.finish().await;
 }
 
 /// **A caller who reads `list_runs` resumes a stopped run by the `run` it
@@ -260,8 +256,6 @@ async fn a_caller_resumes_a_stopped_run_by_the_name_list_runs_gave_it() {
     assert_eq!(taker.run(), name);
     assert_ne!(taker.sid(), key);
     taken.never_says(&key);
-    later.finish().await;
-    story.finish().await;
 }
 
 /// **A live key or an unspent wrap code written into text is refused; a string
@@ -370,7 +364,6 @@ async fn a_live_key_or_an_unspent_wrap_code_in_text_is_refused_and_a_digest_land
         .call("recall", json!({"subject": "topic:widgets", "facts": true}))
         .await
         .says("was spent");
-    story.finish().await;
 }
 
 /// **A pick-up counts as a write to the run, so a second ask straight after it
@@ -414,8 +407,6 @@ async fn a_second_ask_straight_after_a_pick_up_is_turned_away() {
     second.says(&name).never_says(taker.sid()).never_says(&key);
     // The positive both depend on: the key that was handed out still works.
     taker.call("journal", json!({"entry": "mine"})).await;
-    later.finish().await;
-    story.finish().await;
 }
 
 /// **The refusal of a live key in text is not a list of verbs.** It stands at
@@ -449,7 +440,6 @@ async fn a_live_key_in_text_is_refused_on_every_verb_the_surface_serves() {
             .says(&name)
             .never_says(&key);
     }
-    story.finish().await;
 }
 
 /// **The older build's run, put on the board the way it left it**: a name and no
@@ -512,9 +502,6 @@ async fn the_refusal_for_an_abandoned_keyless_run_points_at_a_resume_that_works(
     holder
         .call("journal", json!({"entry": "back on the run", "sid": key}))
         .await;
-
-    deployed.finish().await;
-    story.finish().await;
 }
 
 /// **A key is stored with the run, so a restart keeps what was decided before
@@ -573,6 +560,4 @@ async fn a_restart_keeps_the_key_a_run_holds_and_brings_back_none_that_ended() {
             .await
             .never_says(ended.sid());
     }
-    again.finish().await;
-    story.finish().await;
 }

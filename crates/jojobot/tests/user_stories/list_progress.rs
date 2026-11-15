@@ -204,7 +204,6 @@ async fn a_bundle_reads_how_far_along_it_is_from_the_work_its_entries_link() {
         !ready.contains(&"work:wire-the-outlets"),
         "work that depends on the bundle stays blocked: {ready:?}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -235,7 +234,6 @@ async fn a_plain_entry_or_a_link_to_a_person_is_not_counted_and_is_not_an_error(
     let list = the_list(&s, "list:errands").await;
     assert_eq!(list["progress"]["reads"], "done", "{list}");
     assert_eq!(list["progress"]["of"], 1, "{list}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -264,7 +262,6 @@ async fn work_whose_status_word_means_done_on_this_instance_counts_as_done() {
     entry_about(&s, "list:checklist", "the lumber", "work:order-the-lumber").await;
     let read = progress(&s, "list:checklist").await;
     assert_eq!(read["reads"], "1 of 2 done", "{read}");
-    story.finish().await;
 }
 
 /// **A piece of work archived before it finished leaves the bundle**, the way a
@@ -324,7 +321,6 @@ async fn an_archived_piece_that_never_finished_leaves_the_bundle_and_a_finished_
     archive(PARTS[2], true).await;
     let restored = progress(&s, "list:packing").await;
     assert_eq!(restored["reads"], "2 of 3 done", "{restored}");
-    story.finish().await;
 }
 
 /// The bundle as a read of it serves it, narrowed to the keys when some are named.
@@ -357,7 +353,6 @@ async fn the_read_of_a_bundle_says_how_far_along_each_list_under_it_is() {
         progress(&s, "list:checklist").await["reads"],
         "the bundle's row and the list's own read are one count"
     );
-    story.finish().await;
 }
 
 /// **A bundle read again after its linked work moved is served the new progress.**
@@ -380,7 +375,6 @@ async fn a_bundle_read_again_after_its_linked_work_moved_serves_the_new_progress
         after["progress"][0]["reads"], "2 of 5 done",
         "the progress is worked out at each read: {after}"
     );
-    story.finish().await;
 }
 
 /// **Only a one-subject read of a piece of work carries the rows.** A list keeps
@@ -481,5 +475,4 @@ async fn only_the_one_subject_read_of_a_piece_of_work_carries_the_rows() {
         .map(|row| row["list"].as_str().expect("a row names its list"))
         .collect();
     assert_eq!(lists, ["list:errands"], "{after}");
-    story.finish().await;
 }

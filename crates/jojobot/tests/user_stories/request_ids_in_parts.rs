@@ -77,7 +77,6 @@ async fn a_charter_whose_change_record_failed_is_finished_by_sending_it_again() 
     let third = delta.call("set_charter", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -102,7 +101,6 @@ async fn a_restart_between_the_two_calls_still_finishes_the_write() {
     let gamma = restarted.as_bot("bot:gamma").await;
     let told = gamma.call("list_entities", json!({ "kind": "bot" })).await;
     assert_eq!(charter_notice(&told)["by"], "bot:delta", "{}", told.raw());
-    restarted.finish().await;
 }
 
 #[tokio::test]
@@ -136,7 +134,6 @@ async fn an_id_sent_with_other_arguments_before_the_write_finished_is_turned_bac
         "{}",
         held.raw()
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -207,7 +204,6 @@ async fn a_restore_whose_history_claim_failed_is_finished_by_sending_it_again() 
     let third = s.call("archive_entity", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -252,7 +248,6 @@ async fn a_rename_whose_box_repoint_failed_is_finished_by_sending_it_again() {
     let third = gamma.call("rename_entity", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -318,7 +313,6 @@ async fn a_numbered_rename_whose_box_repoint_failed_is_finished_by_sending_it_ag
         );
     }
     assert_eq!(row_versions(&gamma, "bot:epsilon").await, before + 1);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -360,7 +354,6 @@ async fn a_rename_whose_reason_failed_is_finished_by_sending_it_again() {
         2,
         "the creation and one rename"
     );
-    story.finish().await;
 }
 
 /// Whether the board holds a box of this name.
@@ -412,7 +405,6 @@ async fn a_bot_whose_box_failed_to_open_is_finished_by_sending_it_again() {
     let third = gamma.call("add_entity", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -463,7 +455,6 @@ async fn a_post_whose_delivery_failed_is_finished_by_sending_it_again_with_the_s
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
     assert_eq!(story.mail_held_by("bot:delta").await, (1, 0, 0));
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -499,7 +490,6 @@ async fn a_first_post_to_the_operator_whose_box_failed_to_open_is_sent_again_and
     let third = s.call("post_message", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert_eq!(story.mail_held_by("person:lisa").await, (1, 0, 0));
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -563,7 +553,6 @@ async fn a_capture_that_ends_what_is_owed_is_finished_by_sending_it_again() {
     let third = s.call("capture", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -603,7 +592,6 @@ async fn a_capture_that_ends_what_is_owed_and_landed_whole_is_a_repeat_when_sent
         "the claim was written once: {}",
         held.raw()
     );
-    story.finish().await;
 }
 
 const MANUAL: &str = "# Fryer manual\n\nRead this before the first shift.\n\n## Opening\n\nSwitch the fryer on at six.\n\n## Closing\n\nDrain the oil and wipe the lid.\n";
@@ -664,7 +652,6 @@ async fn a_document_put_that_stopped_partway_is_finished_in_the_same_places_by_s
     let third = s.call("put_document", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -702,7 +689,6 @@ async fn a_put_after_a_section_that_stopped_partway_finishes_in_the_places_the_f
         "# Intro\n\nHello.\n\n# Middle\n\nIn between.\n\n## Deeper\n\nDeep.\n\n## Deepest\n\nBottom.\n\n# Outro\n\nBye.\n",
         "the section after starts on a line of its own, though the put was finished by a resend: {read}"
     );
-    story.finish().await;
 }
 
 /// A paragraph of about a thousand characters, ending in a blank line.
@@ -753,7 +739,6 @@ async fn a_long_section_put_in_cut_pieces_finishes_with_every_piece_linked_to_it
         }
     }
     assert_eq!(read, text, "the document reads back byte for byte");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -837,7 +822,6 @@ async fn a_section_moved_with_its_cut_pieces_is_finished_in_the_places_the_first
     let third = s.call("update_fact", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -885,7 +869,6 @@ async fn a_section_moved_whole_under_an_id_is_a_repeat_when_sent_again() {
         read["markdown"], "# B\n\nbravo.\n\n# A\n\nalpha.\n\n# C\n\ngamma.\n",
         "A moved behind B and C stayed last: {read}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -924,7 +907,6 @@ async fn a_beat_whose_focus_failed_is_finished_by_sending_it_again_and_the_entry
     let third = s.call("journal", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -956,7 +938,6 @@ async fn a_beat_whose_working_on_failed_is_finished_by_sending_it_again() {
         "{finished}"
     );
     assert_eq!(working_on().await, "work:sigma");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -998,7 +979,6 @@ async fn a_compaction_report_whose_total_failed_is_sent_again_and_marks_the_run_
     let third = run.call("start_here", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert_eq!(marks().await, 1);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -1048,7 +1028,6 @@ async fn an_edit_that_ends_what_is_owed_is_finished_by_sending_it_again() {
     let third = s.call("update_fact", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -1093,5 +1072,4 @@ async fn an_entity_edit_that_ends_what_is_owed_is_finished_by_sending_it_again()
     let third = s.call("update_entity", args).await.json();
     assert_eq!(third["repeat"], true, "{third}");
     assert!(third.get("parts_already_written").is_none(), "{third}");
-    story.finish().await;
 }

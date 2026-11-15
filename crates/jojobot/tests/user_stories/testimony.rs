@@ -102,7 +102,6 @@ async fn a_later_run_cannot_rewrite_the_operators_words_in_place_and_the_route_w
         .shape("what was built on the original", json!({"built_on": red}))
         .await
         .says(&blue);
-    story.finish().await;
 }
 
 /// **A run rewrites its own testimony without saying what it is.** The
@@ -161,7 +160,6 @@ async fn a_run_rewrites_its_own_words_and_keeps_their_provenance() {
         .await
         .claim(&said_by_operator)
         .says("the handcart is dark red");
-    story.finish().await;
 }
 
 /// **A run still cannot make its own guess the operator's words.** Moving a
@@ -213,7 +211,6 @@ async fn a_run_still_needs_the_operators_word_to_make_its_own_guess_testimony() 
         s.recall("thing:handcart").await.claim(&guess).json()["provenance"],
         "testimony"
     );
-    story.finish().await;
 }
 
 /// **Only testimony is protected.** A later run rewrites an earlier run's
@@ -258,7 +255,6 @@ async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
         .await
         .claim(&guess)
         .says("the handcart is yellow");
-    story.finish().await;
 }
 
 /// **The operator's words include the fields their claim carries.** A later run
@@ -354,7 +350,6 @@ async fn a_later_run_cannot_set_change_or_clear_a_value_field_on_the_operators_c
             json!({"address": spare, "status": "archived", "details": "no longer true"}),
         )
         .await;
-    story.finish().await;
 }
 
 /// **A resend of what a testimony claim already says is not a rewrite.** A later
@@ -431,7 +426,6 @@ async fn a_resend_of_the_operators_words_and_fields_is_not_a_rewrite() {
             .says("derived_from")
             .says("archived");
     }
-    story.finish().await;
 }
 
 /// **A bot told it may not write its own ceiling is told so before it is told to
@@ -476,5 +470,4 @@ async fn a_bot_editing_its_own_ceiling_on_the_operators_claim_meets_the_ceiling_
         .await
         .says("derived_from")
         .says("archived");
-    story.finish().await;
 }

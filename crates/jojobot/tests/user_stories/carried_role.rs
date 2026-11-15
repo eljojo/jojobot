@@ -123,7 +123,6 @@ async fn a_bot_that_carries_a_role_claims_it_at_every_boot() {
     );
 
     s.wrap("gave gamma its role").await;
-    story.finish().await;
 }
 
 /// **A bot with a run to pick up is handed a choice and no handle, so the call
@@ -204,5 +203,4 @@ async fn a_carried_role_is_claimed_on_the_call_that_answers_the_offer() {
     );
 
     s.wrap("claimed on the answer").await;
-    story.finish().await;
 }

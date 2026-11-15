@@ -479,6 +479,4 @@ async fn nothing_on_the_surface_goes_unexercised() {
         !choices.contains(&told_sid),
         "a wrapped run is offered to resume: {choices}"
     );
-
-    story.finish().await;
 }

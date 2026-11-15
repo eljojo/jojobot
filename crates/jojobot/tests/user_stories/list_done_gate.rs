@@ -117,7 +117,6 @@ async fn done_is_refused_through_every_verb_while_an_entry_is_open_and_lands_aft
     )
     .await;
     assert_eq!(status_of(&s).await, "done");
-    story.finish().await;
 }
 
 /// **A rotation never completes, so its open entries do not hold a work item
@@ -134,5 +133,4 @@ async fn a_rotation_does_not_hold_a_work_item_from_done() {
     )
     .await;
     assert_eq!(status_of(&s).await, "done");
-    story.finish().await;
 }

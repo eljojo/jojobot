@@ -64,5 +64,4 @@ async fn the_roots_are_the_things_under_nothing_standing() {
     assert!(after.contains(&CARD.to_string()), "{after:?}");
     assert!(!after.contains(&BOARD.to_string()), "{after:?}");
     assert!(!after.contains(&CHILD_CARD.to_string()), "{after:?}");
-    story.finish().await;
 }

@@ -69,5 +69,4 @@ async fn a_work_handle_under_waiting_on_is_refused_toward_depends_on() {
     let fields = &held.json()["objects"][0]["fields"];
     assert_eq!(fields["depends_on"], "work:pour-the-slab", "{}", held.raw());
     assert_eq!(fields["waiting_on"], "bot:gamma", "{}", held.raw());
-    story.finish().await;
 }

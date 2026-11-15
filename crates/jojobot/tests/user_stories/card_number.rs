@@ -61,7 +61,6 @@ async fn a_missed_card_number_names_the_work_item_that_holds_it() {
             "{ordinary}"
         );
     }
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -77,7 +76,6 @@ async fn an_existing_card_number_handle_reads_itself() {
         .await
         .json();
     assert_eq!(exact["objects"][0]["id"], "work:q-2742", "{exact}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -121,7 +119,6 @@ async fn an_archived_card_number_holder_is_not_suggested() {
             ),
         "{after}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -165,5 +162,4 @@ async fn live_card_number_holders_precede_ordinary_candidates() {
         "{answer}"
     );
     assert_ne!(candidates[2]["reason"], "card-number", "{answer}");
-    story.finish().await;
 }

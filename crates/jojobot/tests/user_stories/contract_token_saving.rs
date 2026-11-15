@@ -36,7 +36,6 @@ async fn lean_receipts_derivations_survive_the_changed_count_limit() {
         if saving {
             only_id_and_derivations(&many);
         }
-        story.finish().await;
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -95,7 +94,6 @@ async fn lean_receipts_derivations_survive_an_elided_old_list_value() {
             .await
             .json();
         assert_eq!(read["objects"][0]["fields"]["tags"], "alpha", "{read}");
-        story.finish().await;
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -161,7 +159,6 @@ async fn lean_receipts_token_saving_setting_covers_the_four_single_writes() {
         .says("holds coffee")
         .says("The Silver Kettle")
         .says("white");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -204,7 +201,6 @@ async fn lean_receipts_token_saving_defers_teaching_until_a_normal_receipt() {
     assert!(next.get("how_to_read").is_none(), "{next}");
     assert!(next.get("teaching").is_none(), "{next}");
     assert!(next["address"].is_string(), "{next}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -259,7 +255,6 @@ async fn lean_receipts_token_saving_leaves_unseen_session_notices_for_the_next_a
         .await
         .json();
     assert!(again.get("held_changed").is_none(), "{again}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -305,7 +300,6 @@ async fn lean_receipts_token_saving_setting_defaults_off_and_belongs_to_the_call
         .json();
     assert_eq!(off["success"], true, "{off}");
     assert!(off["address"].is_string(), "{off}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -353,5 +347,4 @@ async fn lean_receipts_token_saving_old_argument_is_unpublished_and_refused_on_a
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-    story.finish().await;
 }

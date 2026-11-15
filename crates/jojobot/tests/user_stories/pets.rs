@@ -297,5 +297,4 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
 
     s.wrap("named the link the pet records already had, and walked it both ways")
         .await;
-    story.finish().await;
 }

@@ -48,5 +48,4 @@ async fn a_refusal_says_whether_a_person_is_needed_before_anything_is_retried() 
 
     s.wrap("met a refusal that needed a person and one that needed a change")
         .await;
-    story.finish().await;
 }

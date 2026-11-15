@@ -193,7 +193,6 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
 
     s.wrap("used the vocabulary the software came with, and found its own name refused")
         .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -301,7 +300,6 @@ async fn a_trips_two_ends_are_places_and_an_organisation_at_either_end_is_report
     strict.says("event:gorge-safety-inspection");
     strict.never_says("event:moe-open-mic");
     strict.never_says("event:otto-benefit-show");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -374,7 +372,6 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
         found["objects"][0]["id"], "event:gorge-safety-inspection",
         "a thing written under the keys the answer named is found by them: {found}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -437,7 +434,6 @@ async fn a_record_holding_only_some_of_a_types_keys_is_kept_and_found_with_what_
     found.says("event:gorge-safety-inspection");
     found.says("\"lacking\":[\"departs_from\",\"arrives_at\"]");
     found.never_says("event:krusty-fest");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -545,7 +541,6 @@ async fn the_first_empty_read_of_a_shipped_type_says_to_capture_under_its_keys_a
         empty["teaching"].as_array().is_some_and(|t| t.len() == 1),
         "a non-empty read and a declared type left the note unspent: {empty}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -657,7 +652,6 @@ async fn an_empty_search_for_a_shipped_type_names_its_keys_and_shares_the_teachi
         Some(1),
         "{empty}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -715,5 +709,4 @@ async fn an_empty_read_narrowed_a_second_way_names_the_keys_but_teaches_nothing_
         Some(1),
         "the narrowed reads left the row unspent: {plain}"
     );
-    story.finish().await;
 }

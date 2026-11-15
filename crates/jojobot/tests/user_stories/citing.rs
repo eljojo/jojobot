@@ -95,6 +95,4 @@ async fn a_claim_is_settled_by_reading_it_at_its_address() {
 
     dev.wrap("checked the rule at its address instead of taking it on trust")
         .await;
-
-    story.finish().await;
 }

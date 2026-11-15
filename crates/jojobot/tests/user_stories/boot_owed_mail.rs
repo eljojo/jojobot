@@ -80,6 +80,4 @@ async fn a_boot_names_the_read_that_returns_mail_delivered_and_not_finished() {
         !news.to_string().contains(RECOVERY_ARGUMENT),
         "a box with only new mail names a recovery read: {news}"
     );
-
-    story.finish().await;
 }

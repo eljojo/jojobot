@@ -79,7 +79,6 @@ async fn declaring_a_counter_over_a_held_key_asks_first_and_counts_what_it_chang
     let stopping = s.refused("declare_type", tally(false)).await;
     stopping.says("1 thing would change");
     assert_eq!(visits(&s).await, "8");
-    story.finish().await;
 }
 
 /// **A declaration over a key nothing holds lands without asking**, the
@@ -113,7 +112,6 @@ async fn declaring_a_counter_over_a_key_nothing_holds_lands_without_asking() {
         "8",
         "the declared counter totals its writes"
     );
-    story.finish().await;
 }
 
 /// "I declared a type that counts `starred`, and every bot's rule starred itself
@@ -170,7 +168,6 @@ async fn a_type_cannot_give_a_describing_key_a_fold_of_its_own() {
     landed.says("pantry");
 
     s.wrap("a describing key stays a label").await;
-    story.finish().await;
 }
 
 /// What the kettle's `visits` holds, after two visits recorded as a total.
@@ -225,7 +222,6 @@ async fn a_declaration_naming_a_held_key_twice_is_refused_with_no_token_to_lift_
         "5",
         "nothing was declared, so nothing moved"
     );
-    story.finish().await;
 }
 
 /// **A token is for the declaration it was issued for.** The same name with one
@@ -259,5 +255,4 @@ async fn a_token_lifts_only_the_declaration_it_was_issued_for() {
     let landed = s.call("declare_type", first).await.json();
     assert_eq!(landed["fold_moved"][0]["key"], "visits", "{landed}");
     assert_eq!(visits(&s).await, "8");
-    story.finish().await;
 }

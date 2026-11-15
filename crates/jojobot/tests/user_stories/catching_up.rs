@@ -130,6 +130,4 @@ async fn a_sitting_checks_its_own_history_before_starting_something_new() {
         !capped_focuses.contains(&"counting the donut inventory"),
         "the oldest run is not the one a narrower limit should drop: {capped}",
     );
-
-    story.finish().await;
 }

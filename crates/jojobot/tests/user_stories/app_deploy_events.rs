@@ -105,5 +105,4 @@ async fn a_colleague_finds_a_deploy_event_an_app_recorded_and_cannot_rewrite_it(
     assert_eq!(again["handle"], handle.as_str(), "{again}");
     let still = s.call("recall", json!({"parent": THREAD})).await.json();
     assert_eq!(events(&still).len(), 1, "still exactly one event: {still}");
-    story.finish().await;
 }

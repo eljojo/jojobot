@@ -46,5 +46,4 @@ async fn list_sent_counts_the_damage_in_a_box_it_cannot_show_and_names_none_of_i
 
     sigma.wrap("counted the damage out of sight").await;
     s.wrap("stood two bots up").await;
-    story.finish().await;
 }

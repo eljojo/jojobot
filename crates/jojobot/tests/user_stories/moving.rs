@@ -472,6 +472,4 @@ async fn moving_abroad() {
         .never_says("superseded_by");
 
     s.wrap("still in progress").await;
-
-    story.finish().await;
 }

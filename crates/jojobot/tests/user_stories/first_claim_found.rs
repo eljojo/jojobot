@@ -59,5 +59,4 @@ async fn the_first_claim_on_a_bot_made_with_settings_is_found_by_a_default_searc
         addresses.contains(&first.as_str()),
         "the first claim on the new bot is found: {found}"
     );
-    story.finish().await;
 }

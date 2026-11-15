@@ -64,8 +64,6 @@ async fn a_quote_of_a_testimony_record_lands_with_the_words_and_the_citation() {
     // ── the pair: plain quotation marks are never refused ───────────────────
     let plain = post_to_the_operator(&s, "The sign reads \"closed for the winter\".").await;
     assert_ne!(plain, id, "a post with plain quotation marks landed");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -102,8 +100,6 @@ async fn a_quote_of_an_inference_is_refused_naming_the_address_and_the_same_post
     // ── the pair: the same post without the address lands ───────────────────
     post_to_the_operator(&s, "You may prefer the east wall.").await;
     assert_ne!(story.box_counts_on_the_page("person:lisa").await, held);
-
-    story.finish().await;
 }
 
 /// "I am writing down the form for the next agent." An address shown in code is
@@ -149,8 +145,6 @@ async fn an_address_shown_in_code_is_posted_as_written_and_the_same_address_outs
         .mark_processed_on_the_page("person:lisa", &quoted)
         .await;
     story.page("person:lisa").await.says(WORDS);
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -175,8 +169,6 @@ async fn a_source_corrected_after_the_post_leaves_the_message_as_it_was() {
         .await
         .says("cobalt")
         .never_says("saffron");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -202,8 +194,6 @@ async fn a_body_under_the_ceiling_before_expansion_and_over_it_after_is_refused(
         "the call must change: {refusal}"
     );
     assert_eq!(story.box_counts_on_the_page("person:lisa").await, held);
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -218,13 +208,11 @@ async fn an_archived_source_keeps_its_archived_mark_in_the_quote() {
     let id = post_to_the_operator(&s, &format!("You once said @{said}.")).await;
     story.mark_processed_on_the_page("person:lisa", &id).await;
     story.page("person:lisa").await.says(WORDS).says("archived");
-
-    story.finish().await;
 }
 
 #[tokio::test]
 async fn the_convention_is_taught_once_on_the_first_post_to_the_operator() {
-    let (story, s, _said) = with_an_operator().await;
+    let (_story, s, _said) = with_an_operator().await;
 
     // ── the pair, first: a post to a bot's box does not carry it, and does not
     //    spend it either ─────────────────────────────────────────────────────
@@ -250,6 +238,4 @@ async fn the_convention_is_taught_once_on_the_first_post_to_the_operator() {
         )
         .await;
     second.never_says("teaching");
-
-    story.finish().await;
 }

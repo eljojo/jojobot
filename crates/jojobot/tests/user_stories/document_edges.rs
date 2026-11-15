@@ -118,7 +118,6 @@ async fn a_caller_cannot_send_or_clear_a_sections_edges_but_the_engine_still_wri
         "the section behind keeps the words before it unchanged: {after}"
     );
     assert!(!after.contains("INJECTED"), "{after}");
-    story.finish().await;
 }
 
 /// **The seam the engine may set on another session's section is not open to a
@@ -152,7 +151,6 @@ async fn a_caller_cannot_send_the_seam_the_engine_writes() {
     .await
     .says("edges");
     assert_eq!(read(&b).await, before, "the refused seam wrote nothing");
-    story.finish().await;
 }
 
 /// How many times a section's record was written, as a read says it: a record
@@ -242,7 +240,6 @@ async fn a_list_delta_on_edges_is_refused_and_a_put_behind_a_section_leaves_it_u
         format!("{MANUAL}\n\n## Cleaning\n\nWipe it down.\n\n## Closing\n\nSwitch it off."),
     );
     assert_eq!(revisions(&a, &cleaning).await, 1);
-    story.finish().await;
 }
 
 /// A manual with its sections written, ready for a second session to try things on.
@@ -309,7 +306,6 @@ async fn copied_places_are_dropped_on_every_verb_and_section_edges_stay_protecte
         super::lists::read_back(&b, "list:checklist").await,
         ["one", "two"]
     );
-    story.finish().await;
 }
 
 /// **The gate judges the kind the store holds, not the kind the address was typed
@@ -360,7 +356,6 @@ async fn a_thing_retyped_into_a_document_is_judged_as_a_document_under_its_old_h
         .json()["markdown"]
         .clone();
     assert_eq!(after, before, "the refused writes changed nothing");
-    story.finish().await;
 }
 
 /// **`edges` is refused on a SECTION, not on every claim about a document.** A
@@ -369,7 +364,7 @@ async fn a_thing_retyped_into_a_document_is_judged_as_a_document_under_its_old_h
 /// Paired with the refusals above, so the gate has not simply gone quiet.
 #[tokio::test]
 async fn a_plain_field_named_edges_on_a_claim_that_is_not_a_section_is_accepted() {
-    let (story, a) = manual().await;
+    let (_story, a) = manual().await;
     let held = sections(&a).await;
     let note = a
         .call(
@@ -400,7 +395,6 @@ async fn a_plain_field_named_edges_on_a_claim_that_is_not_a_section_is_accepted(
     )
     .await
     .says("edges");
-    story.finish().await;
 }
 
 /// **A section addressed as it was before a merge is still a section.** The
@@ -409,7 +403,7 @@ async fn a_plain_field_named_edges_on_a_claim_that_is_not_a_section_is_accepted(
 /// one through the survivor's, and the merged manual reads back as it was.
 #[tokio::test]
 async fn a_section_edited_through_its_pre_merge_address_is_still_refused_its_edges() {
-    let (story, a) = manual().await;
+    let (_story, a) = manual().await;
     a.add("document:marge", "Griddle logbook").await;
     a.call(
         "put_document",
@@ -479,5 +473,4 @@ async fn a_section_edited_through_its_pre_merge_address_is_still_refused_its_edg
         record["fields"]["edges"], "back shelf",
         "the note keeps its edges field as an ordinary one: {record}"
     );
-    story.finish().await;
 }

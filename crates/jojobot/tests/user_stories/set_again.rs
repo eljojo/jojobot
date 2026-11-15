@@ -131,7 +131,6 @@ async fn a_bot_setting_the_same_key_again_rewrites_its_own_record() {
         .json();
     let seen = trail.to_string();
     assert!(seen.contains("a1") && seen.contains("a2"), "{trail}");
-    story.finish().await;
 }
 
 /// Another bot's write can land while the image still holds the bot's own
@@ -170,7 +169,6 @@ async fn a_set_selected_before_another_bots_edit_appends_instead_of_rewriting_it
     assert_eq!(appended["sets"]["agent"], "a3", "{records:?}");
     let read = gamma.recall("role:gamma").await.json();
     assert_eq!(read["objects"][0]["fields"]["agent"], "a3", "{read}");
-    story.finish().await;
 }
 
 /// Another bot's `update_entity` appends a newer claim that backs the key. The
@@ -219,7 +217,6 @@ async fn a_set_selected_before_another_bots_newer_claim_on_the_key_appends() {
     );
     let read = gamma.recall("role:gamma").await.json();
     assert_eq!(read["objects"][0]["fields"]["agent"], "a3", "{read}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -237,7 +234,6 @@ async fn a_record_that_holds_other_keys_is_not_rewritten() {
 
     let records = set_records(&gamma, "role:gamma").await;
     assert_eq!(records.len(), 2, "the second write appended: {records:?}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -262,7 +258,6 @@ async fn another_bots_record_is_not_rewritten() {
         first.get("revision_count").is_none(),
         "never rewritten: {first}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -292,7 +287,6 @@ async fn a_counter_key_set_twice_adds_to_the_sum() {
     );
     let records = set_records(&gamma, "role:gamma").await;
     assert_eq!(records.len(), 2, "each set is its own record: {records:?}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -313,7 +307,6 @@ async fn a_record_another_bot_edited_since_is_not_rewritten() {
     set_agent(&gamma, "role:gamma", "a3").await;
     let after = set_records(&gamma, "role:gamma").await;
     assert_eq!(after.len(), 2, "marge's edit stays readable: {after:?}");
-    story.finish().await;
 }
 
 /// The stored due moment of a thing, when it holds one.
@@ -388,7 +381,6 @@ async fn a_cut_rewrite_that_ends_what_is_owed_is_finished_by_the_same_call_again
     );
     assert_eq!(after[0]["address"], json!(own_address), "{after:?}");
     assert_eq!(after[0]["sets"]["status"], "done", "{after:?}");
-    story.finish().await;
 }
 
 /// The collection number survives a rename; the old spelling may name a new
@@ -515,7 +507,6 @@ async fn a_cut_rewrite_after_a_rename(reuse: bool, edit_fact: bool) {
             "next"
         );
     }
-    story.finish().await;
 }
 
 #[tokio::test]

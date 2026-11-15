@@ -42,5 +42,4 @@ async fn a_post_that_is_a_runs_first_write_still_names_the_run() {
         .says("written_by_other_run");
 
     g.wrap("read both").await;
-    story.finish().await;
 }

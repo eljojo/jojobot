@@ -77,7 +77,6 @@ async fn a_claim_missing_what_the_types_rule_asks_for_is_refused_and_says_what_f
                "provenance": "testimony", "fields": {"purpose": "memo"}}),
     )
     .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -88,7 +87,6 @@ async fn a_rule_that_does_not_read_is_refused_when_the_type_is_declared() {
     s.refused("declare_type", pledge_type("witness &&")).await;
     let types = s.call("declare_type", pledge_type("witness")).await.json();
     assert_eq!(types["type"]["must"], "witness", "{types}");
-    story.finish().await;
 }
 
 /// The token a refusal names, read out of its advice as a caller has to.
@@ -185,7 +183,6 @@ async fn a_refused_claim_lands_with_its_token_and_a_written_reason_and_the_thing
         queue(&defrag).await.contains(&"thing:kettle".to_string()),
         "the claim that landed under an override puts the kettle back in the queue"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -233,7 +230,6 @@ async fn an_edit_the_rule_turns_away_lands_with_its_token_and_a_written_reason()
         held["objects"][0]["facts"][0]["fields"]["must_overridden"], "pledge: the log was lost",
         "{held}"
     );
-    story.finish().await;
 }
 
 /// **The verbs that carry no override still name a way through.** A rule that
@@ -275,7 +271,6 @@ async fn a_verb_without_an_override_names_the_key_and_the_verbs_that_have_one() 
         .says("`sets`")
         .says("capture")
         .says("override_token");
-    story.finish().await;
 }
 
 /// **A claim the rule turns away by its value is told which value the rule asks
@@ -314,7 +309,6 @@ async fn a_claim_whose_value_the_rule_turns_away_names_the_key_and_the_values_it
                "provenance": "testimony", "fields": {"mood": "glad"}}),
     )
     .await;
-    story.finish().await;
 }
 
 /// **A claim that fails two rules is refused for them one at a time, and each
@@ -374,7 +368,6 @@ async fn a_claim_failing_two_rules_is_refused_for_each_in_turn_and_each_token_li
         held["objects"][0]["facts"][0]["fields"]["must_overridden"], "twin-beta: the log was lost",
         "{held}"
     );
-    story.finish().await;
 }
 
 /// **A rule that needs both keys asks for both**, and one that needs either asks
@@ -416,7 +409,6 @@ async fn the_advice_asks_for_all_of_the_keys_a_rule_needs_all_of_and_one_of_thos
         one.contains("a value under near or far that is not blank"),
         "{one}"
     );
-    story.finish().await;
 }
 
 /// **A relative day in a rule counts from the caller's day**, the one the run
@@ -443,7 +435,6 @@ async fn a_relative_day_in_a_rule_counts_from_the_day_the_run_is_in() {
     s.refused("capture", claim("2026-03-10"))
         .await
         .says("due_by");
-    story.finish().await;
 }
 
 /// **A type's rule is not offered in this release** (rules 634 and 636). Declaring
@@ -474,5 +465,4 @@ async fn a_type_declared_with_a_rule_is_refused_and_one_without_it_refuses_nothi
                "provenance": "testimony", "fields": {"purpose": "pledge"}}),
     )
     .await;
-    story.finish().await;
 }

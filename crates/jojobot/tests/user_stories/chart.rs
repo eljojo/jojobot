@@ -101,7 +101,6 @@ async fn the_chart_is_changed_only_by_a_superior() {
         .await;
 
     s.wrap("looked at who may change the chart").await;
-    story.finish().await;
 }
 
 /// "I made a new bot and said who it reports to. Does that count as placing it
@@ -137,7 +136,6 @@ async fn a_new_bot_is_placed_under_a_manager_only_by_whom_may_place_it() {
         .says("\"reports_to\":\"bot:omega\"");
 
     s.wrap("placed a new bot under its manager").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -218,7 +216,6 @@ async fn the_head_of_a_chart_places_itself() {
         .says("\"reports_to\":\"bot:omega\"");
 
     s.wrap("looked at who may place the head of a chart").await;
-    story.finish().await;
 }
 
 /// "Can I get around it by editing the claim, taking it back, or folding in a
@@ -323,7 +320,6 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
         .never_says("\"reports_to\":");
 
     s.wrap("tried the other doors to the chart").await;
-    story.finish().await;
 }
 
 /// **A key a bot cannot write about itself is refused in the settings of an
@@ -393,7 +389,6 @@ async fn a_ceiling_key_sent_as_a_setting_is_refused_as_a_capture_of_it_is() {
         )
         .await;
     s.list("bot").await.says("bot:psi");
-    story.finish().await;
 }
 
 /// "I wrote a manager that is no bot. Who do I ask?" Nobody: the value names no
@@ -455,5 +450,4 @@ async fn a_write_that_names_no_manager_is_told_to_name_one_and_sends_nobody_look
         .says("\"reports_to\":\"bot:omega\"");
 
     s.wrap("looked at a write that names no manager").await;
-    story.finish().await;
 }

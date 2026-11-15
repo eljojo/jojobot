@@ -233,8 +233,6 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
 
     s.wrap("the hedge was confirmed, then reversed, and reads as neither")
         .await;
-
-    story.finish().await;
 }
 
 /// "I worked out that Moe's has two back doors. Check it, and settle it if it
@@ -289,6 +287,4 @@ async fn an_inference_settles_only_with_a_receipt_and_stays_an_inference() {
 
     s.wrap("settled the guess on a check and it still reads as a guess")
         .await;
-
-    story.finish().await;
 }

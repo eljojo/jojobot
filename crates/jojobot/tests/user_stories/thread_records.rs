@@ -121,7 +121,6 @@ async fn a_fourth_live_record_on_a_thread_is_refused() {
     )
     .await
     .number("/live", 3);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -218,7 +217,6 @@ async fn a_full_thread_borrows_one_record_once_and_archiving_repays_it() {
     s.call("recall", json!({"kind": "thread"}))
         .await
         .never_says(THREAD);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -246,7 +244,6 @@ async fn a_thread_that_sets_its_own_number_is_bounded_by_that_instead() {
     .await
     .number("/live", 5)
     .number("/ceiling", 5);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -329,7 +326,6 @@ async fn the_bots_that_write_into_a_thread_never_raise_its_number() {
     s.call("recall", json!({"subject": THREAD}))
         .await
         .says("\"record_capacity\":\"6\"");
-    story.finish().await;
 }
 
 /// **A ceiling somebody set is the ceiling they meant, or the write says why
@@ -399,7 +395,6 @@ async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every
     .await
     .number("/live", 5)
     .number("/ceiling", 5);
-    story.finish().await;
 }
 
 /// Notes on a thread, the first of which sets the thread's own number.
@@ -513,7 +508,6 @@ async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
         }),
     )
     .await;
-    story.finish().await;
 }
 
 /// **A container's number is raised by somebody above the writers filling it,
@@ -594,7 +588,6 @@ async fn the_bot_that_fills_a_container_does_not_raise_its_number() {
             .await
             .says("\"record_capacity\":\"6\"");
     }
-    story.finish().await;
 }
 
 /// **A merge into a thread that a bot of the thread's own refuses names the bots
@@ -677,7 +670,6 @@ async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
     s.call("recall", json!({"subject": THREAD}))
         .await
         .says("\"record_capacity\":\"5\"");
-    story.finish().await;
 }
 
 /// **A merge asks the same writers question an edit of the number asks.** The
@@ -752,7 +744,6 @@ async fn a_bot_that_filled_a_thread_cannot_raise_its_number_by_merging() {
     s.call("recall", json!({"subject": THREAD}))
         .await
         .says("\"record_capacity\":\"5\"");
-    story.finish().await;
 }
 
 /// How many records a thing holds, read through the surface, with the fields it
@@ -828,7 +819,6 @@ async fn a_thread_at_its_number_is_restored_with_the_record_of_the_restore() {
         .number("/live", 3)
         .number("/ceiling", 3);
     }
-    story.finish().await;
 }
 
 /// **The same for a rename that keeps the reason it was let through.** The reason
@@ -875,7 +865,6 @@ async fn a_thread_at_its_number_is_renamed_with_the_reason_it_was_let_through() 
     .await
     .number("/live", 3)
     .number("/ceiling", 3);
-    story.finish().await;
 }
 
 /// **The label that takes a record out of the count is jojobot's to write.** A
@@ -916,7 +905,6 @@ async fn a_caller_cannot_label_its_own_record_as_one_that_takes_no_slot() {
     }
     let (_, records, _) = held(&s, THREAD).await;
     assert_eq!(records, 3, "nothing was written");
-    story.finish().await;
 }
 
 /// **The assistant raises the number of a container it fills.** The operator
@@ -984,7 +972,6 @@ async fn the_assistant_raises_the_number_of_a_container_it_fills() {
             .await
             .says("\"record_capacity\":\"7\"");
     }
-    story.finish().await;
 }
 
 /// **The exemption is the whole rule's.** A thread binds the bots that wrote a
@@ -1044,7 +1031,6 @@ async fn the_assistant_that_wrote_a_thought_into_a_thread_raises_its_number() {
     s.call("recall", json!({"subject": THREAD}))
         .await
         .says("\"record_capacity\":\"6\"");
-    story.finish().await;
 }
 
 /// **A bot is a writer of a container for the records it chose to write.** The
@@ -1088,7 +1074,6 @@ async fn a_bot_that_only_restored_a_thread_did_not_fill_it() {
     s.call("recall", json!({"subject": THREAD}))
         .await
         .says("\"record_capacity\":\"6\"");
-    story.finish().await;
 }
 
 /// **A record ceiling binds whatever thing carries it, not only a thread.** A
@@ -1124,7 +1109,6 @@ async fn a_topic_carrying_record_capacity_refuses_the_write_past_it() {
         s.call("capture", write("topic:the-five-words", content))
             .await;
     }
-    story.finish().await;
 }
 
 /// **The address of the record that set `key` on `subject`**, as a caller finds
@@ -1230,7 +1214,6 @@ async fn a_merge_refusal_names_the_archive_route_only_to_a_caller_who_may_make_i
     s.call("recall", json!({"subject": "thread:krusty-telethon"}))
         .await
         .says(THREAD);
-    story.finish().await;
 }
 
 /// **With no bot above the writers, a record ceiling's merge is the assistant's,
@@ -1297,7 +1280,6 @@ async fn with_no_bot_above_the_writers_the_assistant_makes_a_record_ceiling_merg
         .refused("merge_entities", merge("thread:krusty-telethon"))
         .await
         .says("thought_capacity");
-    story.finish().await;
 }
 
 /// **A writer refused a thread's record ceiling is sent to the assistant, and
@@ -1327,5 +1309,4 @@ async fn a_writer_refused_a_record_ceiling_is_sent_to_the_assistant() {
     s.call("recall", json!({"subject": THREAD}))
         .await
         .says("\"record_capacity\":\"5\"");
-    story.finish().await;
 }

@@ -61,7 +61,6 @@ async fn a_rewrite_changes_the_runs_own_entry_and_leaves_the_line_jojobot_wrote(
         ["plan B", beat.as_str()],
         "the run's own entry is rewritten and jojobot's line is as it was: {after}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -83,5 +82,4 @@ async fn a_run_with_only_jojobots_lines_has_nothing_to_rewrite_and_is_told_what_
         before,
         "the refusal left jojobot's line as it was"
     );
-    story.finish().await;
 }

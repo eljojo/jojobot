@@ -81,7 +81,6 @@ async fn a_list_with_a_refused_handle_marks_none_and_a_list_that_passes_marks_al
             "{handle} is still waiting after its list was marked: {waiting:?}"
         );
     }
-    story.finish().await;
 }
 
 /// **The `reviewed` argument names the route for a list a store failure cut**:
@@ -95,7 +94,6 @@ async fn the_reviewed_argument_names_the_route_for_a_cut_list() {
         described.contains("request_id"),
         "the reviewed argument does not name the resend route: {described}"
     );
-    story.finish().await;
 }
 
 /// **A list cut partway is finished by sending it again under its `request_id`**,
@@ -137,5 +135,4 @@ async fn a_cut_list_is_finished_by_the_same_call_under_its_request_id() {
             "{handle}: {waiting:?}"
         );
     }
-    story.finish().await;
 }

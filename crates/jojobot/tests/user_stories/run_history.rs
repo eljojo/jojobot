@@ -110,7 +110,6 @@ async fn a_run_can_see_what_its_focus_was_and_what_an_entry_said_before_it_was_c
         plain.raw()
     );
     run.wrap("traced the focus and the wordings").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -152,7 +151,6 @@ async fn the_history_of_a_runs_key_says_it_changed_and_never_what_it_changed_to(
         keyed.raw()
     );
     reader.wrap("read it back").await;
-    story.finish().await;
 }
 
 /// "Was this run ever handed its charter, and when?"
@@ -222,7 +220,6 @@ async fn a_run_never_handed_its_charter_says_never_told_and_one_that_read_it_say
     );
     after.never_says("1970-");
     run.wrap("read the charter and asked when").await;
-    story.finish().await;
 }
 
 /// "Can a walk hand me a sitting with the history of its journal beside it?"
@@ -311,7 +308,6 @@ async fn a_run_cannot_be_linked_to_so_no_walk_reaches_one_with_its_history() {
     }
     run.wrap("pinned that no walk reaches a run").await;
     other.wrap("read it back").await;
-    story.finish().await;
 }
 
 /// "Give me the history, none of it at a time." A page of zero changes reads
@@ -367,7 +363,6 @@ async fn a_page_of_no_changes_is_refused_and_a_page_of_one_moves_forward_when_fo
         second.raw()
     );
     run.wrap("read the focus history a change at a time").await;
-    story.finish().await;
 }
 
 /// "Show me the newest wording first." The newest wording is the one written
@@ -448,5 +443,4 @@ async fn the_first_page_of_wordings_holds_the_one_written_last_even_from_an_earl
         page.raw()
     );
     run.wrap("read the journal's wordings newest first").await;
-    story.finish().await;
 }

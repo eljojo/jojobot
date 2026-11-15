@@ -83,5 +83,4 @@ async fn an_answer_says_there_is_mail_waiting_even_when_nothing_asked() {
 
     s.wrap("was told about the damper without going looking for it")
         .await;
-    story.finish().await;
 }

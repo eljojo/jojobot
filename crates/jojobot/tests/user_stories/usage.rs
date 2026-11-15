@@ -419,8 +419,6 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
         .call("recall", json!({"subject": "usage:bart-2026-w41"}))
         .await;
     named.says("\"compactions\":\"1\"");
-
-    later.finish().await;
 }
 
 /// **A usage record has no write history, and says so.** It is computed when it
@@ -455,5 +453,4 @@ async fn the_history_of_a_key_on_a_usage_record_says_it_has_none() {
     );
     // The record itself is still there to read, with the key it was asked about.
     assert!(read["objects"][0]["fields"]["calls"].is_string(), "{read}");
-    story.finish().await;
 }

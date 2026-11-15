@@ -359,6 +359,4 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
             .never_says("quarterly");
     }
     story.page("bot:sigma").await.says("an ordinary note");
-
-    story.finish().await;
 }

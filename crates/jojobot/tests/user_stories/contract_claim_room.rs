@@ -752,8 +752,6 @@ async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
         "{}",
         read.raw()
     );
-
-    story.finish().await;
 }
 
 /// **The account a merge writes is measured beside the MERGED thing.** The
@@ -823,8 +821,6 @@ async fn a_merge_account_that_fits_beside_the_survivor_but_not_beside_the_merged
         json!({"duplicate": duplicate, "survivor": survivor, "reason": "the same keeper"}),
     )
     .await;
-
-    story.finish().await;
 }
 
 /// **A thing made before the guard, whose aliases are already past one answer.**

@@ -74,7 +74,6 @@ async fn a_live_bot_is_on_the_page_of_its_work_and_of_the_project_above_it() {
         .await
         .never_says("id=\"working-on-now\"")
         .says("id=\"working-on-none\"");
-    story.finish().await;
 }
 
 /// **After its writer wraps, the bot is in the past list and not on the page
@@ -88,7 +87,6 @@ async fn a_bot_whose_writer_wrapped_moves_to_the_past_list() {
             .says("id=\"working-on-none\"");
         page.section("working-on-past").says("bot:otto");
     }
-    story.finish().await;
 }
 
 /// **An abandoned writer likewise**, and the past list is dated.
@@ -102,7 +100,6 @@ async fn a_bot_whose_writer_was_abandoned_moves_to_the_past_list_with_its_day() 
             .says("bot:otto")
             .says("2026-06-01");
     }
-    story.finish().await;
 }
 
 /// **The past list is dated in the instance's zone**, the day the rest of the
@@ -153,7 +150,6 @@ async fn the_past_list_dates_a_run_in_the_instances_zone() {
         "the past list dates the run in the instance's zone, {wanted:?} ({zone}): {}",
         past.raw(),
     );
-    story.finish().await;
 }
 
 /// **Each past run links to its session**, and the bot's page carries the run's
@@ -170,7 +166,6 @@ async fn a_past_run_links_to_its_session_on_the_bots_page() {
         .page("bot:otto")
         .await
         .says(&format!("id=\"session-{run}\""));
-    story.finish().await;
 }
 
 /// **A bot that only wrote to the work is not shown as on it**: a write alone
@@ -191,5 +186,4 @@ async fn a_bot_that_only_wrote_to_the_work_is_absent() {
     page.section("working-on-now")
         .says("bot:otto")
         .never_says("bot:assistant");
-    story.finish().await;
 }

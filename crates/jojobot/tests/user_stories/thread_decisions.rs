@@ -112,7 +112,6 @@ async fn a_cold_read_of_a_thread_puts_its_decisions_before_its_research() {
         "the research was not asked for: {thread}"
     );
     read.never_says("finding 3");
-    story.finish().await;
 }
 
 /// **A thread nobody decided anything under answers as it always did**: itself,
@@ -139,7 +138,6 @@ async fn a_thread_with_no_decisions_answers_alone() {
         .await
         .json();
     assert_eq!(handles(&project), vec!["project:atlas"], "{project}");
-    story.finish().await;
 }
 
 /// **With the research grown past the ceiling, the decisions still come back and
@@ -212,7 +210,6 @@ async fn research_past_the_ceiling_leaves_the_decisions_in_and_counts_the_resear
         format!("{KITCHEN}#f{}", shown + 1),
         "and it starts where the first part stopped: {next}"
     );
-    story.finish().await;
 }
 
 /// **A decision that changes is never reworded.** The new decision is a child of
@@ -285,7 +282,6 @@ async fn a_superseded_decision_reads_as_archived_and_its_replacement_leads() {
         .await;
     gone.says("oak");
     gone.says("replaced by decision:cabinets-walnut");
-    story.finish().await;
 }
 
 /// **Decisions that together pass the ceiling are cut like any list**: those
@@ -344,5 +340,4 @@ async fn decisions_past_the_ceiling_are_counted_and_a_browse_returns_them() {
         ids[..led].iter().all(|id| browsed.contains(id)),
         "the browse the answer names returns the decisions: {browsed:?}"
     );
-    story.finish().await;
 }

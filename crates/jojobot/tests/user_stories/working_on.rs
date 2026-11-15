@@ -39,7 +39,6 @@ async fn a_session_declares_what_its_bot_is_working_on() {
         working_on(&reader, "bot:otto").await.as_deref(),
         Some("work:frame-the-walls")
     );
-    story.finish().await;
 }
 
 /// **A session clears it with an empty `working_on`**, and the key goes away
@@ -66,7 +65,6 @@ async fn a_session_clears_what_its_bot_was_working_on() {
     .await;
 
     assert_eq!(working_on(&otto, "bot:otto").await, None);
-    story.finish().await;
 }
 
 /// A piece of work owned by `owner`, waiting its turn.
@@ -111,7 +109,6 @@ async fn capturing_owned_work_as_now_fills_working_on() {
         working_on(&otto, "bot:otto").await.as_deref(),
         Some("work:frame-the-walls")
     );
-    story.finish().await;
 }
 
 /// **An edit that moves owned work to `now` fills it the same way.**
@@ -132,7 +129,6 @@ async fn editing_owned_work_to_now_fills_working_on() {
         working_on(&otto, "bot:otto").await.as_deref(),
         Some("work:frame-the-walls")
     );
-    story.finish().await;
 }
 
 /// **An edit of the thing that moves owned work to `now` fills it the same
@@ -160,7 +156,6 @@ async fn editing_the_owned_thing_to_now_fills_working_on() {
         working_on(&otto, "bot:otto").await.as_deref(),
         Some("work:frame-the-walls")
     );
-    story.finish().await;
 }
 
 /// **Work created at `now` by the bot that owns it fills it too**, and work
@@ -189,7 +184,6 @@ async fn creating_owned_work_as_now_fills_working_on() {
         working_on(&otto, "bot:otto").await.as_deref(),
         Some("work:frame-the-walls")
     );
-    story.finish().await;
 }
 
 /// **Another bot moving the work fills nothing for its owner**, and nothing for
@@ -210,7 +204,6 @@ async fn another_bot_moving_the_work_fills_nothing() {
 
     assert_eq!(working_on(&other, "bot:otto").await, None);
     assert_eq!(working_on(&other, "bot:assistant").await, None);
-    story.finish().await;
 }
 
 /// **A rename of the thing keeps the link**, and the bot reads the new handle.
@@ -235,7 +228,6 @@ async fn renaming_the_thing_keeps_working_on() {
         working_on(&otto, "bot:otto").await.as_deref(),
         Some("work:lay-the-tiles")
     );
-    story.finish().await;
 }
 
 /// **After the writing session wraps, a reader sees no `working_on`**, and the
@@ -277,7 +269,6 @@ async fn a_wrapped_session_leaves_working_on_unknown() {
         backed.json()["objects"][0]["fields_backing"]["working_on"],
         json!(null)
     );
-    story.finish().await;
 }
 
 /// **The bot's own page shows the key while the writing session is live and
@@ -312,7 +303,6 @@ async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
     // still carries as history is not read as what the bot is doing now.
     after.says("working_on = work:frame-the-walls");
     after.says("working_on_stale");
-    story.finish().await;
 }
 
 /// **Only work fills it.** A project the bot owns, moved to `now`, points the
@@ -331,7 +321,6 @@ async fn a_project_moved_to_now_does_not_fill_working_on() {
     .await;
 
     assert_eq!(working_on(&otto, "bot:otto").await, None);
-    story.finish().await;
 }
 
 /// **A handle that names nothing is refused with the entry unwritten**, so the
@@ -350,7 +339,6 @@ async fn a_working_on_that_names_nothing_is_refused() {
     .says("work:ghost");
 
     assert_eq!(working_on(&otto, "bot:otto").await, None);
-    story.finish().await;
 }
 
 /// **Moving owned work to a word the instance maps to `now` fills `working_on`
@@ -393,7 +381,6 @@ async fn a_word_the_instance_maps_to_now_fills_working_on_and_no_other_word_does
         working_on(&otto, "bot:otto").await.as_deref(),
         Some("work:frame-the-walls")
     );
-    story.finish().await;
 }
 
 /// How the session that said what a bot is working on is gone.
@@ -466,7 +453,7 @@ async fn bots_answering(reader: &Session, asked: serde_json::Value) -> Vec<Strin
 /// is returned by one that asks for a bot working on nothing. While the writer is
 /// live it is the other way round.
 async fn the_filters_see_the_gated_value(writer: Writer) {
-    let (story, reader) = a_bot_on_the_framing(writer).await;
+    let (_story, reader) = a_bot_on_the_framing(writer).await;
     let live = matches!(writer, Writer::Live);
     let asks_for_it = json!({"where": "working_on = work:frame-the-walls"});
     let asks_by_field = json!({"fields": [{"key": "working_on", "value": "work:frame-the-walls"}]});
@@ -486,7 +473,6 @@ async fn the_filters_see_the_gated_value(writer: Writer) {
         !live,
         "a bot working on nothing: {found:?}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -575,14 +561,13 @@ async fn a_paged_read_of_the_bots_on_a_thing_shows_each_once_past_a_bot_whose_wr
         ["bot:alpha", "bot:omega", "bot:upsilon"],
         "each bot working on the framing once, in order, and not the one whose writer wrapped"
     );
-    story.finish().await;
 }
 
 /// **The records of a bot do not serve a stale working-on record as current.**
 /// The record that set the key says its session is gone, and while the writer is
 /// live it says nothing of the kind.
 async fn the_records_mark_a_stale_working_on(writer: Writer) {
-    let (story, reader) = a_bot_on_the_framing(writer).await;
+    let (_story, reader) = a_bot_on_the_framing(writer).await;
     let live = matches!(writer, Writer::Live);
 
     let answer = reader
@@ -602,7 +587,6 @@ async fn the_records_mark_a_stale_working_on(writer: Writer) {
         "{}",
         setting[0]
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -648,7 +632,6 @@ async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_write
         .page("view:on-the-framing")
         .await
         .never_says("bot:otto");
-    story.finish().await;
 }
 
 /// **A follow that reaches a bot shows its `working_on` only while the session
@@ -657,7 +640,7 @@ async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_write
 /// `working_on` itself. The bot is reached in every case; what it holds under
 /// `working_on` is the question.
 async fn a_follow_reaches_a_bot(writer: Writer) {
-    let (story, reader) = a_bot_on_the_framing(writer).await;
+    let (_story, reader) = a_bot_on_the_framing(writer).await;
     reader
         .call(
             "capture",
@@ -682,7 +665,6 @@ async fn a_follow_reaches_a_bot(writer: Writer) {
         live.then_some("work:frame-the-walls"),
         "{reached}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -715,7 +697,6 @@ async fn the_page_of_a_bot(writer: Writer) {
         page.never_says("history=working_on");
         page.says("working-on-unknown");
     }
-    story.finish().await;
 }
 
 #[tokio::test]

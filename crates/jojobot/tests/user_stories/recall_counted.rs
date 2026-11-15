@@ -115,5 +115,4 @@ async fn a_counted_selection_says_what_sits_under_each_object_and_when_it_was_wr
         board_written < leaf_written,
         "a later write to the leaf does not move the board's instant: {board} against {leaf}"
     );
-    story.finish().await;
 }

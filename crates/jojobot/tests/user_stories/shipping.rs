@@ -81,8 +81,6 @@ async fn a_session_reads_one_charter_and_never_learns_which_half_shipped() {
     let after = s.call("start_here", json!({"bot": "assistant"})).await;
     after.says("waters the fern");
     after.says("THEIR WORD IS GROUND TRUTH");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -108,6 +106,4 @@ async fn a_bot_the_build_supplies_nothing_for_answers_with_its_own_words_alone()
         "nothing is supplied for a bot the operator stood up: {}",
         theirs.raw(),
     );
-
-    story.finish().await;
 }

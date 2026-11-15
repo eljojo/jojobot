@@ -69,8 +69,6 @@ async fn a_session_that_closed_properly_is_what_the_next_one_is_handed() {
         !resumable.contains(&sid.as_str()),
         "a wrapped run is being offered as something to resume: {answered}",
     );
-
-    story.finish().await;
 }
 
 /// "I stopped twice without wrapping. Which one do I pick up?" The offer a boot
@@ -144,7 +142,6 @@ async fn the_resume_offer_names_each_run_and_resuming_by_one_lands() {
         resumed["session"]["run"], second_sid,
         "and not on the other: {resumed}"
     );
-    story.finish().await;
 }
 
 /// "The offer is the second time I have read the essay. What do I send back?" Send
@@ -231,7 +228,6 @@ async fn the_answer_to_the_offer_carries_only_what_is_new_and_names_the_call_for
     assert!(again["orientation"].is_string(), "{again}");
     assert!(again["snapshot"]["entities"].is_object(), "{again}");
     assert!(again["session"]["handover"].is_object(), "{again}");
-    story.finish().await;
 }
 
 /// "I wrote 'shift done' in my journal, and then wrapped with the same words."
@@ -263,5 +259,4 @@ async fn a_wrap_whose_story_repeats_a_journal_entry_still_writes_its_closing_ent
         "the closing entry carries the focus: {}",
         wrapped.raw()
     );
-    story.finish().await;
 }

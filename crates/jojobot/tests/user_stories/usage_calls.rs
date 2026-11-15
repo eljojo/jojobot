@@ -169,7 +169,6 @@ async fn each_bots_week_counts_its_calls_and_refusals_per_verb() {
         Some("2"),
         "{kept}"
     );
-    story.finish().await;
 }
 
 /// What the store beneath the server holds for calls that belong to no bot, by
@@ -224,7 +223,6 @@ async fn a_call_with_no_session_is_counted_under_no_bot() {
         Some("1"),
         "{week}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -254,7 +252,6 @@ async fn a_verb_nobody_serves_is_counted_under_one_name_and_not_the_name_sent() 
         !week.to_string().contains("nobody_serves"),
         "a name the caller chose keys no count: {week}"
     );
-    story.finish().await;
 }
 
 /// The fields of the session's own bot's week of the story, read as the bot
@@ -298,7 +295,6 @@ async fn a_count_the_store_cannot_keep_never_fails_the_call() {
     );
     // The capture landed while the store refused, and no count of it was kept.
     assert_eq!(field(&after, "calls_capture"), None, "{after}");
-    story.finish().await;
 }
 
 /// **The boot is among the calls of the run it opens.** A first boot carries no
@@ -342,7 +338,6 @@ async fn the_boot_call_is_counted_under_the_run_it_opens() {
         Some("1"),
         "{marge_week}"
     );
-    story.finish().await;
 }
 
 /// **The call that ends a run is counted for the run that made it.** Wrapping
@@ -377,7 +372,6 @@ async fn the_call_that_ends_a_run_is_counted_for_its_bot_on_its_stated_day() {
         .refused("recall", json!({"subject": "usage:otto-2026-w40"}))
         .await;
     clock_week.says("\"fix_by\":\"change\"");
-    story.finish().await;
 }
 
 /// How many `start_here` calls the store holds under no bot, landed and refused.
@@ -475,7 +469,6 @@ async fn a_refused_boot_is_counted_under_no_bot_an_offer_under_its_bot_and_a_res
         Some("3"),
         "the resume is a third boot of Bart's run: {after_resume}"
     );
-    story.finish().await;
 }
 
 /// **A compaction report with no handle is counted under the run it reports.**
@@ -506,7 +499,6 @@ async fn a_compaction_report_with_no_handle_is_counted_under_the_run_and_its_day
     assistant
         .refused("recall", json!({"subject": "usage:otto-2026-w40"}))
         .await;
-    story.finish().await;
 }
 
 /// **A boot that is handed the resume-or-new offer is counted under the bot it
@@ -536,7 +528,6 @@ async fn a_boot_that_is_offered_a_resume_is_counted_under_the_bot_it_named() {
         offered.json()
     );
     assert_eq!(boots().await, before + 1, "the offered boot is counted");
-    story.finish().await;
 }
 
 /// **A blank handle is no handle, for counting as for the boot.** The boot
@@ -569,7 +560,6 @@ async fn a_boot_that_sends_a_blank_handle_is_counted_under_the_run_it_opens() {
         Some("1"),
         "{week}"
     );
-    story.finish().await;
 }
 
 /// **Everything a usage week counts for one run lands in the same week.** The
@@ -611,7 +601,6 @@ async fn a_compaction_a_call_and_a_served_day_of_one_run_land_in_the_same_week()
         .refused("recall", json!({"subject": "usage:otto-2026-w42"}))
         .await;
     real.says("\"fix_by\":\"change\"");
-    story.finish().await;
 }
 
 /// **A run that states no day keeps its compaction on the day it was recorded.**
@@ -639,5 +628,4 @@ async fn a_compaction_of_a_run_that_states_no_day_is_counted_on_the_day_it_was_r
         .refused("recall", json!({"subject": "usage:otto-2026-w41"}))
         .await;
     before.says("\"fix_by\":\"change\"");
-    story.finish().await;
 }

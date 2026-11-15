@@ -242,8 +242,6 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     // The page no longer says what a thing conforms to: the section was dropped,
     // so a thing's page holds its fields and nothing about the types it fits.
     page.never_says("Conforms to");
-
-    story.finish().await;
 }
 
 /// "Which of my deliveries are complete?" — asked when most of them are not.

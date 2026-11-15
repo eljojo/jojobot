@@ -69,5 +69,4 @@ async fn a_claim_beside_a_skill_refuses_the_call_and_claims_nothing() {
         .await
         .json();
     assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
-    story.finish().await;
 }

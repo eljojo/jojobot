@@ -212,6 +212,4 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
     winter
         .wrap("answered what the record says, and that it once said the opposite")
         .await;
-
-    story.finish().await;
 }

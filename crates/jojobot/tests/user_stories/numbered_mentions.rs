@@ -72,7 +72,6 @@ async fn a_posted_message_naming_a_members_number_links_the_member() {
     s.call("read_mailbox", json!({}))
         .await
         .says(&format!("{COLLECTION}/999 (no such handle)"));
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -151,7 +150,6 @@ async fn a_document_section_naming_a_members_number_links_the_member_or_is_refus
         )
         .await;
     refused.says(COLLECTION).says("999");
-    story.finish().await;
 }
 
 /// **A reason cannot carry an unknown stored mark**: a mark whose badge nobody
@@ -172,7 +170,6 @@ async fn an_archive_reason_carrying_the_stored_mark_is_refused() {
         json!({"handle": "thing:kettle", "reason": "replaced"}),
     )
     .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -369,7 +366,6 @@ async fn a_reason_naming_a_members_number_follows_it_through_a_rename() {
         .await
         .says(renamed)
         .never_says(PARKING);
-    story.finish().await;
 }
 
 /// **A slash and a number after a thing that numbers nothing does not move the
@@ -403,7 +399,6 @@ async fn a_slash_number_after_a_thing_that_numbers_nothing_walks_to_the_thing() 
     .await
     .says("thing:kettle")
     .never_says("thing:kettle/2");
-    story.finish().await;
 }
 
 /// **A blank `numbers_by` numbers nothing**, the way the domain reads it: a slash
@@ -434,7 +429,6 @@ async fn a_blank_numbering_key_numbers_nothing() {
         .says("@thing:kettle/2 with a empty key")
         .says("@thing:kettle/2 with a spaces key")
         .never_says("no such handle");
-    story.finish().await;
 }
 
 /// **A restore is screened before anything is written**, and the screen reads a
@@ -498,7 +492,6 @@ async fn a_restore_of_history_naming_a_number_nobody_holds_is_refused_whole() {
         .await
         .says("at five")
         .never_says("at six");
-    story.finish().await;
 }
 
 /// **A refused number offers real things only.** The roster carries a marker for
@@ -522,7 +515,6 @@ async fn a_refused_number_offers_real_candidates_only() {
         candidates.contains(COLLECTION) && !candidates.contains("/#"),
         "the candidates of a miss: {candidates}"
     );
-    story.finish().await;
 }
 
 /// **The page links the handle before digits that are no number**, whole through
@@ -552,5 +544,4 @@ async fn a_page_links_the_handle_before_digits_that_are_no_number() {
         );
     }
     assert!(page.contains(">@thing:kettle/2</a> today"), "{page}");
-    story.finish().await;
 }

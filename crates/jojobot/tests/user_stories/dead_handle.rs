@@ -80,7 +80,7 @@ async fn two_runs_one_taken_over() -> (Story, Story, [(String, String); 2]) {
 /// stopped, so it is listed as one a name picks up, and it is the one call named.
 #[tokio::test]
 async fn a_retired_key_and_a_closed_run_list_what_is_in_flight_and_resume_nothing() {
-    let (story, later, [(taken, old_key), (stopped, stopped_key)]) =
+    let (_story, later, [(taken, old_key), (stopped, stopped_key)]) =
         two_runs_one_taken_over().await;
     let asker = later.as_bot("bot:delta").await;
 
@@ -162,8 +162,6 @@ async fn a_retired_key_and_a_closed_run_list_what_is_in_flight_and_resume_nothin
     let picked = picked.expect("the named call hands back a key");
     assert_eq!(picked.run(), stopped);
     assert_ne!(picked.sid(), stopped_key);
-    later.finish().await;
-    story.finish().await;
 }
 
 /// **A wrapped run is offered the wrap code only as "if you hold it", and the
@@ -206,7 +204,6 @@ async fn a_wrapped_runs_refusal_offers_its_handover_and_never_its_code() {
         body["in_flight"]["wrap_code"].is_string(),
         "the wrap code route is named, as a route and not as a code: {body}"
     );
-    story.finish().await;
 }
 
 /// **A key jojobot does not hold names no bot, so nothing is listed.**
@@ -227,5 +224,4 @@ async fn a_key_jojobot_does_not_hold_lists_nothing() {
         "{}",
         refused.raw()
     );
-    story.finish().await;
 }

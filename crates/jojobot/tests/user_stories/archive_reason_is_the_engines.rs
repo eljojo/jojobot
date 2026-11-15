@@ -96,5 +96,4 @@ async fn a_caller_cannot_send_or_clear_archive_reason_and_an_archive_still_recor
         "the picnic is back on",
         "{read}"
     );
-    story.finish().await;
 }

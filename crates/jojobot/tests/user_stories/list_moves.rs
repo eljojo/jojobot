@@ -85,7 +85,6 @@ async fn a_back_list_reads_a_moved_entry_first_until_it_is_ticked_and_then_resum
         read_back(&s, "list:rotation").await,
         ["Lisa", "Homer", "Bart"]
     );
-    story.finish().await;
 }
 
 /// **An entry put after another reads right behind it**, even when the other has
@@ -116,7 +115,6 @@ async fn a_back_list_reads_an_entry_put_after_another_behind_it_until_it_is_tick
         ["Lisa", "Bart", "Homer"],
         "Homer's own turn ends the hold: the rotation goes by turns again"
     );
-    story.finish().await;
 }
 
 /// **An entry sent to the end reads last, behind the entries that took a turn.**
@@ -139,7 +137,6 @@ async fn a_back_list_reads_an_entry_sent_to_the_end_last_until_it_is_ticked() {
         ["Lisa", "Homer", "Bart"],
         "Bart's turn puts him at the end, which is where the move left him"
     );
-    story.finish().await;
 }
 
 /// **On a checklist and on a queue a move puts the entry where it was asked,
@@ -194,7 +191,6 @@ async fn a_move_holds_on_sink_and_leave_lists_and_a_tick_does_what_the_list_is_f
     s.call("capture", ticking("list:errands", &shop, "done"))
         .await;
     assert_eq!(read_back(&s, "list:errands").await, ["post", "bank"]);
-    story.finish().await;
 }
 
 /// **A move is refused, naming the way forward, when it cannot be honoured, and
@@ -253,7 +249,6 @@ async fn a_move_that_cannot_be_honoured_is_refused_and_writes_nothing() {
         read_back(&s, "list:packing").await,
         ["lantern", "stove", "tent"]
     );
-    story.finish().await;
 }
 
 /// **A new entry sits where the caller asked, in the order the list reads.** On
@@ -286,7 +281,6 @@ async fn a_new_entry_on_a_rotation_that_has_turned_sits_where_the_list_reads_it(
         ["Bart", "Marge", "Lisa", "Homer", "Maggie", "Ned"],
         "with no `after` the entry goes to the end the list reads"
     );
-    story.finish().await;
 }
 
 /// **An entry cannot be put behind one that is done**, as a move is not: a done
@@ -323,7 +317,6 @@ async fn a_new_entry_cannot_be_put_behind_a_done_entry() {
         ["lantern", "stove", "tent"],
         "the same call on a place that exists lands"
     );
-    story.finish().await;
 }
 
 /// **A move needs no say-so from the session that wrote the entry.** The entry's
@@ -354,5 +347,4 @@ async fn another_session_moves_an_entry_without_touching_its_words() {
         .await
         .says("\"wrote\":false");
     assert_eq!(read_back(&mover, "list:rotation").await, ["Homer", "Bart"]);
-    story.finish().await;
 }

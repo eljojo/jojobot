@@ -74,7 +74,6 @@ async fn closing_a_batch_refuses_a_blank_id_before_closing_any_message() {
             .json();
         assert_eq!(stored["notes"], "both checked", "{stored}");
     }
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -136,5 +135,4 @@ async fn a_read_mail_pile_teaches_batch_close_and_names_the_manager_once_until_c
         Value::Null,
         "{below_again}"
     );
-    story.finish().await;
 }

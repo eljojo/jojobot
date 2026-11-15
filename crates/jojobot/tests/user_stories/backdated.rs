@@ -65,7 +65,6 @@ async fn a_default_search_keeps_text_relevance_ahead_of_recency() {
         .json();
     assert_eq!(chosen["results"][0]["address"], newer, "{chosen}");
     assert_eq!(chosen["results"][1]["address"], older, "{chosen}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -293,6 +292,4 @@ async fn a_run_working_through_a_past_week_writes_in_that_week() {
     .says("rhythm:descale");
 
     now.wrap("recorded one thing, today").await;
-
-    story.finish().await;
 }

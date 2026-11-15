@@ -203,8 +203,6 @@ async fn one_summary_stands_for_three_separate_notes() {
 
     s2.wrap("checked who actually backs the shoulder measurement")
         .await;
-
-    story.finish().await;
 }
 
 /// "I archived the summary, and now the notes it was drawn from are nowhere."
@@ -303,7 +301,6 @@ async fn an_archived_summary_never_hides_the_active_notes_it_stood_for() {
         "the note counts exactly the two sources it left out: {}",
         every.raw(),
     );
-    story.finish().await;
 }
 
 /// **One layer, so the pile is always one step away, whichever mark is written
@@ -365,5 +362,4 @@ async fn a_note_that_a_summary_stands_for_cannot_become_a_summary_itself() {
         json!({"address": &note, "stands_for": [&third]}),
     )
     .await;
-    story.finish().await;
 }

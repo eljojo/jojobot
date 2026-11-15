@@ -166,6 +166,4 @@ async fn where_did_you_get_that() {
 
     s.wrap("one bad source, two claims, and no way to reach the second")
         .await;
-
-    story.finish().await;
 }

@@ -66,5 +66,4 @@ async fn a_read_that_finds_no_week_names_the_read_that_lists_the_weeks() {
         .says("recall")
         .never_says("add_entity")
         .never_says("again");
-    story.finish().await;
 }

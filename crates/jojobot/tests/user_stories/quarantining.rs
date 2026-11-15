@@ -82,7 +82,6 @@ async fn a_blank_quarantine_reason_is_refused_and_retires_nothing() {
 
     g.wrap("set the stray aside and finished the real one")
         .await;
-    story.finish().await;
 }
 
 /// A quarantine records no outcome, so `notes` beside it has nowhere to go.
@@ -134,7 +133,6 @@ async fn a_quarantine_beside_notes_is_refused_and_nothing_is_written() {
     .says("\"state\":\"quarantined\"");
 
     g.wrap("refused the pair, then set the stray aside").await;
-    story.finish().await;
 }
 
 /// **A finished message is never set aside.** Processed is terminal and its
@@ -207,5 +205,4 @@ async fn a_processed_message_is_refused_a_quarantine_and_stays_readable() {
     assert!(!landed.json().to_string().contains("read_message"));
 
     second.wrap("left the archive alone").await;
-    story.finish().await;
 }

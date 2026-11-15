@@ -90,7 +90,6 @@ async fn a_write_on_a_handle_the_server_no_longer_holds_is_told_where_to_get_ano
 
     s.wrap("lost the handle over the weekend, went back to the door, carried on")
         .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -135,7 +134,6 @@ async fn a_read_on_a_lost_handle_is_refused_while_one_with_no_handle_is_served()
 
     s.wrap("read on a handle that was gone, and got told so")
         .await;
-    story.finish().await;
 }
 
 /// "I came back to a bot that had a run in flight, and the refusal told me
@@ -205,7 +203,6 @@ async fn a_write_with_no_handle_is_told_the_whole_route_to_one() {
         .says("learned after booting");
 
     fresh.wrap("followed the refusal's route to a handle").await;
-    story.finish().await;
 }
 
 /// "I was never told which bot I am, and the refusal told me to call start_here
@@ -289,7 +286,6 @@ async fn a_caller_with_no_handle_and_no_bot_name_is_sent_to_the_door_that_lists_
         .await;
     let known = known.expect("a caller that was told its bot name boots without the list");
     known.wrap("booted by name").await;
-    story.finish().await;
 }
 
 /// "I read my box before I had a handle, and the refusal sent me to a door that
@@ -344,5 +340,4 @@ async fn a_read_of_the_box_with_no_handle_is_told_the_whole_route_to_one() {
         .says("the kiln is relined");
 
     fresh.wrap("followed the read's refusal to a handle").await;
-    story.finish().await;
 }

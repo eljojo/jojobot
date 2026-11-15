@@ -224,8 +224,6 @@ async fn a_server_acting_out_a_day_answers_in_that_day_without_being_told_the_da
     );
 
     later.wrap("read June back from July").await;
-    july.finish().await;
-    june.finish().await;
 }
 
 /// **The control, and the whole feature rests on it.** An instance nobody told
@@ -258,5 +256,4 @@ async fn a_server_nobody_told_a_day_runs_on_the_real_clock_and_says_nothing() {
     );
 
     session.wrap("recorded one thing, today").await;
-    story.finish().await;
 }

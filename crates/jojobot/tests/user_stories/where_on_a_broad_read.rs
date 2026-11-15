@@ -128,8 +128,6 @@ async fn the_first_read_of_a_whole_kind_names_where_with_an_example_from_its_own
         "a teaching rides once per session: {}",
         again.raw()
     );
-
-    story.finish().await;
 }
 
 /// A read that already narrows carries none, in a session that has not been taught
@@ -162,8 +160,6 @@ async fn a_read_that_already_narrows_carries_no_teaching_and_leaves_it_for_the_w
         "the reads that narrowed spent nothing: {}",
         whole.raw()
     );
-
-    story.finish().await;
 }
 
 /// A kind with a few objects is read whole for free, so the read is not taught; the
@@ -196,8 +192,6 @@ async fn a_whole_read_of_a_small_kind_carries_none_and_a_larger_one_does() {
         "the small read spent nothing: {}",
         grown.raw()
     );
-
-    story.finish().await;
 }
 
 /// **The teaching rides once for each kind a session reads whole**, not once for the
@@ -267,6 +261,4 @@ async fn a_session_is_taught_once_for_each_kind_it_reads_whole() {
             again.raw()
         );
     }
-
-    story.finish().await;
 }

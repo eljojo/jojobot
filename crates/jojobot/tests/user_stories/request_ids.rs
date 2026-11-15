@@ -73,8 +73,6 @@ async fn a_write_sent_again_returns_the_first_receipt_and_writes_nothing() {
         "the same arguments did not differ: {again}"
     );
     assert_eq!(claims(&s).await, 1, "nothing was written the second time");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -95,8 +93,6 @@ async fn the_same_id_from_another_bot_writes_normally() {
         "another bot's id is its own: {theirs}"
     );
     assert_eq!(claims(&s).await, 2);
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -121,8 +117,6 @@ async fn an_id_sent_with_other_arguments_returns_the_first_receipt_and_says_so()
         "the first receipt comes back"
     );
     assert_eq!(claims(&s).await, 1, "the second claim was not written");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -149,8 +143,6 @@ async fn a_restart_between_the_two_calls_still_recognises_the_repeat() {
         "the first receipt survives the restart"
     );
     assert_eq!(claims(&s).await, 1);
-
-    restarted.finish().await;
 }
 
 /// A late receipt from the first use of an id cannot replace the receipt of
@@ -204,7 +196,6 @@ async fn a_reused_id_replays_its_own_receipt_after_a_late_old_fill() {
         "the late first receipt did not replace the second"
     );
     assert_eq!(claims(&s).await, 2);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -230,8 +221,6 @@ async fn a_write_that_stored_nothing_spends_no_id() {
         "the blocked call spent nothing: {landed}"
     );
     assert_eq!(claims(&s).await, 1);
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -273,8 +262,6 @@ async fn an_id_needs_a_session_and_a_good_shape() {
         .await;
     s.call("capture", capture("wears glasses", "r1")).await;
     assert_eq!(claims(&s).await, 2);
-
-    story.finish().await;
 }
 
 /// A write sent twice under one id leaves one write behind, and the second
@@ -333,8 +320,6 @@ async fn an_entity_made_twice_under_one_id_is_made_once() {
         without_repeat_marks(made),
         "the first receipt"
     );
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -372,8 +357,6 @@ async fn an_edit_sent_twice_under_one_id_counts_once() {
     )
     .await
     .says("\"donuts\":\"2\"");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -410,8 +393,6 @@ async fn an_archive_a_merge_and_a_retraction_sent_twice_under_one_id_are_made_on
     let retract = json!({ "address": claim, "reason": "mistaken", "request_id": "t1" });
     s.call("retract", retract.clone()).await;
     is_a_repeat(&s.call("retract", retract).await.json());
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -448,8 +429,6 @@ async fn a_type_and_a_charter_sent_twice_under_one_id_keep_the_first() {
     .await
     .says("The first words.")
     .never_says("Different words.");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -510,8 +489,6 @@ async fn a_message_posted_and_retired_twice_under_one_id_is_posted_and_retired_o
         .await
         .says("done the first way")
         .never_says("done another way");
-
-    story.finish().await;
 }
 
 /// What the run has been charged and told so far, **read the way a caller reads
@@ -603,6 +580,4 @@ async fn a_repeat_replays_no_beat_and_no_accounting() {
         fifth - fourth
     );
     assert_ne!(after_fresh, still, "a new write moves the beat's count");
-
-    story.finish().await;
 }

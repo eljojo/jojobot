@@ -149,7 +149,6 @@ async fn an_archived_claim_is_found_below_the_active_ones_and_a_retracted_one_is
 
     s.wrap("looked for what the record says about the kite and the car")
         .await;
-    story.finish().await;
 }
 
 /// A claim that was replaced says by what: the old hit carries the address of
@@ -187,5 +186,4 @@ async fn a_replaced_claim_names_the_claim_that_replaced_it() {
 
     s.wrap("replaced a claim and read it back through the search")
         .await;
-    story.finish().await;
 }

@@ -164,8 +164,6 @@ async fn a_run_reads_what_it_was_served_over_its_life_and_since_its_compaction()
         record["fields"].get("refused_recall").is_none(),
         "a verb that was never refused has no key: {record}"
     );
-
-    later.finish().await;
 }
 
 #[tokio::test]
@@ -208,6 +206,4 @@ async fn a_stored_compaction_that_is_no_number_is_no_compaction_in_any_read() {
         .json();
     let week = &weeks["objects"][0];
     assert_eq!(field_number(week, "compactions"), 1, "{weeks}");
-
-    story.finish().await;
 }

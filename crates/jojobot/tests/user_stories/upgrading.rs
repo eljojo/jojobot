@@ -59,6 +59,4 @@ async fn a_kind_the_software_stopped_shipping_is_gone_after_the_upgrade() {
     // broken instance as a working one.
     s.add("thing:jukebox", "The Jukebox").await;
     s.recall("thing:jukebox").await.says("The Jukebox");
-
-    story.finish().await;
 }

@@ -58,8 +58,6 @@ async fn a_key_set_on_a_shipped_view_is_found_by_key_like_one_set_on_a_stored_vi
     );
     // The positive the absence rests on: a key nobody set matches nothing.
     assert!(asked_by_key(&s, "answer_8", None).await.is_empty());
-
-    story.finish().await;
 }
 
 /// An archive of a record the build supplies is refused with nothing written
@@ -88,8 +86,6 @@ async fn an_archive_of_a_supplied_record_is_refused_and_one_of_the_operators_own
         json!({"handle": "view:my-bikes", "reason": "tidying"}),
     )
     .await;
-
-    story.finish().await;
 }
 
 /// **A sets-only edit of a record the build supplies lands, through the served
@@ -150,5 +146,4 @@ async fn a_sets_only_edit_of_a_shipped_view_lands_through_the_surface_like_one_o
         read["objects"][0]["fields"]["selects"].is_string(),
         "what the build ships is still there under the edit: {read}"
     );
-    story.finish().await;
 }

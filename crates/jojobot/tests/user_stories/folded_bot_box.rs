@@ -74,7 +74,6 @@ async fn a_boot_opens_no_box_for_a_folded_bot_and_one_for_an_unfolded_bot() {
         (0, 0, 0),
         "delta's healed box is empty and readable"
     );
-    story.finish().await;
 }
 
 /// **Mail to the folded bot's handle reaches the survivor**, and the receipt
@@ -111,5 +110,4 @@ async fn mail_to_a_folded_bot_reaches_the_survivor_and_the_receipt_names_the_fol
         .await
         .says("<h1>Index of /bot:lisa/</h1>")
         .never_says("<h2>Mailbox ");
-    story.finish().await;
 }

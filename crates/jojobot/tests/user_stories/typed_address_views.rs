@@ -78,7 +78,6 @@ async fn a_saved_view_names_a_decision_by_its_number_and_follows_its_rename() {
         .call("recall", json!({"view": "twelfth-rule-ledger"}))
         .await;
     assert_eq!(after.ids(), ["thing:omega"], "{}", after.raw());
-    story.finish().await;
 }
 
 /// **A number nobody holds is refused where the view is saved**, naming what it
@@ -113,7 +112,6 @@ async fn a_saved_view_naming_a_number_nobody_holds_is_refused() {
         json!({"subject": "view:ninety-ninth-rule-ledger"}),
     )
     .await;
-    story.finish().await;
 }
 
 /// **A view that takes a decision as an input takes it by its number**, and the
@@ -155,7 +153,6 @@ async fn a_view_input_of_kind_decision_takes_a_decision_by_its_number() {
     )
     .await
     .says("names nothing");
-    story.finish().await;
 }
 
 /// **A document that is a member of a numbered collection is read by its
@@ -197,7 +194,6 @@ async fn a_document_that_is_a_numbered_member_is_read_by_its_number() {
     );
     s.refused("read_document", json!({"document": format!("{RULES}/99")}))
         .await;
-    story.finish().await;
 }
 
 /// **An edit sent a member's number reports an edit, as the same edit sent the
@@ -261,7 +257,6 @@ async fn an_edit_sent_a_members_number_reports_an_edit_and_not_a_creation() {
         stored["objects"][0]["archived"]["reason"], "repealed",
         "{stored}"
     );
-    story.finish().await;
 }
 
 /// **A document that is a numbered member is written by its number**, as it is
@@ -291,7 +286,6 @@ async fn a_document_that_is_a_numbered_member_is_written_by_its_number() {
         "{}",
         read.raw()
     );
-    story.finish().await;
 }
 
 /// One member of a numbered collection: a topic also numbers its own members.
@@ -375,7 +369,6 @@ async fn an_address_through_two_collections_names_its_member_everywhere() {
     .await;
     let saved = s.call("recall", json!({"view": "minutes-ledger"})).await;
     assert_eq!(saved.ids(), ["thing:omega"], "{}", saved.raw());
-    story.finish().await;
 }
 
 /// `count` aliases of about 130 characters, none shared with any other.
@@ -433,7 +426,6 @@ async fn a_relabelling_too_big_to_read_is_refused_by_number_as_by_handle() {
         "{}",
         kept.raw()
     );
-    story.finish().await;
 }
 
 /// **A collection that was renamed still answers for its numbers by its old
@@ -520,5 +512,4 @@ async fn a_number_through_a_renamed_collections_old_handle_names_its_member() {
     )
     .await
     .says("\"wrote\":false");
-    story.finish().await;
 }

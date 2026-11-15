@@ -101,5 +101,4 @@ async fn a_skill_scoped_to_one_bot_is_listed_for_that_bot_and_fetched_by_all() {
             "{who} could not fetch the scoped skill: {fetched}"
         );
     }
-    story.finish().await;
 }

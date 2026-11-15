@@ -93,7 +93,6 @@ async fn a_merge_refusal_names_the_archive_route_only_to_a_caller_whose_archive_
     s.call("recall", json!({"subject": DUPLICATE}))
         .await
         .says(SURVIVOR);
-    story.finish().await;
 }
 
 /// **A bot that set a ceiling on a thread and took it off again is no writer of
@@ -147,5 +146,4 @@ async fn a_bot_that_set_a_ceiling_and_took_it_off_is_not_made_a_writer_by_it() {
         .refused("capture", record_ceiling("thread:beta"))
         .await
         .says("record_capacity");
-    story.finish().await;
 }

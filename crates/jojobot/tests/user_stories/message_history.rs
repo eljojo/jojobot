@@ -100,7 +100,6 @@ async fn a_reader_can_see_each_change_of_a_message_and_the_run_that_made_it() {
         current.raw()
     );
     second.wrap("read it back").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -141,5 +140,4 @@ async fn reading_a_history_takes_no_delivery_and_a_plain_read_still_does() {
     after.number("/history/count", 1);
     assert_eq!(after.json()["history"]["events"][0]["kind"], "read");
     g.wrap("looked").await;
-    story.finish().await;
 }

@@ -66,7 +66,6 @@ async fn the_room_in_the_third_run(journal_first: bool) -> (Answer, Vec<String>)
     let third = story.session().await;
     third.journal("starting the third run").await;
     let room = third.recall("bot:otto").await;
-    story.finish().await;
     (room, thoughts)
 }
 

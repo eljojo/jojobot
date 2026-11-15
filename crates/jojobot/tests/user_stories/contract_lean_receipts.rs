@@ -103,7 +103,6 @@ async fn fixed_set(lean: bool) -> Vec<(&'static str, Value)> {
         .json();
     assert_eq!(refused["status"], "blocked", "{refused}");
     assert!(refused.get("success").is_none(), "{refused}");
-    story.finish().await;
     receipts
 }
 
@@ -248,7 +247,6 @@ async fn lean_receipts_sets_only_edits_do_not_repeat_claim_labels() {
     let claim = read.claim(address).json();
     assert_eq!(claim["content"], "the wheel squeaks");
     assert_eq!(claim["provenance"], "inference");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -280,7 +278,6 @@ async fn lean_receipts_details_only_edits_do_not_repeat_claim_labels() {
         assert_eq!(claim["details"], details);
         assert_eq!(claim["provenance"], "inference");
     }
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -341,7 +338,6 @@ async fn lean_receipts_show_generated_claims_only_when_asked() {
         2,
         "{stored}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -399,7 +395,6 @@ async fn lean_receipts_review_derivations_name_mentions_without_echoing_refs() {
     .await
     .says("\"mention\":true")
     .says("\"ref\":true");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -457,7 +452,6 @@ async fn lean_receipts_review_derivations_warn_only_at_or_over_capacity() {
         "{}",
         receipts[2]
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -521,5 +515,4 @@ async fn lean_receipts_keep_archived_source_warnings_on_normal_writes() {
         missing.is_empty(),
         "archived-source warnings missing: {missing:?}"
     );
-    story.finish().await;
 }

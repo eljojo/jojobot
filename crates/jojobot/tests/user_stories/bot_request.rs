@@ -207,7 +207,6 @@ async fn a_manager_asks_for_a_bot_and_only_its_app_reports_on_it() {
         json!({"subject": "bot-request:alpha", "content": "A note from a bystander."}),
     )
     .await;
-    story.finish().await;
 }
 
 /// **Only the app a request names writes its status, whichever other app holds
@@ -331,7 +330,6 @@ async fn only_the_app_a_request_names_writes_its_status() {
             "{handle} is as it was"
         );
     }
-    story.finish().await;
 }
 
 /// The status a request holds, as an app reads it with the token it holds.
@@ -386,7 +384,6 @@ async fn clearing_a_spec_key_raises_the_generation_and_the_generation_stays() {
         .await
         .says("\"wrote\":false");
     assert_eq!(generation().await, "2", "the generation is still held");
-    story.finish().await;
 }
 
 /// Clearing an older spec claim leaves the app reconciled with the held spec.
@@ -484,7 +481,6 @@ async fn clearing_an_older_desired_claim_keeps_the_generation() {
     assert!(cleared.get("desired").is_none(), "{cleared}");
     assert_eq!(cleared["generation"], "4", "{cleared}");
     assert_eq!(cleared["observed_generation"], "2", "{cleared}");
-    story.finish().await;
 }
 
 /// **An entity update that changes the spec raises the generation too.** The
@@ -521,7 +517,6 @@ async fn updating_the_entity_raises_the_generation_of_a_request() {
         )
         .await;
     assert_eq!(read().await, ("2".into(), "stopped".into()));
-    story.finish().await;
 }
 
 /// **A request is not merged away, and the refusal does not send the caller to a
@@ -575,7 +570,6 @@ async fn a_request_is_not_merged_away_and_the_refusal_names_it() {
             json!({"duplicate": "bot-request:beta", "survivor": "topic:scrapbook"}),
         )
         .await;
-    story.finish().await;
 }
 
 /// **An ordinary thing that carries a status key is not a request, and the
@@ -652,7 +646,6 @@ async fn an_ordinary_thing_merged_into_a_request_is_told_to_archive_the_claim_th
             .is_none(),
         "the merge put the archived status key on the request: {request}"
     );
-    story.finish().await;
 }
 
 /// **A manager sends a `reports_to` beside the target, and the target's own
@@ -686,7 +679,6 @@ async fn naming_a_manager_beside_the_target_does_not_change_who_judges_it() {
         .says("\"wrote\":false")
         .says("bot:bart");
     bart.call("add_entity", creating(asked)).await;
-    story.finish().await;
 }
 
 /// **Taking back an older partial spec changes the folded spec, so the
@@ -770,7 +762,6 @@ async fn taking_back_an_older_partial_spec_carries_the_next_generation() {
         ("6".into(), "halted".into(), "model-b".into()),
         "a withdrawal that uncovers nothing carries no number",
     );
-    story.finish().await;
 }
 
 /// **Archiving a claim of a request changes its folded spec the way a retraction
@@ -848,7 +839,6 @@ async fn archiving_a_claim_of_a_request_carries_the_next_generation() {
         ("5".into(), "running".into(), "model-a".into()),
         "the claim that held the number is archived, and the number goes up",
     );
-    story.finish().await;
 }
 
 /// **A merge that brings a spec key onto a request changes its folded spec, so
@@ -919,7 +909,6 @@ async fn merging_a_spec_onto_a_request_carries_the_next_generation() {
         ("2".into(), "stopped".into(), "model-b".into()),
         "a merge that brings no spec key carries no number",
     );
-    story.finish().await;
 }
 
 /// **Taking back the claim that carries the newest number, under a later resend
@@ -994,5 +983,4 @@ async fn taking_back_a_covered_carrier_carries_the_next_generation() {
         ("5".into(), "halted".into()),
         "an archive of the covered carrier carries the next number too",
     );
-    story.finish().await;
 }

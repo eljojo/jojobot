@@ -154,7 +154,6 @@ async fn a_parse_refusal_names_the_spelling_that_works() {
         "{}",
         fixed.raw()
     );
-    story.finish().await;
 }
 
 /// **A key held on records and not on the thing is refused with the scope that
@@ -221,7 +220,6 @@ async fn a_key_held_on_records_names_the_scope_that_asks_it() {
         "a misspelt key is not a scope mistake: {}",
         misspelt.raw()
     );
-    story.finish().await;
 }
 
 /// **A comparison no declaration licenses is refused with the declaration to make**,
@@ -284,7 +282,6 @@ async fn a_licence_refusal_names_the_type_to_declare() {
         "{}",
         fixed.raw()
     );
-    story.finish().await;
 }
 
 /// **An order on a key nothing holds is refused as a term on it is**, naming the
@@ -333,7 +330,6 @@ async fn an_order_on_a_key_nothing_holds_is_refused_not_tied() {
         "{}",
         ordered.raw()
     );
-    story.finish().await;
 }
 
 /// **A walk's `keeping` is checked for its keys as a selection's `where` is**, and
@@ -397,7 +393,6 @@ async fn a_walks_keeping_is_checked_and_its_unlicensed_drops_are_counted() {
         "nothing is left out once the kind licenses it: {}",
         kept.raw()
     );
-    story.finish().await;
 }
 
 /// **A recall that narrows nothing is refused, naming `where` among what narrows**,
@@ -410,7 +405,6 @@ async fn the_refusal_of_a_recall_that_narrows_nothing_lists_where() {
     s.refused("recall", json!({})).await.says("where");
     let fixed = s.call("recall", json!({"where": "status = done"})).await;
     assert_eq!(fixed.ids(), ["thing:sweep-the-porch"], "{}", fixed.raw());
-    story.finish().await;
 }
 
 /// **A view and a caller combine as the view's comment says.** A caller's `where`
@@ -470,7 +464,6 @@ async fn a_view_and_a_caller_combine_without_silence() {
         .says("where")
         .says("==");
     s.call("add_entity", declare("status = next")).await;
-    story.finish().await;
 }
 
 /// A handle slug that sorts nowhere near the order the story asks for, so the
@@ -546,5 +539,4 @@ async fn an_order_holds_across_the_pages_of_an_answer() {
         "one window must not hold them all: {pages} page"
     );
     assert_eq!(seen, expected, "the order held across {pages} pages");
-    story.finish().await;
 }

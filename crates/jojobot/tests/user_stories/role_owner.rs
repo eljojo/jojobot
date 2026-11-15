@@ -122,7 +122,6 @@ async fn a_claim_at_the_door_is_refused_when_the_role_belongs_to_another_bot() {
     s.list("role").await.says("role:carpool");
 
     s.wrap("kept dinners with marge").await;
-    story.finish().await;
 }
 
 fn reporting_to(subject: &str, manager: &str) -> serde_json::Value {
@@ -235,7 +234,6 @@ async fn only_the_owner_or_the_chart_head_may_archive_or_restore_a_role_object()
     s.list("role").await.says("role:dinners");
 
     s.wrap("kept the role object with its owner").await;
-    story.finish().await;
 }
 
 /// "Marge's assistant archived the dinner plan. Can anyone claim it now?"
@@ -308,7 +306,6 @@ async fn a_claim_on_an_archived_role_object_is_refused_naming_the_restore() {
     );
 
     s.wrap("archived and restored the role object").await;
-    story.finish().await;
 }
 
 /// "Marge's assistant archived the dinner plan. Can a note still be written on it?"
@@ -357,7 +354,6 @@ async fn a_memory_claim_on_an_archived_role_object_still_lands() {
         read.to_string().contains("kept for the record"),
         "the claim is on the archived role object: {read}"
     );
-    story.finish().await;
 }
 
 /// "Can the carpool assistant move the dinner plan under itself, or fold it into
@@ -486,7 +482,6 @@ async fn only_the_owner_or_the_chart_head_may_move_or_merge_a_role_object() {
         .says("\"parent\":\"bot:smithers\"");
 
     s.wrap("kept the role objects with their owner").await;
-    story.finish().await;
 }
 
 /// "Can the carpool assistant rename the dinner plan out of the way, then claim
@@ -539,5 +534,4 @@ async fn a_stranger_may_not_rename_or_retype_a_role_object_and_the_owner_may() {
     s.call("recall", json!({"subject": "role:groceries"}))
         .await
         .says("\"parent\":\"bot:marge\"");
-    story.finish().await;
 }

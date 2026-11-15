@@ -112,6 +112,4 @@ async fn the_day_a_loop_falls_due_can_be_asked_of_every_kind() {
         ],
         "{counted}"
     );
-
-    story.finish().await;
 }

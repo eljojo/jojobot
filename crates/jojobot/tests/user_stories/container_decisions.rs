@@ -115,7 +115,6 @@ async fn a_topic_leads_with_its_standing_decisions_numbered_and_counts_the_repla
         "{read}"
     );
     assert_eq!(read["decisions_archived"]["replaced"]["count"], 1, "{read}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -172,7 +171,6 @@ async fn a_replaced_decision_read_by_its_number_says_what_replaced_it_with_the_n
         fourteen["objects"][0].get("replaced_by").is_none(),
         "a standing decision is not replaced: {fourteen}"
     );
-    story.finish().await;
 }
 
 /// "A rule was corrected in the next town's topic. Does the old one say so?"
@@ -249,7 +247,6 @@ async fn a_decision_replaced_by_one_under_another_topic_says_so_with_the_new_wor
         standing["objects"][0].get("replaced_by").is_none(),
         "a standing decision is not replaced: {standing}"
     );
-    story.finish().await;
 }
 
 /// A decision under the thread `thread:krusty-burger`, with its words, and the
@@ -368,7 +365,6 @@ async fn a_replaced_decision_in_a_chain_points_at_the_one_standing_now() {
         thread["decisions_archived"]["replaced"]["count"], 2,
         "{thread}"
     );
-    story.finish().await;
 }
 
 /// A decision replaced in one step reads as before, and a corrupt chain that
@@ -433,5 +429,4 @@ async fn a_one_step_replacement_reads_as_before_and_a_loop_in_a_chain_ends() {
         looped["objects"][0].get("standing_replacement").is_none(),
         "nothing in a loop stands: {looped}"
     );
-    story.finish().await;
 }

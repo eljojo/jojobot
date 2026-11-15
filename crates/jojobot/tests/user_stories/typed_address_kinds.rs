@@ -49,7 +49,6 @@ async fn b5_story_list_plain_entry_uses_the_member() {
         super::lists::read_back(&s, "list:packing").await,
         ["tent", "stove"]
     );
-    story.finish().await;
 }
 
 async fn list_world(story: &Story) -> Session {
@@ -96,7 +95,6 @@ async fn b5_story_list_single_tick_uses_the_member() {
         super::list_ticks::read_states(&s, "list:packing").await,
         ["tent:done", "stove:done"]
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -118,7 +116,6 @@ async fn b5_story_list_entries_use_the_member() {
         super::lists::read_back(&s, "list:packing").await,
         ["tent", "stove", "map"]
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -145,7 +142,6 @@ async fn b5_story_list_ticks_use_the_member() {
         super::list_ticks::read_states(&s, "list:packing").await,
         ["tent:done", "stove:done"]
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -170,7 +166,6 @@ async fn b5_story_list_prefix_does_not_make_a_decision_a_list() {
         s.refused("capture", json!({"subject": subject, "content": "packed", "tick": {"entry": entry, "act": "done"}})).await;
     }
     assert_eq!(super::lists::read_back(&s, "list:packing").await, ["tent"]);
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -216,7 +211,6 @@ async fn b5_story_rename_moves_the_member_and_its_references() {
         json!({"handle": format!("{RULES}/999"), "to": "decision:springfield-12"}),
     )
     .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -249,7 +243,6 @@ async fn b5_story_parent_selects_the_members_children() {
         json!({"parent": format!("{RULES}/999"), "kind": "thing"}),
     )
     .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -332,7 +325,6 @@ async fn b5_story_location_uses_the_members_kind() {
             .iter()
             .all(|f| f["edge"]["object"] == "place:springfield")
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -397,5 +389,4 @@ async fn b5_story_narrowed_reference_uses_the_members_kind() {
             .count(),
         2
     );
-    story.finish().await;
 }

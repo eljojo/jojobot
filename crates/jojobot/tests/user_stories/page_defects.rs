@@ -38,7 +38,6 @@ async fn a_key_with_reserved_characters_opens_its_own_history() {
     }
     // The positive the encoding must not disturb: a plain key is still plain.
     assert!(page.link_to("plain").ends_with("?history=plain"));
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -68,5 +67,4 @@ async fn the_canonical_redirect_keeps_the_query() {
             .await,
         None
     );
-    story.finish().await;
 }

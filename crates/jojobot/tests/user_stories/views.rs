@@ -108,8 +108,6 @@ async fn a_session_asks_a_shipped_view_and_its_own_by_name_through_one_read() {
     // with a stored one (rule 234). Without this the case passes on a build
     // that refuses every view there is.
     s.add_over_the_screen("view:my-loops", "My Loops").await;
-
-    story.finish().await;
 }
 
 /// **The colleagues view says who each bot reports to, and who reports to a bot
@@ -203,7 +201,6 @@ async fn the_colleagues_view_says_who_each_bot_reports_to_and_a_second_call_says
         ids(&none["objects"][0]["connected"]).is_empty(),
         "nobody reports to gamma: {none}"
     );
-    story.finish().await;
 }
 
 /// **The colleagues view shows each bot's one-liner and who it reports to, and
@@ -318,7 +315,6 @@ async fn the_colleagues_view_leaves_operational_keys_out_and_names_what_it_left_
     s.call("recall", json!({"subject": "bot:sigma"}))
         .await
         .says("nudge/quiet");
-    story.finish().await;
 }
 
 /// **The note a view's narrowing leaves tells the truth about the way back.**
@@ -390,7 +386,6 @@ async fn the_note_a_view_leaves_names_calls_that_return_the_keys_it_left_out() {
         .unwrap_or_else(|| panic!("the direct call names what it left out: {direct}"));
     assert!(direct_note.contains("keys"), "{direct_note}");
     assert!(!direct_note.contains("view"), "{direct_note}");
-    story.finish().await;
 }
 
 /// **A session that was told nothing finds the capability and uses it.**
@@ -429,8 +424,6 @@ async fn a_session_told_nothing_finds_the_view_path_and_composes_a_real_question
         "what the caller sent beside the view name took: {}",
         composed.raw(),
     );
-
-    story.finish().await;
 }
 
 /// 🚨 **A claim may point at a view the software ships.**
@@ -489,8 +482,6 @@ async fn a_claim_can_point_at_a_view_the_software_ships() {
 
     s.wrap("recorded that the operator keeps asking for one view")
         .await;
-
-    story.finish().await;
 }
 
 /// The boot's skill index carries this skill by name, with no body.
@@ -565,7 +556,6 @@ async fn a_callers_fields_beside_a_view_replace_the_views_own_whole() {
         "the view's own question did not run beside the caller's: {}",
         theirs.raw()
     );
-    story.finish().await;
 }
 
 /// **A view that narrows nothing is made, and is refused only when it is asked.**
@@ -659,7 +649,6 @@ async fn a_view_holding_nothing_that_narrows_is_made_and_refused_only_when_asked
     s.call("recall", json!({"view": "bare-listing"}))
         .await
         .says("thing:omega");
-    story.finish().await;
 }
 
 /// **A view that asks what is ready or the whole plan needs no `selects`.**
@@ -726,7 +715,6 @@ async fn a_view_that_asks_what_is_ready_needs_no_kind_and_an_unsent_input_narrow
     )
     .await
     .says("work:omega");
-    story.finish().await;
 }
 
 /// **A view the operator saves shows on its page whenever `recall` can answer it,
@@ -785,7 +773,6 @@ async fn a_views_page_answers_what_recall_answers_and_refuses_what_recall_refuse
     page.says("cannot be run")
         .says(&words.replace('\'', "&#39;"))
         .never_says("work:sigma");
-    story.finish().await;
 }
 
 /// **A view that asks what is ready needs no `selects` on its page either.**
@@ -818,5 +805,4 @@ async fn a_views_page_asks_what_is_ready_of_work_as_recall_does() {
         .says("work:omega")
         .never_says("person:kenny")
         .never_says("cannot be run");
-    story.finish().await;
 }

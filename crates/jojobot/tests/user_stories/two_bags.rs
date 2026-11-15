@@ -132,5 +132,4 @@ async fn a_setting_and_a_label_read_apart_and_a_label_moves_in_one_call() {
     let moved_claim = claim(&after, &labelled_address);
     assert_eq!(moved_claim["sets"]["overheard"], "tuesday", "{after}");
     assert!(moved_claim["fields"]["overheard"].is_null(), "{after}");
-    story.finish().await;
 }

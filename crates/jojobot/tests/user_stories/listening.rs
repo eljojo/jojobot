@@ -106,5 +106,4 @@ async fn a_client_that_listens_is_told_it_will_hear_about_the_tool_list() {
         "the server answers while a listen is open"
     );
     drop(stream);
-    story.finish().await;
 }

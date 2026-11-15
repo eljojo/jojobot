@@ -473,6 +473,4 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await;
 
     s.wrap("caught up on the build without being re-told").await;
-
-    story.finish().await;
 }

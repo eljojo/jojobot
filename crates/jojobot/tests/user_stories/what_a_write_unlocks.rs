@@ -79,7 +79,6 @@ async fn a_check_in_is_offered_only_where_one_can_be_taken() {
             .is_some_and(|steps| steps.iter().any(|step| step["add"] == json!(["check_in"]))),
         "{on_rhythm}"
     );
-    story.finish().await;
 }
 
 /// **A schedule is offered only where a check-in can follow.** Adding a cadence
@@ -171,7 +170,6 @@ async fn a_schedule_is_offered_only_where_a_check_in_can_follow() {
         steps.contains(&json!(["check_in"])),
         "and so is the check-in: {on_rhythm}"
     );
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -305,6 +303,4 @@ async fn a_write_says_what_the_thing_could_answer_with_one_more_key() {
         again.get("unlocks").is_none(),
         "the same thing is not told twice in one session: {again}"
     );
-
-    story.finish().await;
 }

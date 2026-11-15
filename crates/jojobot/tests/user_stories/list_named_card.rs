@@ -57,7 +57,6 @@ async fn a_step_naming_one_card_reads_back_with_the_cards_state() {
         "the step counts in the list's progress: {}",
         list.raw()
     );
-    story.finish().await;
 }
 
 /// **A step naming two cards draws no edge, and the receipt names both so the
@@ -98,7 +97,6 @@ async fn a_step_naming_two_cards_draws_none_and_an_object_wins() {
         read[1]["linked"]["handle"], "work:frame-the-walls",
         "{read:?}"
     );
-    story.finish().await;
 }
 
 /// **A step that names two cards and also sends a key its list reads as an own
@@ -141,5 +139,4 @@ async fn a_second_hint_keeps_the_first() {
         "a step with no earlier hint still names both cards: {}",
         only.raw()
     );
-    story.finish().await;
 }

@@ -59,7 +59,6 @@ async fn one_capture_records_a_claim_and_sets_the_thing() {
         .claim(&claim)
         .says("\"colour\":\"red\"")
         .says("\"painter\":\"a neighbour\"");
-    story.finish().await;
 }
 
 /// **An edit sets the thing too, and a key stays in its bag.** The setting is
@@ -169,7 +168,6 @@ async fn an_edit_sets_the_thing_and_a_key_stays_in_its_bag() {
     )
     .await
     .says("\"painter\":\"now a property of the cart\"");
-    story.finish().await;
 }
 
 /// **A thing is made with its settings, and they are settings.** The claim
@@ -215,7 +213,6 @@ async fn a_thing_made_with_settings_holds_them_as_settings() {
     s.shape("what the kettle holds", json!({"subject": "thing:kettle"}))
         .await
         .says("\"colour\":\"black\"");
-    story.finish().await;
 }
 
 /// **An edit and the settings written with it are one act.** One call renames the
@@ -289,7 +286,6 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
     .await
     .says("\"size\":\"large\"")
     .says("The Red Handcart");
-    story.finish().await;
 }
 
 /// **The receipt says what reached the thing apart from what stayed on the
@@ -395,7 +391,6 @@ async fn the_receipt_splits_what_reached_the_thing_from_what_stayed_and_hints_at
         "nothing to move, so nothing to hint: {settled}",
     );
     assert_eq!(settled["reached_the_thing"], json!(["status"]), "{settled}");
-    story.finish().await;
 }
 
 /// **The due moment jojobot works out does not move a setting between bags.** A
@@ -438,7 +433,6 @@ async fn the_due_moment_follows_a_setting_that_moves_without_changing_bag() {
         .await
         .says("\"decide_by\":\"2026-12-15\"")
         .says("\"due_on\":\"2026-12-15\"");
-    story.finish().await;
 }
 
 /// **A day sent as the claim's own field does not make the thing fall due.** A
@@ -554,7 +548,6 @@ async fn a_day_sent_as_an_own_field_does_not_make_the_thing_fall_due() {
         "{set_by_edit}",
     );
     owed().await.says("work:tau");
-    story.finish().await;
 }
 
 /// **A role record that holds `agent` as a setting is edited through `sets`.**
@@ -616,5 +609,4 @@ async fn a_role_holding_agent_as_a_setting_is_edited_through_sets() {
     s.shape("what the role holds", json!({"subject": "role:gamma"}))
         .await
         .says("\"seat\":\"front, now a property\"");
-    story.finish().await;
 }

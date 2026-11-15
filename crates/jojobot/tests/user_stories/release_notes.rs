@@ -384,7 +384,6 @@ async fn a_bot_holds_messages_from_the_system_listing_what_shipped_and_who_to_as
         (1, marges_count, 0),
         "Marge holds the notes Marge read and Moe's reply, and nothing arrived at either start"
     );
-    after_two_starts.finish().await;
 }
 
 /// **A note the bot quarantines is still told, and the next start sends it no
@@ -431,7 +430,6 @@ async fn a_quarantined_note_is_told_and_never_sent_again() {
         shipped_note_ids(),
         "the bot that quarantined its note is still told every note"
     );
-    again.finish().await;
 }
 
 /// **The ids of every note this build ships**, from the folders on disk: the told
@@ -476,7 +474,6 @@ async fn a_bot_made_now_is_told_every_shipped_note_and_sent_none() {
         shipped_note_ids(),
         "the bot is told every note this build ships"
     );
-    later.finish().await;
 }
 
 /// **A note shipped after a bot was made reaches it at the next start, and it is
@@ -547,7 +544,6 @@ async fn a_note_shipped_after_a_bot_was_made_reaches_it_at_the_next_start_alone(
         shipped_note_ids(),
         "and the bot is told every note again"
     );
-    later.finish().await;
 }
 
 /// **A bot told deploy 9's six notes is sent the notes the point release ships,
@@ -650,7 +646,6 @@ async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
         shipped_note_ids(),
         "and the bot is told every note again, so the next start sends nothing"
     );
-    later.finish().await;
 }
 
 /// **The record of what a bot was told is out of an ordinary read of the bot.**
@@ -708,8 +703,6 @@ async fn the_record_of_what_a_bot_was_told_is_out_of_an_ordinary_recall() {
             .is_some_and(|facts| facts.iter().any(is_ledger)),
         "asked for, the record comes back: {asked}"
     );
-
-    later.finish().await;
 }
 
 /// **The record of what a bot was told is no rule of the bot's.** The bot's boot
@@ -753,7 +746,6 @@ async fn the_record_of_what_a_bot_was_told_is_no_rule_of_the_bot() {
             .is_some_and(|line| line.contains("kiln")),
         "and the one that is listed is the kiln record: {booted}"
     );
-    later.finish().await;
 }
 
 /// **A search leaves the record of what a bot was told out, names it in
@@ -800,7 +792,6 @@ async fn a_search_leaves_the_record_of_what_a_bot_was_told_out_until_asked() {
         .await
         .json();
     assert!(found(&asked), "asked for, the record is a hit: {asked}");
-    later.finish().await;
 }
 
 /// **No caller writes the record of what a bot was told, by any of the four write
@@ -889,7 +880,6 @@ async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
         .json()["objects"][0]["fields"]["release_notes_told"]
         .clone();
     assert_eq!(after, before, "copied keys changed the real ledger");
-    later.finish().await;
 }
 
 /// **A bot's ledger is a record of its own from the start, whatever the caller
@@ -947,7 +937,6 @@ async fn archiving_a_bots_first_claim_leaves_its_ledger_and_it_is_sent_nothing()
         shipped_note_ids(),
         "marge is still told every note"
     );
-    later.finish().await;
 }
 
 /// **A start that sends a bot a note leaves a bot defrag reviewed reviewed.** The
@@ -1053,7 +1042,6 @@ async fn a_start_that_sends_a_note_leaves_a_reviewed_bot_reviewed() {
             .json(),
     );
     assert!(queue.contains(&"bot:delta".to_string()), "{queue:?}");
-    later.finish().await;
 }
 
 /// **A bot and the record of what it was told land together.** A commit that
@@ -1122,7 +1110,6 @@ async fn a_bot_is_never_left_without_the_record_of_what_it_was_told() {
             told_ids(&later.as_bot("bot:delta").await, "bot:delta").await,
             shipped_note_ids()
         );
-        later.finish().await;
     }
 }
 

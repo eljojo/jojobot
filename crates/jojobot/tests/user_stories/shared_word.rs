@@ -84,8 +84,6 @@ async fn an_empty_search_names_the_place_that_shares_a_word_with_it() {
         .await;
     other_kind.number("/count", 0);
     assert!(named(&other_kind).is_empty(), "{}", other_kind.raw());
-
-    story.finish().await;
 }
 
 /// "Everything under the atlas project has the word atlas in it." A word a
@@ -129,8 +127,6 @@ async fn the_word_a_thing_takes_from_its_parent_is_not_shared_evidence() {
         "{}",
         own_word.raw()
     );
-
-    story.finish().await;
 }
 
 /// "Half my works have 'with' in the name." A word many things of the kind
@@ -177,6 +173,4 @@ async fn an_empty_search_does_not_name_things_for_a_common_word() {
         "{}",
         rare.raw()
     );
-
-    story.finish().await;
 }

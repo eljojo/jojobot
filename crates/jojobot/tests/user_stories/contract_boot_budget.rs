@@ -185,7 +185,7 @@ async fn the_anonymous_boot_names_every_section_it_leaves_out_on_a_fresh_and_a_h
         fresh_left_out, 0,
         "the shipped store's anonymous boot ships every section of the essay"
     );
-    fresh.finish().await;
+    drop(fresh);
 
     let heavy = Story::begin("bot:otto").await;
     let _writer = make_the_instance_heavy(&heavy).await;
@@ -195,7 +195,6 @@ async fn the_anonymous_boot_names_every_section_it_leaves_out_on_a_fresh_and_a_h
         left_out >= 1,
         "the heavy instance left nothing out, so this pin proved nothing about naming"
     );
-    heavy.finish().await;
 }
 
 /// **Pin (b): a named boot of a heavy identity fits the core and its floor under
@@ -263,5 +262,4 @@ async fn a_named_boot_of_a_heavy_identity_fits_core_and_floor_with_a_margin() {
          {MARGIN}",
         budget.saturating_sub(whole),
     );
-    story.finish().await;
 }

@@ -65,5 +65,4 @@ async fn the_writer_of_a_message_to_the_operator_reads_its_receipt_and_another_b
     marge.wrap("asked for a sibling's mail").await;
     sigma.wrap("wrote to the operator").await;
     s.wrap("stood two bots up").await;
-    story.finish().await;
 }

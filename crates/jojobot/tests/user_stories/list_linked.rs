@@ -95,7 +95,6 @@ async fn a_linked_head_reads_first_with_the_works_status_owner_and_blocker() {
         "an entry that points at nothing shows no work: {}",
         read[1]
     );
-    story.finish().await;
 }
 
 /// **The linked state is read from the work each time and stored nowhere**: when
@@ -129,7 +128,6 @@ async fn the_linked_state_follows_the_work_and_is_never_a_copy() {
         "{}",
         read[0]
     );
-    story.finish().await;
 }
 
 /// **The linked verdict is the one the ready view gives** for the same work, for
@@ -193,7 +191,6 @@ async fn the_linked_verdict_is_the_one_the_ready_view_gives() {
             "{work} is blocked, or this case compares nothing: {object}"
         );
     }
-    story.finish().await;
 }
 
 /// **Ticking a linked entry says the list item is done, and the receipt says the
@@ -255,5 +252,4 @@ async fn ticking_a_linked_entry_says_whether_the_work_is_still_open_and_leaves_i
         "an entry that points at no work names none: {}",
         plain_tick.raw()
     );
-    story.finish().await;
 }

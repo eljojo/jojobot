@@ -126,8 +126,6 @@ async fn a_bot_finds_its_own_past_work_and_is_told_a_colleagues_exists() {
         !last_time.to_string().contains("replacement wheels"),
         "a colleague's words reached a later sitting of a different bot: {last_time}"
     );
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -144,7 +142,7 @@ async fn nothing_of_mine_reads_differently_from_nothing_at_all() {
         answered["withheld"].as_u64().is_some_and(|n| n >= 1),
         "an empty list that counts a run withheld says somebody else's exists: {answered}"
     );
-    story.finish().await;
+    drop(story);
 
     // ── ② an instance where nobody has written anything ─────────────────────
     let empty = Story::begin_with_nothing_written().await;
@@ -159,7 +157,6 @@ async fn nothing_of_mine_reads_differently_from_nothing_at_all() {
         Some(0),
         "an index with nothing in it withholds none, which is not the answer in ①: {answered}"
     );
-    empty.finish().await;
 }
 
 #[tokio::test]
@@ -208,7 +205,7 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
         how.contains("start_here") && how.contains("sid"),
         "the note must name the door and the handle it returns: {how}"
     );
-    story.finish().await;
+    drop(story);
 
     // ── ② an instance where nobody has written anything ─────────────────────
     let empty = Story::begin_with_nothing_written().await;
@@ -225,7 +222,6 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
         Some(0),
         "an index with nothing in it withholds none, which is not the answer in ①: {answered}"
     );
-    empty.finish().await;
 }
 
 #[tokio::test]
@@ -295,7 +291,6 @@ async fn a_colleagues_run_is_never_named_slugged_or_attributed_to_another_bot() 
             );
         }
     }
-    story.finish().await;
 }
 
 /// "I wrapped up yesterday. Can I read what I did?" A run that was wrapped is a
@@ -345,7 +340,6 @@ async fn a_wrapped_run_is_read_by_the_next_run_of_its_bot_and_not_by_another_bot
         !answered.to_string().contains("replacement wheels"),
         "another bot's words reached a sitting that does not own them: {answered}"
     );
-    story.finish().await;
 }
 
 /// "My name changed. Are my old runs still mine?" A run belongs to the bot, not
@@ -398,7 +392,6 @@ async fn a_runs_owner_follows_its_bot_through_a_rename() {
         !answered.to_string().contains("replacement wheels"),
         "another bot's words reached the renamed bot: {answered}"
     );
-    story.finish().await;
 }
 
 /// "I filtered my runs and got nothing. Did somebody take them?" No: a filter no
@@ -442,7 +435,6 @@ async fn a_filter_that_leaves_out_my_own_runs_says_how_many_apart_from_those_wit
         narrowed["withheld"], withheld,
         "my run is not counted among those another identity owns: {narrowed}"
     );
-    story.finish().await;
 }
 
 /// "Which of my runs was that one?" A run's name is a field of the run, so its
@@ -517,7 +509,6 @@ async fn a_runs_name_is_a_field_its_owner_can_filter_on_read_back_and_resume() {
     // And the value answers which run to resume.
     let resumed = story.session_on("2026-10-12", Some(&sid)).await;
     assert_eq!(resumed.run(), sid, "the name resumes the run it names");
-    story.finish().await;
 }
 
 /// "What was I doing around the 8th?" A run is placed on the day it started, so
@@ -561,7 +552,6 @@ async fn near_places_a_run_on_the_day_it_started() {
         runs_found(&away).is_empty(),
         "the run is not near a day two months on: {away}"
     );
-    story.finish().await;
 }
 
 /// "What was I doing in March?" A run that stated the day it was in is placed
@@ -623,7 +613,6 @@ async fn a_run_that_stated_its_day_is_placed_on_that_day_and_one_that_stated_non
         1,
         "exactly the run that stated 30 March is near 30 March: {in_march}",
     );
-    story.finish().await;
 }
 
 /// "I tried the run's name as its handle." A run's name is also the id of its
@@ -654,5 +643,4 @@ async fn a_run_is_found_by_its_name_as_a_session_handle_and_never_by_its_key() {
         )
         .await;
     refused.says(otto.run()).never_says(otto.sid());
-    story.finish().await;
 }

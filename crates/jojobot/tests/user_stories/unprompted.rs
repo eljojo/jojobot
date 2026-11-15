@@ -213,6 +213,4 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
     // exists, and no beat above was told to look. The one thing standing
     // between this conversation and the shipped method is the session
     // happening to ask.
-
-    story.finish().await;
 }

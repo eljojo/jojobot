@@ -106,7 +106,6 @@ async fn a_capture_on_a_list_does_not_say_the_caller_sent_the_order() {
     );
 
     s.wrap("added two entries").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -131,7 +130,6 @@ async fn a_tick_does_not_say_the_caller_sent_what_the_server_recorded() {
     );
 
     s.wrap("ticked the tent").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -153,7 +151,6 @@ async fn a_move_does_not_say_the_caller_sent_what_the_server_held() {
     );
 
     s.wrap("moved the stove").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -182,7 +179,6 @@ async fn an_own_field_the_caller_sent_still_stays_on_the_record_and_is_told() {
     assert!(body["a_key_stayed_off_the_thing"].is_string(), "{body}");
 
     s.wrap("added sunscreen with a mood").await;
-    story.finish().await;
 }
 
 /// **A key named like one the server mints is the caller's own on a thing that
@@ -209,5 +205,4 @@ async fn an_order_key_on_an_ordinary_thing_is_told_as_reached() {
     );
 
     s.wrap("numbered the kettle").await;
-    story.finish().await;
 }

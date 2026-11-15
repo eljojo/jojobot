@@ -325,5 +325,4 @@ async fn a_counter_adds_its_writes_up_and_still_lists_them() {
     moods_capped.never_says("\"value\":\"smug\"");
 
     s.wrap("counted the donuts").await;
-    story.finish().await;
 }

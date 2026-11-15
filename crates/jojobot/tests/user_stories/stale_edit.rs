@@ -104,5 +104,4 @@ async fn the_second_of_two_runs_editing_from_the_same_read_is_refused() {
         .claim(&claim)
         .says("wears a red parka")
         .says("\"revision_count\":4");
-    story.finish().await;
 }

@@ -82,5 +82,4 @@ async fn you_write_to_a_colleague_and_never_to_their_container() {
 
     s.wrap("wrote to a colleague without knowing where they keep their mail")
         .await;
-    story.finish().await;
 }

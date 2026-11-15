@@ -31,7 +31,6 @@ async fn leftovers_an_unreadable_run_needs_a_person_and_a_repaired_run_writes() 
         .expect("the run's chronology is served");
     assert!(prose.contains("a healthy beat"), "{prose}");
     assert_eq!(prose.matches("the refused beat").count(), 1, "{prose}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -93,7 +92,6 @@ async fn leftovers_a_numbered_mention_walks_to_the_member_and_a_miss_writes_noth
         .await
         .json();
     assert_eq!(after["objects"][0]["facts"], before, "{after}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -136,5 +134,4 @@ async fn leftovers_an_argument_the_verb_does_not_have_is_named_and_nothing_is_wr
         Some(1),
         "{read}"
     );
-    story.finish().await;
 }

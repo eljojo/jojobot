@@ -121,7 +121,6 @@ async fn the_lists_view_answers_every_list_with_how_far_along_it_is() {
     assert_eq!(reading["ticked"]["open"], 5, "{reading}");
     assert_eq!(reading["last_ticked"], "2026-10-13", "{reading}");
     assert_eq!(reading["fields"]["tick"], "leave", "{reading}");
-    story.finish().await;
 }
 
 /// **`under` narrows the view to the lists hung on one thing.** Homer's rota
@@ -142,7 +141,6 @@ async fn the_lists_view_under_a_parent_answers_only_the_lists_hung_on_it() {
     assert_eq!(json["objects"].as_array().map(Vec::len), Some(1), "{json}");
     the(&json, "list:rotation");
     answer.never_says("list:packing").never_says("list:errands");
-    story.finish().await;
 }
 
 /// **An archived list is left out and counted.** The count names what it left out,
@@ -163,7 +161,6 @@ async fn an_archived_list_is_left_out_of_the_lists_view_and_counted() {
     assert_eq!(json["objects"].as_array().map(Vec::len), Some(2), "{json}");
     answer.never_says("list:errands");
     assert_eq!(json["archived_excluded"], 1, "{json}");
-    story.finish().await;
 }
 
 /// **A read that names keys gets a list's blocks only when it names them.** A
@@ -234,7 +231,6 @@ async fn a_list_read_that_names_keys_gets_only_the_blocks_it_names() {
         "{listed}"
     );
     assert!(object.get("ticked").is_none(), "{listed}");
-    story.finish().await;
 }
 
 /// **The lists view answers each list without its entries**, so an overview of
@@ -258,7 +254,6 @@ async fn the_lists_view_carries_no_entries() {
         assert!(object["fields"]["tick"].is_string(), "{handle}: {object}");
         assert!(object["parent"].is_string(), "{handle}: {object}");
     }
-    story.finish().await;
 }
 
 /// The cells of the row a page table holds for this handle.
@@ -339,5 +334,4 @@ async fn the_lists_page_shows_how_far_along_each_list_is_as_recall_does() {
     // A view that selects no list has no tick columns.
     let colleagues = story.page("view:colleagues").await.section("answer");
     colleagues.never_says("Last ticked");
-    story.finish().await;
 }

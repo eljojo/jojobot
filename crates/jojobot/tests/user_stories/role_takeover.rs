@@ -96,7 +96,6 @@ async fn a_new_boot_is_refused_while_its_own_earlier_run_holds_the_role() {
     assert_ne!(holder_of(&s).await.as_deref(), Some(held.as_str()));
     drop(third_run);
     s.wrap("held a role").await;
-    story.finish().await;
 }
 
 /// **The operator's code takes a live role and says so.** Gamma's first run holds
@@ -160,7 +159,6 @@ async fn the_operators_code_takes_a_live_role_and_the_old_run_reads_abandoned_by
     story.refused_at_the_door("start_here", with_code).await;
     assert_eq!(holder_of(&s).await.as_deref(), Some(taker.run()));
     s.wrap("took a role at the operator's word").await;
-    story.finish().await;
 }
 
 /// **A run the sweep abandons gives up its role.** The lease ran out long ago,
@@ -202,5 +200,4 @@ async fn a_swept_run_no_longer_holds_its_role() {
         None,
         "the swept run gave the role up"
     );
-    later.finish().await;
 }

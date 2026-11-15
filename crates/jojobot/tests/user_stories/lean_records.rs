@@ -137,7 +137,6 @@ async fn a_review_names_the_keys_of_each_record_and_is_told_once_what_it_left_ou
     for key in ["address", "subject", "content", "provenance", "fields"] {
         assert!(fact.get(key).is_some(), "{key} is there: {fact}");
     }
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -190,7 +189,6 @@ async fn a_record_with_no_references_carries_no_empty_list() {
     );
     assert!(record.get("refs").is_none(), "{record}");
     assert!(record.get("stands_for").is_none(), "{record}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -266,7 +264,6 @@ async fn a_page_holds_at_most_the_number_a_call_names() {
     s.refused("recall", json!({"parent": ALPHA, "limit": 0}))
         .await
         .says("limit");
-    story.finish().await;
 }
 
 /// "The answer told me how to read what it left out, and when I did exactly that
@@ -323,5 +320,4 @@ async fn following_the_line_that_says_how_to_read_what_was_left_out_reads_it() {
         "{}",
         plain.raw()
     );
-    story.finish().await;
 }

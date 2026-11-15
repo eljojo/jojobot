@@ -111,7 +111,6 @@ async fn two_shared_words_are_refused_and_land_with_a_reason_and_the_reason_is_k
 
     s.wrap("made the tour company beside the plant, with the why")
         .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -180,5 +179,4 @@ async fn one_shared_word_another_kind_a_stop_word_and_a_typo_are_each_read_apart
     .says("place:moes-tavern");
 
     s.wrap("only two shared words were asked about").await;
-    story.finish().await;
 }

@@ -91,7 +91,4 @@ async fn a_claim_about_a_supplied_view_is_found_by_its_words_like_one_about_a_st
         1,
         "the supplied record, after a restart"
     );
-
-    again.finish().await;
-    story.finish().await;
 }

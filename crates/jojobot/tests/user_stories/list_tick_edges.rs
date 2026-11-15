@@ -83,7 +83,6 @@ async fn undone_on_an_open_entry_is_refused_and_writes_nothing() {
         ["mow:open", "rake:open", "sweep:open"]
     );
     assert_eq!(ticks_held(&s, "list:homer-chores").await, 2);
-    story.finish().await;
 }
 
 /// **Finishing an entry that is already done is refused on a sink list, and the
@@ -108,7 +107,6 @@ async fn done_on_a_done_entry_of_a_sink_list_is_refused_and_the_done_order_holds
     refused.says("done").says("\"wrote\":false");
     assert_eq!(read_states(&s, "list:homer-chores").await, before);
     assert_eq!(ticks_held(&s, "list:homer-chores").await, 2);
-    story.finish().await;
 }
 
 /// **The same holds on a leave list**, where a done entry has left the open view
@@ -133,7 +131,6 @@ async fn done_on_a_done_entry_of_a_leave_list_is_refused() {
         read_states(&s, "list:homer-chores").await,
         ["rake:open", "sweep:open"]
     );
-    story.finish().await;
 }
 
 /// **On a sink list a tick that changes nothing is refused, and a batch holding
@@ -177,7 +174,6 @@ async fn a_batch_with_a_tick_that_changes_nothing_is_refused_whole_and_one_in_or
     )
     .await;
     assert_eq!(ticks_held(&s, "list:homer-chores").await, 5);
-    story.finish().await;
 }
 
 /// **A refused batch item states its reason once.** The item's own refusal ends
@@ -210,7 +206,6 @@ async fn a_refused_batch_item_states_its_reason_once() {
         "the tail is said once: {how}"
     );
     assert!(!how.contains(".."), "no doubled full stop: {how}");
-    story.finish().await;
 }
 
 /// **A list's `tick` is `sink`, `leave` or `back` exactly, on every verb that
@@ -285,5 +280,4 @@ async fn an_unknown_tick_setting_is_refused_on_every_write_that_sets_it() {
         .call("recall", json!({"subject": "list:homer-chores"}))
         .await;
     assert_eq!(read.json()["objects"][0]["fields"]["tick"], "sink");
-    story.finish().await;
 }

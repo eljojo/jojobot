@@ -86,7 +86,6 @@ async fn a_capture_drops_a_copied_placement_key_and_the_list_keeps_no_such_field
         .await
         .json();
     assert_eq!(list["objects"][0]["fields"]["weight"], "heavy", "{list}");
-    story.finish().await;
 }
 
 /// **Both verbs answer from the one gate**: an edit naming a copied placement
@@ -120,5 +119,4 @@ async fn an_edit_and_a_capture_report_the_same_dropped_key() {
         edited["dropped_keys_note"], captured["dropped_keys_note"],
         "{edited}"
     );
-    story.finish().await;
 }

@@ -67,7 +67,6 @@ async fn a_capture_that_sets_a_day_says_the_thing_falls_due_on_it() {
         .await;
     let body = done.json();
     assert!(body["derived"]["due_on"].is_null(), "{body}");
-    story.finish().await;
 }
 
 /// **An edit that sets the day says the thing now falls due on it**, and an
@@ -136,7 +135,6 @@ async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
     let fields = &after["objects"][0]["fields"];
     assert_eq!(fields["status"], "done", "{after}");
     assert!(fields.get("due_on").is_none(), "{after}");
-    story.finish().await;
 }
 
 /// **A thing made with its day says it falls due on it, and a thing made
@@ -184,7 +182,6 @@ async fn a_creation_that_sets_a_day_says_the_thing_falls_due_on_it() {
         "a creation that moved no day has no line: {}",
         plain.json()
     );
-    story.finish().await;
 }
 
 /// **Setting the day on a thing that exists says it falls due on it, and
@@ -219,5 +216,4 @@ async fn setting_a_day_on_a_thing_says_it_falls_due_on_it() {
         "an update that moved no day has no line: {}",
         ordinary.json()
     );
-    story.finish().await;
 }

@@ -115,7 +115,6 @@ async fn twenty_three_entries_in_one_call_read_back_in_the_order_sent() {
         .map(|entry| entry["address"].as_str().unwrap_or_default().to_string())
         .collect();
     assert_eq!(served, addresses);
-    story.finish().await;
 }
 
 /// **With `after`, the whole run goes behind that entry, in order.** The entries
@@ -146,7 +145,6 @@ async fn entries_with_after_place_the_whole_run_behind_that_entry_in_order() {
             "lantern:open"
         ]
     );
-    story.finish().await;
 }
 
 /// **Three ticks in one call are three tick records**, and the list's read shows
@@ -182,7 +180,6 @@ async fn three_ticks_in_one_call_are_three_tick_records() {
     let acts: Vec<&str> = ticks.iter().filter_map(|t| t["act"].as_str()).collect();
     assert_eq!(acts.iter().filter(|a| **a == "done").count(), 2, "{acts:?}");
     assert_eq!(acts.iter().filter(|a| **a == "dropped").count(), 1);
-    story.finish().await;
 }
 
 /// **One bad item refuses the whole call, names the item by its position, and
@@ -233,7 +230,6 @@ async fn one_bad_item_refuses_the_whole_call_names_its_position_and_writes_nothi
     refused.says("item 2").says("\"wrote\":false");
     assert!(ticks_of(&s, "list:packing").await.is_empty());
     assert_eq!(read_states(&s, "list:packing").await, before);
-    story.finish().await;
 }
 
 /// **A resend under the same `request_id` writes nothing a second time.** A
@@ -269,7 +265,6 @@ async fn a_resent_batch_writes_nothing_a_second_time() {
         "the rotation turned once"
     );
     assert_eq!(ticks_of(&s, "list:packing").await.len(), 1);
-    story.finish().await;
 }
 
 /// **The single forms behave as they did**, and a batch past the cap is refused
@@ -309,7 +304,6 @@ async fn the_single_forms_are_unchanged_and_a_batch_past_the_cap_is_refused() {
     )
     .await;
     assert_eq!(read_states(&s, "list:packing").await.len(), 51);
-    story.finish().await;
 }
 
 /// **An item that passes the check and fails at the write stops there, names its
@@ -357,7 +351,6 @@ async fn an_item_that_fails_at_the_write_stops_there_and_the_same_id_finishes_th
         ],
         "each entry once, in the order sent"
     );
-    story.finish().await;
 }
 
 /// Homer's chore list with two chores, and their addresses.
@@ -403,7 +396,6 @@ async fn a_cut_batch_with_a_drop_is_finished_by_the_same_call_again() {
         ["wash the car:done"],
         "the lawn is dropped once and the car is done once"
     );
-    story.finish().await;
 }
 
 /// **A batch that ticks one chore twice in a way that cannot stand is refused
@@ -451,7 +443,6 @@ async fn a_batch_that_cannot_stand_is_refused_whole_naming_the_second_item() {
         .await;
     refused.says("item 1").says("\"wrote\":false");
     assert!(ticks_of(&s, "list:homer-chores").await.is_empty());
-    story.finish().await;
 }
 
 /// **Ticks that only stand in order land in order.** A chore dropped, brought
@@ -489,7 +480,6 @@ async fn ticks_are_judged_in_order_so_a_drop_undone_and_a_done_undone_both_land(
         ["wash the car:open", "mow the lawn:done"]
     );
     assert_eq!(ticks_of(&s, "list:homer-chores").await.len(), 5);
-    story.finish().await;
 }
 
 /// **A batch with no `request_id` that stops partway says what landed and how to
@@ -548,7 +538,6 @@ async fn a_batch_that_half_landed_without_an_id_says_what_landed_and_how_to_fini
         ],
         "each chore once"
     );
-    story.finish().await;
 }
 
 /// "I sent the packing list a capture with nothing to put on it. What do I send?"
@@ -596,7 +585,6 @@ async fn a_capture_with_no_words_on_a_list_names_the_ways_to_write_to_one() {
     )
     .await;
     assert_eq!(read_states(&s, "list:packing").await, ["tent:open"]);
-    story.finish().await;
 }
 
 /// **A batch with a `request_id` that half-landed says it wrote, and the answer
@@ -705,7 +693,6 @@ async fn a_half_landed_batch_with_an_id_says_it_wrote_and_agrees_with_the_one_wi
         ["post the letter:open", "buy stamps:open"],
         "the third item failed and left nothing"
     );
-    story.finish().await;
 }
 
 /// **A batch under a `request_id` whose third item is refused at the write tells
@@ -782,5 +769,4 @@ async fn a_refused_item_under_an_id_is_the_callers_to_change_and_a_store_failure
         ],
         "the resend under the same id finished the batch"
     );
-    story.finish().await;
 }

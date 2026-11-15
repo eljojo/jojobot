@@ -73,5 +73,4 @@ async fn brief_progress_receipts_still_lead_to_the_record_and_normal_answers() {
     assert!(normal["address"].is_string(), "{normal}");
     assert!(normal["how_to_read"].is_string(), "{normal}");
     assert_ne!(normal["address"], claim["address"]);
-    story.finish().await;
 }

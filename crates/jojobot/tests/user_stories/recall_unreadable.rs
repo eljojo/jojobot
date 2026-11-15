@@ -62,5 +62,4 @@ async fn a_recall_over_a_kind_names_the_card_it_cannot_read_and_serves_the_rest(
     );
 
     s.wrap("read a shelf with one damaged card").await;
-    story.finish().await;
 }

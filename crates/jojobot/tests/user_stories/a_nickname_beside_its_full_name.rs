@@ -96,7 +96,6 @@ async fn a_short_form_beside_its_full_name_lands_only_with_a_reason_and_keeps_it
 
     s.wrap("made the short name beside the long one, with the why")
         .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -131,5 +130,4 @@ async fn the_same_words_under_another_kind_or_beside_another_surname_are_not_ref
 
     s.wrap("only the short form of the same name was asked about")
         .await;
-    story.finish().await;
 }

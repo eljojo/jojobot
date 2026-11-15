@@ -226,6 +226,4 @@ async fn a_claim_names_where_it_came_from() {
 
     s.wrap("a claim outlived the one under it, and says so")
         .await;
-
-    story.finish().await;
 }

@@ -132,8 +132,6 @@ async fn a_pick_up_by_name_is_taught_afresh_and_a_wrap_code_reopen_is_not() {
             .teachings()
             .is_empty()
     );
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -182,6 +180,4 @@ async fn a_pick_up_by_name_forgets_what_the_run_was_shown_and_a_wrap_code_reopen
     create(&taker, "place:moes", "Road Leftorium")
         .await
         .says(ASKED);
-
-    story.finish().await;
 }

@@ -67,8 +67,6 @@ async fn a_receipt_says_what_the_write_changed_with_no_second_read() {
     // The pair: the same rename again changes nothing, and says so.
     let again = s.call("update_entity", rename).await.json();
     assert_eq!(again["changed"], "nothing", "{again}");
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -141,6 +139,4 @@ async fn a_receipt_names_what_the_write_changed_beside_its_own_thing() {
         .unwrap_or_else(|| panic!("the derived focus is named: {beat}"));
     assert_eq!(focus["to"], "read the standup notice", "{beat}");
     assert!(focus.get("from").is_none(), "nothing was held: {beat}");
-
-    story.finish().await;
 }

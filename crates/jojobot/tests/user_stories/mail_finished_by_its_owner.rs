@@ -87,7 +87,6 @@ async fn only_the_bot_a_message_was_left_for_can_finish_it() {
 
     gamma.wrap("tried to finish a colleague's mail").await;
     delta.wrap("finished my own mail").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -124,5 +123,4 @@ async fn a_call_naming_no_session_cannot_finish_a_bots_mail() {
         .wrap("tried to finish a colleague's mail unseen")
         .await;
     delta.wrap("kept my mail").await;
-    story.finish().await;
 }

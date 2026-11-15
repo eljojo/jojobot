@@ -769,6 +769,4 @@ async fn keeping_track_of_bikes() {
         .await;
 
     s.wrap("one sold, and the record cannot tell").await;
-
-    story.finish().await;
 }

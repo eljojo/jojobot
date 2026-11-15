@@ -202,7 +202,6 @@ async fn two_runs_in_two_zones_read_one_claim_in_their_own_day() {
     ahead
         .wrap("read the fern's loop from the far side of the date line")
         .await;
-    story.finish().await;
 }
 
 /// **"I live in this zone. I should not have to say so at every boot."**
@@ -274,7 +273,6 @@ async fn an_instance_that_holds_its_operators_zone_answers_a_run_that_sends_none
         &days,
         "a zone the session sends wins over the instance's",
     );
-    story.finish().await;
 }
 
 /// **"Nothing told it that zone. The model picked one."**
@@ -354,5 +352,4 @@ async fn a_boot_that_sends_a_zone_other_than_the_instances_is_told_which_two() {
     let same = same.json();
     assert_eq!(same["timezone"]["from"], "session", "{same}");
     assert!(same["timezone"].get("note").is_none(), "{same}");
-    story.finish().await;
 }

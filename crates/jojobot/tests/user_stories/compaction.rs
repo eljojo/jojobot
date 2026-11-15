@@ -113,8 +113,6 @@ async fn a_run_that_reports_compaction_is_taught_again_and_keeps_its_key() {
         !prose_of(second.run()).contains("compacted"),
         "the other run was marked: {chronologies}"
     );
-
-    story.finish().await;
 }
 
 /// **No answer carries a line about compaction.** The harness prompts the
@@ -136,8 +134,6 @@ async fn an_ordinary_answer_carries_no_line_about_compaction() {
     let told = capture(&gamma, "orders the pie again").await;
     told.says("\"mail_waiting\":1");
     told.never_says("if_compacted");
-
-    story.finish().await;
 }
 
 /// **A run that lost its key reports by the name of its bot.** A new session
@@ -210,8 +206,6 @@ async fn a_compaction_report_by_bot_name_alone_reaches_its_one_live_run() {
             .teachings()
             .is_empty()
     );
-
-    story.finish().await;
 }
 
 /// **A report that opens nothing is refused and names the way forward.** A
@@ -243,8 +237,6 @@ async fn a_compaction_report_that_opens_no_run_is_refused() {
         .call("start_here", json!({"compacted": true}))
         .await
         .says("sid");
-
-    story.finish().await;
 }
 
 /// **A report restarts the running total of what the run has been handed.** The
@@ -283,8 +275,6 @@ async fn a_compaction_report_restarts_the_running_total() {
         second < first + first / 2,
         "the second report added to the total instead of restarting it: {first} then {second}"
     );
-
-    story.finish().await;
 }
 
 /// **A report also forgets what the run was shown.** Two runs of one bot read
@@ -324,6 +314,4 @@ async fn a_compaction_report_forgets_what_the_run_was_shown() {
     create(&other, "wharf-lane", "Wonder Lane")
         .await
         .says(ASKED);
-
-    story.finish().await;
 }

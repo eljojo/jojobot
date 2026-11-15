@@ -114,7 +114,6 @@ async fn mail_visible_story_a_manager_reads_a_new_report_without_taking_it() {
         .await;
     otto.wrap("sent the report").await;
     assistant.wrap("placed the reports on the chart").await;
-    story.finish().await;
 }
 
 /// **Mail is read down the chart and never up, and an author reading up is not
@@ -217,5 +216,4 @@ async fn mail_visible_story_an_author_reads_up_without_the_notes_and_nobody_read
     lisa.wrap("sent the status").await;
     otto.wrap("sent the request").await;
     assistant.wrap("placed the reports on the chart").await;
-    story.finish().await;
 }

@@ -288,7 +288,6 @@ async fn which_of_the_loops_have_gone_quiet() {
 
     s.wrap("a skip and a run, and only the record tells them apart")
         .await;
-    story.finish().await;
 }
 
 /// **A snoozed loop comes back on the day it was put off to, and a run puts it
@@ -410,7 +409,6 @@ async fn a_snoozed_loop_comes_back_on_its_day_and_a_run_returns_it_to_its_cadenc
 
     s.wrap("one loop put off and brought back, one never touched")
         .await;
-    story.finish().await;
 }
 
 /// **A cadence alone is a whole schedule; a policy without a cadence is not,
@@ -578,7 +576,6 @@ async fn a_cadence_alone_takes_the_default_policy_and_a_policy_without_a_cadence
 
     s.wrap("a policy with no cadence is refused when it is made")
         .await;
-    story.finish().await;
 }
 
 /// "I did the descale today, and it comes round every sixty days."
@@ -691,7 +688,6 @@ async fn a_whole_schedule_and_its_first_check_in_land_in_one_capture() {
 
     s.wrap("one capture carried a whole schedule and its first check-in")
         .await;
-    story.finish().await;
 }
 
 /// **A word outside a declared set is still refused on a loop**, while a work
@@ -740,5 +736,4 @@ async fn a_bad_advances_from_is_still_refused_and_a_good_one_lands() {
     s.recall("rhythm:descale")
         .await
         .says("\"advances_from\":\"due_date\"");
-    story.finish().await;
 }

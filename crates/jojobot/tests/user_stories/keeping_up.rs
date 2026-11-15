@@ -204,5 +204,4 @@ async fn the_loops_a_person_actually_keeps() {
 
     s.wrap("wrote down the three loops, one of them with nothing but a name and a date")
         .await;
-    story.finish().await;
 }

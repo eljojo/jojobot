@@ -147,7 +147,6 @@ async fn a_borrowed_thing_that_has_to_go_back_is_owed_beside_the_loops() {
     delivered.never_says("promise:return-the-desk");
 
     s.wrap("two promises made, one kept and one let go").await;
-    story.finish().await;
 }
 
 /// "It is due the first of July — and nobody can tell jojobot otherwise."
@@ -239,7 +238,6 @@ async fn the_stored_due_moment_is_jojobots_and_a_promise_keeps_the_operators_wor
 
     s.wrap("a promise dated and two hand-written copies refused")
         .await;
-    story.finish().await;
 }
 
 /// **A refused hand-written due moment tells finished work how to stop falling
@@ -292,8 +290,6 @@ async fn the_refusal_for_a_hand_written_due_moment_tells_finished_work_to_be_mar
         )
         .await;
     promise.says("promised_by").never_says("done");
-
-    story.finish().await;
 }
 
 /// **The refusal for a hand-written due moment on a promise names how a promise
@@ -362,5 +358,4 @@ async fn a_promises_refusal_names_ended_and_ending_it_stops_it_falling_due() {
         .never_says("promise:return-the-wrench");
 
     s.wrap("ended a promise the way the refusal said").await;
-    story.finish().await;
 }

@@ -53,5 +53,4 @@ async fn a_thought_a_bot_kept_holds_its_seat_in_the_bots_room_after_the_bot_is_r
     alpha
         .call("capture", thought("bot:gamma", "and the van is booked"))
         .await;
-    story.finish().await;
 }

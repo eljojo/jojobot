@@ -123,7 +123,6 @@ async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
         .await
         .says("work:sigma")
         .never_says("work:phi");
-    story.finish().await;
 }
 
 /// **A fresh instance holds its own record before anybody writes to it.** The
@@ -158,5 +157,4 @@ async fn a_fresh_instance_holds_its_own_record_and_takes_a_key_with_no_add_entit
         !operator_line(&boot).contains("add_entity topic:instance"),
         "the record exists from the first boot, so the line does not say to make it: {boot}",
     );
-    story.finish().await;
 }

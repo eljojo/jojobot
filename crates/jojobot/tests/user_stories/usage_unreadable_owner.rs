@@ -84,7 +84,6 @@ async fn a_manager_reads_its_reports_weeks_though_another_bots_runs_belong_to_a_
         managed["withheld"].as_u64().unwrap_or(0) > 0,
         "the weeks it was not shown are counted: {managed}"
     );
-    story.finish().await;
 }
 
 /// **A run whose owner was never created.** The run is on the board and no
@@ -148,5 +147,4 @@ async fn a_manager_reads_its_reports_weeks_though_a_run_belongs_to_a_bot_nobody_
         managed["withheld"].as_u64().unwrap_or(0) > 0,
         "the weeks it was not shown are counted: {managed}"
     );
-    later.finish().await;
 }

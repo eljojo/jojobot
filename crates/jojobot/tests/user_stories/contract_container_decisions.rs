@@ -95,5 +95,4 @@ async fn a_topic_of_sixty_decisions_stays_under_the_ceiling_and_says_how_to_read
             .is_some_and(|how| how.contains("recall")),
         "never a bare count: {read}"
     );
-    story.finish().await;
 }

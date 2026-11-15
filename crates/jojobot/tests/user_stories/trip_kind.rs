@@ -78,7 +78,6 @@ async fn a_trip_is_a_kind_whose_keys_decide_which_trips_fit() {
     fits.never_says("trip:shelbyville-2001");
 
     s.wrap("filed two trips as a kind the software ships").await;
-    story.finish().await;
 }
 
 /// **The name belongs to the kind.** A caller cannot declare a type called
@@ -107,5 +106,4 @@ async fn declaring_a_type_called_trip_is_refused_and_the_same_fields_under_anoth
         .await
         .says("cadence_km");
     s.wrap("tried to declare the name the software owns").await;
-    story.finish().await;
 }

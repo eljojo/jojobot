@@ -84,7 +84,6 @@ async fn posting_hands_back_the_reply_that_was_already_waiting() {
 
     s.wrap("posted, and was handed the answer it had not thought to ask for")
         .await;
-    story.finish().await;
 }
 
 /// "Gamma processed my message without opening it, and the listing has no
@@ -128,7 +127,6 @@ async fn a_message_processed_straight_from_new_is_listed_without_taken_by() {
 
     s.wrap("saw that a message processed unopened carries no taken_by")
         .await;
-    story.finish().await;
 }
 
 /// "I was working through two messages and every post I sent shipped me the
@@ -199,5 +197,4 @@ async fn a_post_does_not_ship_again_the_mail_the_bot_is_already_working() {
 
     s.wrap("posted while working two messages, and was not handed them again")
         .await;
-    story.finish().await;
 }

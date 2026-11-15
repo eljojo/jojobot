@@ -186,7 +186,6 @@ async fn a_record_that_only_mentions_a_thing_is_not_read_as_a_rule_about_it() {
         )
         .await;
     walking.says("mention");
-    story.finish().await;
 }
 
 /// Ten people who hold or mention the hall, in the roster's own names.
@@ -267,7 +266,6 @@ async fn an_overflowing_block_of_related_records_names_the_walk_that_reads_them_
     for holder in HOLDERS {
         walk.says(holder);
     }
-    story.finish().await;
 }
 
 /// **An overflowing block of records that admit keeps its note** (the paired
@@ -284,7 +282,6 @@ async fn an_overflowing_block_of_admitting_records_keeps_its_own_note() {
         "the note names the admits walk: {note}"
     );
     assert!(!note.contains("mention"), "{note}");
-    story.finish().await;
 }
 
 /// **A block of related records that fits says the related note only** (the
@@ -311,5 +308,4 @@ async fn a_related_block_that_fits_says_only_that_the_records_mention_the_hall()
     assert_eq!(left_out, 0, "{note}");
     assert!(note.contains("mention"), "{note}");
     assert!(!note.contains("did not fit"), "{note}");
-    story.finish().await;
 }

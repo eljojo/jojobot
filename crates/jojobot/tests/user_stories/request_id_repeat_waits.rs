@@ -61,7 +61,6 @@ async fn a_resend_made_while_the_first_call_is_still_inside_the_verb_waits_and_t
 
     s.wrap("sent a note twice while the first was still being written")
         .await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -105,5 +104,4 @@ async fn a_resend_on_another_connection_waits_for_the_first_call_too() {
     repeat.says(&address);
 
     s.wrap("sent a note twice over two connections").await;
-    story.finish().await;
 }

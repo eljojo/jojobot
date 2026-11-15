@@ -58,7 +58,6 @@ async fn a_read_with_no_system_is_refused_naming_the_argument_of_the_verb_called
         )
         .await;
     landed.says("sections");
-    story.finish().await;
 }
 
 /// A receipt without a move to settled is refused; with one, it settles.
@@ -93,7 +92,6 @@ async fn a_receipt_is_accepted_only_with_a_move_to_settled() {
     .await;
     let read = s.recall("thing:gamma").await;
     read.says("freshly-checked").never_says("openly-checked");
-    story.finish().await;
 }
 
 /// A capture is held to the same rule as an edit: a receipt rides only a claim
@@ -139,5 +137,4 @@ async fn a_capture_with_a_receipt_lands_only_when_it_lands_settled() {
         .expect("the settled claim");
     assert_eq!(fact["standing"], "settled", "{fact}");
     assert_eq!(fact["provenance"], "inference", "{fact}");
-    story.finish().await;
 }

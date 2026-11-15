@@ -88,8 +88,6 @@ async fn a_mistaken_entry_drops_out_of_the_default_list_and_stays_reachable_by_n
 
     s.wrap("archived the one who never belonged, left the other alone")
         .await;
-
-    story.finish().await;
 }
 
 /// "I archived it on bad advice. It was fine. Put it back."
@@ -148,8 +146,6 @@ async fn an_archived_thing_is_put_back_with_its_records_and_the_history_of_both_
         .never_says("\"archived\":{")
         .says("a mistaken filing")
         .says("the filing was fine after all");
-
-    story.finish().await;
 }
 
 /// "I browsed for people and got nothing back. Is nobody on file, or did the
@@ -183,6 +179,4 @@ async fn an_empty_browse_says_what_it_looked_through_and_a_full_one_does_not() {
 
     s.wrap("browsed an empty list and read what it had looked through")
         .await;
-
-    story.finish().await;
 }

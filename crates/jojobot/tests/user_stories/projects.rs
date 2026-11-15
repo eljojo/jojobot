@@ -61,8 +61,6 @@ async fn a_session_told_nothing_finds_the_projects_skill_from_the_boot() {
             "the procedure does not name {route}, which a tip rests on: {body}",
         );
     }
-
-    story.finish().await;
 }
 
 /// **The first write about a project names the skill, in one line, once.**
@@ -128,7 +126,6 @@ async fn the_first_write_about_a_project_names_the_skill_once_per_session() {
         )
         .await;
     assert!(names_the_skill(&first), "{}", first.raw());
-    story.finish().await;
 }
 
 /// Whether an answer carries a teaching that names the read which says why work
@@ -236,7 +233,6 @@ async fn the_first_dependency_write_names_the_ready_read_once_per_session() {
         )
         .await;
     assert!(names_the_ready_read(&amended), "{}", amended.raw());
-    story.finish().await;
 }
 
 /// **A slip is a new due day, and how many times it moved is a history read.**
@@ -264,7 +260,6 @@ async fn how_many_times_a_milestone_moved_is_read_from_the_keys_history() {
     for day in ["2026-03-01", "2026-03-15", "2026-04-06"] {
         history.says(day);
     }
-    story.finish().await;
 }
 
 /// **A decision is the operator's words, and the option turned down is a claim
@@ -328,7 +323,6 @@ async fn a_decision_is_kept_in_the_operators_words_with_the_option_turned_down()
         .says("hard-coded")
         .says("@person:martin")
         .never_says("sync the menu first");
-    story.finish().await;
 }
 
 /// **Your own conclusion is two records**: what they said, and what you worked
@@ -382,7 +376,6 @@ async fn a_conclusion_from_a_quote_is_an_inference_that_points_at_the_quote() {
         .await
         .claim(&conclusion)
         .says(&quote);
-    story.finish().await;
 }
 
 /// **A pause until a day, on something with no loop, is a promise regarding
@@ -416,7 +409,6 @@ async fn a_pause_on_a_thing_with_no_loop_is_a_promise_regarding_it() {
     };
     owed("2026-11-12").await.never_says("work:handcart");
     owed("2026-11-21").await.says("work:handcart");
-    story.finish().await;
 }
 
 /// **A piece of work that is done is not owed, and the day it was due stays
@@ -466,7 +458,6 @@ async fn a_piece_of_work_that_is_done_is_no_longer_owed() {
     s.call("recall", json!({"subject": "work:phi"}))
         .await
         .says("\"decide_by\":\"2026-01-01\"");
-    story.finish().await;
 }
 
 /// Where an open question is filed: a `work` thing of its own, so that it folds
@@ -549,7 +540,6 @@ async fn an_open_question_carries_its_state_and_what_it_blocks() {
     next.says("work:handcart")
         .never_says("work:phi")
         .never_says("work:sigma");
-    story.finish().await;
 }
 
 /// **Where a piece of work stands is kept on the keys the skill names**, so
@@ -637,7 +627,6 @@ async fn where_a_piece_of_work_stands_is_kept_on_the_keys_the_skill_names() {
     s.call("recall", json!({"subject": "work:phi"}))
         .await
         .says("\"status\":\"backlog\"");
-    story.finish().await;
 }
 
 /// **"Considering" is the operator's word, and nothing refuses it.** On a fresh
@@ -753,7 +742,6 @@ async fn an_operators_own_status_word_lands_and_is_named_until_it_is_mapped() {
     )
     .await;
     owed().await.never_says("project:atlas");
-    story.finish().await;
 }
 
 /// **A word the instance lists is quiet even before it is mapped**, and a shipped
@@ -825,7 +813,6 @@ async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_a
     s.recall("topic:instance")
         .await
         .says("\"status_word/closed\":\"done\"");
-    story.finish().await;
 }
 
 /// **A long history read is elided, and raising the limit reaches the far
@@ -859,7 +846,6 @@ async fn a_retrospective_raises_the_limit_before_it_concludes() {
         )
         .await;
     whole.says("week-01").says("week-25");
-    story.finish().await;
 }
 
 /// **An answer the operator asks to have kept is written down**, and a later
@@ -885,7 +871,6 @@ async fn an_answer_the_operator_asked_to_keep_is_there_for_a_later_session() {
         )
         .await
         .says("\"budget_truth\":\"150\"");
-    story.finish().await;
 }
 
 /// **Every verb that can set a status names a word outside the set**, and none
@@ -974,7 +959,6 @@ async fn each_write_that_sets_a_status_names_a_word_outside_the_set_and_only_tha
         back.get("status_word_note").is_none(),
         "a word inside the set is not named: {back}"
     );
-    story.finish().await;
 }
 
 /// **The procedure shows one board question answered with `where`**, so a
@@ -1030,5 +1014,4 @@ async fn the_projects_skill_answers_a_board_question_with_where() {
         "the skill's example narrows the ready list to the work not started: {}",
         answer.raw()
     );
-    story.finish().await;
 }

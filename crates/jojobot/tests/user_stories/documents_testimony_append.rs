@@ -90,5 +90,4 @@ async fn another_session_appends_to_a_testimony_document_and_its_words_are_untou
         )
         .await
         .says("derived_from");
-    story.finish().await;
 }

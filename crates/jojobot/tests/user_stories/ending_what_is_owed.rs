@@ -97,7 +97,6 @@ async fn a_runs_out_thing_that_ended_is_not_owed_and_keeps_its_date() {
     )
     .await;
     assert_eq!(overdue(&s).await, [BOOTS], "the unended thing is owed");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -136,7 +135,6 @@ async fn a_decide_by_thing_that_ended_is_not_owed_and_keeps_its_date() {
         "{}",
         held.raw()
     );
-    story.finish().await;
 }
 
 /// **A store the previous build filled** can already hold a thing with both
@@ -198,5 +196,4 @@ async fn a_thing_the_old_build_left_holding_both_runs_out_and_ended_is_not_owed(
         "the due view does not list it either: {}",
         due.raw()
     );
-    story.finish().await;
 }

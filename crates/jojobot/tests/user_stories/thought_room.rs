@@ -253,8 +253,6 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
 
     s2.wrap("dropped a thought that was no longer pressing to make room for one that was")
         .await;
-
-    story.finish().await;
 }
 
 /// **A ceiling that is not a number is refused where it is written.** A room's
@@ -314,7 +312,6 @@ async fn a_ceiling_that_is_not_a_number_is_refused_where_it_is_written() {
     .await;
 
     s.wrap("ceilings that read, and ones that do not").await;
-    story.finish().await;
 }
 
 /// **A room with no capacity says so, and never tells the caller to archive or
@@ -411,7 +408,6 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
 
     s.wrap("a room with nothing in it, and one that is full")
         .await;
-    story.finish().await;
 }
 
 /// **A merge is a way to write thoughts, so a full room refuses it.** A
@@ -538,8 +534,6 @@ async fn a_merge_that_would_overfill_a_room_is_refused_until_a_slot_is_free() {
 
     s.wrap("merged things with claims into a bot once the room had a slot")
         .await;
-
-    story.finish().await;
 }
 
 /// **A thread a thought points at: what it says, written by somebody who knew.**
@@ -838,7 +832,6 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
     );
 
     third.wrap("the quote line is live again").await;
-    story.finish().await;
 }
 
 /// **An edit that would add a thought to a room already over its capacity is
@@ -896,7 +889,6 @@ async fn an_edit_into_a_room_over_its_capacity_is_told_to_archive_and_not_to_cap
     let over = g.refused("update_fact", becomes_a_thought).await;
     over.number("/archive_needed", 2);
     over.never_holds_at("/how_to_proceed", "capture");
-    story.finish().await;
 }
 
 /// **Only a bot's own claims are its thoughts.** A connection claim another
@@ -970,7 +962,6 @@ async fn a_claim_another_identity_writes_on_a_bot_takes_no_seat_in_its_room() {
     let room = refused.json()["room"].clone();
     assert_eq!(room.as_array().map(Vec::len), Some(2), "{room}");
     assert!(!room.to_string().contains("leg"), "{room}");
-    story.finish().await;
 }
 
 /// **A thought over its body cap is refused, and a shorter edit of the same
@@ -1042,7 +1033,6 @@ async fn a_shorter_edit_in_place_lands_for_a_thought_over_its_cap() {
             json!({"address": said, "content": "the fern was watered"}),
         )
         .await;
-    story.finish().await;
 }
 
 /// **A merge into your own bot is refused for any key a bot cannot set about
@@ -1096,5 +1086,4 @@ async fn a_merge_into_your_own_bot_is_refused_for_a_duplicate_carrying_the_agein
     )
     .await
     .says("thing:the-couch");
-    story.finish().await;
 }

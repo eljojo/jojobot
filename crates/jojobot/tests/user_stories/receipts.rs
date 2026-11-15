@@ -197,8 +197,6 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
         receipt.get("warnings").is_none(),
         "a difference with nothing to explain carries no explanation: {receipt}",
     );
-
-    story.finish().await;
 }
 
 /// **A receipt says which keys reached the thing and which stayed on the
@@ -280,7 +278,6 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
     );
 
     s.wrap("wrote a mark and an ordinary key").await;
-    story.finish().await;
 }
 
 /// **Taking a record back says which keys the thing lost.** Archiving a record
@@ -325,8 +322,6 @@ async fn taking_a_record_back_says_which_keys_the_thing_lost() {
         .await
         .json();
     assert_eq!(retracted["left_the_thing"], json!(["pot"]), "{retracted}");
-
-    story.finish().await;
 }
 
 /// **An archive with keys beside it reaches nothing.** A record written archived
@@ -505,6 +500,4 @@ async fn an_archive_with_keys_beside_it_reaches_nothing() {
         archived_hint.get("hint").is_none(),
         "an archived record reaches nothing, so sets is no route: {archived_hint}"
     );
-
-    story.finish().await;
 }

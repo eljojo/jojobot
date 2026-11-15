@@ -137,8 +137,6 @@ async fn a_receipt_names_another_known_thing_the_claims_words_name_once_a_sessio
         .unwrap_or_else(|| panic!("the whole name is noted: {whole}"));
     assert!(note.contains("thing:dining-chairs"), "{note}");
     assert!(!note.contains("project:kitchen-floor"), "{note}");
-
-    story.finish().await;
 }
 
 /// **A receipt that serves one suggestion says the other exists.** A heading

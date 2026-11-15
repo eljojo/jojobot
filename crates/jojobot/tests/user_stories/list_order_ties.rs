@@ -56,7 +56,6 @@ async fn entries_with_one_order_key_read_by_claim_number_not_by_text() {
             "mow", "rake", "sweep", "mulch", "prune", "weed", "edge", "water", "trim"
         ]
     );
-    story.finish().await;
 }
 
 /// **Two sections of a document that hold one order key read by claim number
@@ -127,5 +126,4 @@ async fn document_sections_with_one_order_key_read_by_claim_number_not_by_text()
         ["document:homer#f9", "document:homer#f10"],
         "{read}"
     );
-    story.finish().await;
 }

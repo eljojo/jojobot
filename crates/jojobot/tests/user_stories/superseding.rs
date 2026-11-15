@@ -221,7 +221,6 @@ async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
         .says("supersedes");
 
     s.wrap("corrected two messages").await;
-    story.finish().await;
 }
 
 /// "I corrected a message, and the reader set my correction aside. Is the first
@@ -303,6 +302,4 @@ async fn a_message_whose_replacement_was_set_aside_is_still_handed_over() {
         .await
         .json();
     assert!(read.get("superseded_by").is_none(), "{read}");
-
-    story.finish().await;
 }

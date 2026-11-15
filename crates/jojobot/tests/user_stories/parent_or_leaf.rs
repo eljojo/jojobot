@@ -63,6 +63,4 @@ async fn a_project_says_it_has_parts_and_a_leaf_says_nothing() {
 
     // ── a piece with nothing under it ───────────────────────────────────────
     s.recall("work:sigma").await.never_says("how_to_list");
-
-    story.finish().await;
 }

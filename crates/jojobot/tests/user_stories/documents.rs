@@ -1632,7 +1632,6 @@ async fn a_section_is_found_by_its_own_words_and_not_by_the_name_of_its_document
     let by_name = session.call("search", json!({"query": "Fryer"})).await;
     by_name.says("document:homer");
     by_name.never_says(&address);
-    story.finish().await;
 }
 
 /// **A heading captured onto a document is a claim about it and no section, and
@@ -1720,5 +1719,4 @@ async fn a_heading_captured_onto_a_document_points_to_put_document() {
             .as_str()
             .expect("a way forward")
     ));
-    story.finish().await;
 }

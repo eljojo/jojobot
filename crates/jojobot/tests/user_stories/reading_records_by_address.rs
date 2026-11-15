@@ -153,7 +153,6 @@ async fn a_day_a_window_or_a_clock_beside_a_list_of_records_is_refused_by_name()
         assert_eq!(refusal.json()["wrote"], false, "{name}: {}", refusal.raw());
         refusal.says(name);
     }
-    story.finish().await;
 }
 
 /// **An address on a thing that was merged away is named in its own place, and

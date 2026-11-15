@@ -116,7 +116,6 @@ async fn the_rent_falls_due_on_the_first_of_every_month() {
     );
 
     s.wrap("paid the rent").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -155,7 +154,6 @@ async fn the_last_day_of_the_month_by_setpos_and_by_a_negative_day() {
     }
 
     s.wrap("read the meter and took out the bins").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -188,7 +186,6 @@ async fn the_first_saturday_and_the_last_friday_of_the_month() {
     );
 
     s.wrap("scheduled the service").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -225,7 +222,6 @@ async fn a_fortnightly_thursday_keeps_its_phase_across_a_late_check_in() {
     );
 
     s.wrap("watered the fern").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -251,7 +247,6 @@ async fn every_march_the_first() {
     );
 
     s.wrap("renewed it").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -276,7 +271,6 @@ async fn a_bare_day_thirty_one_skips_the_months_without_one() {
     }
 
     s.wrap("paid the water").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -297,7 +291,6 @@ async fn a_number_of_days_reads_as_it_always_did() {
     );
 
     s.wrap("swapped the filter").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -374,7 +367,6 @@ async fn a_rhythm_repeats_one_way_and_a_rule_a_rhythm_cannot_use_is_refused_with
     s.recall("rhythm:mow-the-lawn").await.says("\"rrule\"");
 
     s.wrap("tried the lawn five ways").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -444,7 +436,6 @@ async fn a_snooze_never_moves_a_calendar_schedule_and_the_due_view_agrees() {
     );
 
     s.wrap("snoozed and paid").await;
-    story.finish().await;
 }
 
 /// **A cadence alone is a whole schedule on every verb that writes keys, so the
@@ -522,7 +513,6 @@ async fn a_cadence_alone_lands_on_every_writing_verb_and_advances_from_alone_is_
 
     s.wrap("a cadence alone lands, half a schedule does not")
         .await;
-    story.finish().await;
 }
 
 /// **A late check-in counts from the default for its cadence when the rhythm
@@ -571,7 +561,6 @@ async fn a_late_check_in_counts_from_the_default_for_its_cadence_when_none_is_na
     assert!(owed_on(&s, "rhythm:pay-rent", d(2026, 3, 10)).await);
 
     s.wrap("two cadences, two defaults").await;
-    story.finish().await;
 }
 
 /// **A loop holding part of a schedule and no cadence comes back overdue, and a
@@ -604,7 +593,6 @@ async fn a_loop_holding_counts_from_and_no_cadence_is_overdue_and_one_holding_no
     read.never_says("rhythm:worming");
 
     s.wrap("one half-built loop, one with no schedule").await;
-    story.finish().await;
 }
 
 /// "Stop the leap check."
@@ -691,7 +679,6 @@ async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_over
     );
 
     s.wrap("cleared a checked-in calendar loop").await;
-    story.finish().await;
 }
 
 /// **A snoozed calendar loop whose schedule is cleared names both keys that
@@ -827,7 +814,6 @@ async fn clearing_a_snoozed_calendar_loop_names_the_anchor_and_the_snooze() {
     snoozed.says("anchored_on").says("snoozed_until");
 
     s.wrap("cleared a snoozed calendar loop").await;
-    story.finish().await;
 }
 
 /// **The operator's page words a rule it can word and shows the rule itself
@@ -871,7 +857,6 @@ async fn the_page_words_a_monthly_day_and_shows_a_monthly_weekday_as_the_rule() 
     assert_ne!(shown, cadence(&rent));
 
     s.wrap("two rules, one worded").await;
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -921,7 +906,6 @@ async fn a_rhythm_with_no_advances_from_gets_the_default_for_its_cadence_and_say
     );
 
     s.wrap("defaulted and named").await;
-    story.finish().await;
 }
 
 /// "Every other year, on the 29th of February."
@@ -963,7 +947,6 @@ async fn a_rule_that_never_recurs_from_the_loops_own_day_is_refused_when_written
 
     s.wrap("tried a rule from the wrong year and the right one")
         .await;
-    story.finish().await;
 }
 
 /// "The first time I looked at the leap check was in an odd year."
@@ -1026,7 +1009,6 @@ async fn the_check_in_claim_lands_when_its_opening_schedule_cannot_recur() {
 
     s.wrap("checked in on the wrong year and the right one")
         .await;
-    story.finish().await;
 }
 
 /// "Move the day it counts from."
@@ -1081,5 +1063,4 @@ async fn moving_the_day_a_rule_runs_from_to_a_day_it_never_recurs_from_is_refuse
 
     s.wrap("moved the day the rule runs from, wrongly and rightly")
         .await;
-    story.finish().await;
 }

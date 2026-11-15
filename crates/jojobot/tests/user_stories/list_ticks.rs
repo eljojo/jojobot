@@ -76,7 +76,6 @@ async fn a_sink_list_keeps_done_entries_at_the_bottom_in_the_order_done() {
         read_states(&s, "list:packing").await,
         ["stove:open", "lantern:open", "tent:done"]
     );
-    story.finish().await;
 }
 
 /// **A queue lets a done entry go from the open view, says it left, and the tick
@@ -107,7 +106,6 @@ async fn a_leave_list_lets_a_done_entry_go_and_says_so() {
     let ticks = history.json()["objects"][0]["ticks"].clone();
     assert_eq!(ticks[0]["act"], "done", "{ticks}");
     assert_eq!(ticks[0]["entry"], at[0].as_str(), "{ticks}");
-    story.finish().await;
 }
 
 /// **A rotation takes its turn and goes to the end, still open; two full circuits
@@ -134,7 +132,6 @@ async fn a_back_list_rotates_and_two_circuits_end_in_the_original_order() {
         read_states(&s, "list:packing").await,
         ["tent:open", "stove:open", "lantern:open"]
     );
-    story.finish().await;
 }
 
 /// **Dropping is not doing**: a dropped entry is out of the open view, counted as
@@ -170,7 +167,6 @@ async fn a_dropped_entry_reads_as_dropped_and_never_as_done() {
         read_states(&s, "list:packing").await,
         ["tent:open", "stove:open", "lantern:open"]
     );
-    story.finish().await;
 }
 
 /// **An entry written as the operator's testimony stays testimony when another
@@ -201,7 +197,6 @@ async fn a_tick_never_edits_the_entry_it_names() {
     assert_eq!(entry["provenance"], "testimony", "{entry}");
     assert_eq!(entry["content"], "tent", "{entry}");
     assert_eq!(read_states(&s, "list:packing").await, ["tent:done"]);
-    story.finish().await;
 }
 
 /// **A tick sent again under one request id lands once**, so a rotation never
@@ -232,7 +227,6 @@ async fn a_retried_tick_under_one_request_id_rotates_once() {
         read_states(&s, "list:packing").await,
         ["lantern:open", "tent:open", "stove:open"]
     );
-    story.finish().await;
 }
 
 /// **The ticks are their own read, newest first, in parts.** Five ticks, two a
@@ -283,7 +277,6 @@ async fn the_tick_history_is_read_in_parts_newest_first() {
         "{object}"
     );
     assert!(object.get("ticks_left_out").is_none(), "{object}");
-    story.finish().await;
 }
 
 /// **A tick is refused with a way forward when it cannot be recorded**, and
@@ -347,7 +340,6 @@ async fn a_tick_that_cannot_be_recorded_is_refused_with_a_way_forward() {
         .await
         .says("back")
         .says("\"wrote\":false");
-    story.finish().await;
 }
 
 /// A second list on the trip, with its own entries; their addresses in order.
@@ -401,7 +393,6 @@ async fn ticks_follow_their_entries_when_two_lists_merge() {
             "bins:done"
         ]
     );
-    story.finish().await;
 }
 
 /// **An address kept from before a merge still places `after` on the survivor.**
@@ -430,7 +421,6 @@ async fn an_entry_address_from_before_a_merge_still_places_after_on_the_survivor
             "bins:open"
         ]
     );
-    story.finish().await;
 }
 
 /// **A dropped entry on a back list comes back with `undone`, as on every other
@@ -462,7 +452,6 @@ async fn undone_revives_a_dropped_entry_on_a_back_list() {
         read_states(&s, "list:errands").await,
         ["letter:open", "bread:open", "bins:open"]
     );
-    story.finish().await;
 }
 
 /// **A turn on a back list is still not undone.** An entry that took its turn went
@@ -493,5 +482,4 @@ async fn undone_still_refuses_to_undo_a_turn_on_a_back_list() {
         ["bread:open", "bins:open", "letter:open"],
         "the refused undo left the turn where it was"
     );
-    story.finish().await;
 }

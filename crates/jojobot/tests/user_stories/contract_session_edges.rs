@@ -32,7 +32,6 @@ async fn a_beat_with_a_blank_focus_is_refused_and_one_with_words_lands() {
     .await;
     let listed = s.call("list_runs", json!({})).await.json();
     assert_eq!(listed["runs"][0]["working_on"], "the damper", "{listed}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -49,5 +48,4 @@ async fn a_page_of_no_runs_is_refused_and_a_page_of_one_is_served() {
         .says("\"wrote\":false");
     let one = s.call("list_runs", json!({"limit": 1})).await.json();
     assert_eq!(one["runs"].as_array().map(Vec::len), Some(1), "{one}");
-    story.finish().await;
 }

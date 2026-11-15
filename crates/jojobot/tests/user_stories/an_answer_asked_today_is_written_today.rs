@@ -31,9 +31,7 @@ async fn first_read_teachings(claim_day: &str) -> usize {
         .await;
     setup.wrap("the glasses written up").await;
     let reader = story.session_on(TODAY, Some("new")).await;
-    let teachings = reader.recall("thing:glasses").await.teachings().len();
-    story.finish().await;
-    teachings
+    reader.recall("thing:glasses").await.teachings().len()
 }
 
 #[tokio::test]
@@ -74,9 +72,7 @@ async fn first_field_read_teachings(reader_day: &str) -> usize {
     answer
         .says("\"spare\":\"hall drawer\"")
         .never_says("\"facts\"");
-    let teachings = answer.teachings().len();
-    story.finish().await;
-    teachings
+    answer.teachings().len()
 }
 
 #[tokio::test]
@@ -139,5 +135,4 @@ async fn an_answer_asked_today_is_written_on_the_thing_and_read_back_dated_today
         "nothing is taught twice in one session: {:?}",
         after.teachings()
     );
-    story.finish().await;
 }

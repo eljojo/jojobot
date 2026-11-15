@@ -222,5 +222,4 @@ async fn a_declared_type_describes_a_thing_and_holds_it_to_nothing() {
 
     s.wrap("said what a booking's venue is, and found out the hard way that it now means it")
         .await;
-    story.finish().await;
 }

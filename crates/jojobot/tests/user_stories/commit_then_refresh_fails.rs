@@ -57,5 +57,4 @@ async fn a_message_the_board_took_is_answered_as_done_when_the_index_cannot_take
 
     s.wrap("posted while the index was failing, and the post stood")
         .await;
-    story.finish().await;
 }

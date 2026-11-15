@@ -36,5 +36,4 @@ async fn a_thing_erased_under_the_store_is_no_longer_served_after_the_store_is_r
     let found = s.find("laughs").await;
     found.says("person:milhouse");
     found.never_says("person:nelson");
-    story.finish().await;
 }

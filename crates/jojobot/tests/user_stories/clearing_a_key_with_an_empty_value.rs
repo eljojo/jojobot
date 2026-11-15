@@ -60,6 +60,4 @@ async fn an_empty_value_takes_the_key_off_so_a_bare_key_where_no_longer_finds_th
         .shape("what Homer holds now", json!({ "subject": "person:homer" }))
         .await;
     homer.says("person:homer").never_says("\"hat\":");
-
-    story.finish().await;
 }

@@ -34,5 +34,4 @@ async fn a_declaration_with_no_session_is_refused_naming_start_here_and_a_booted
     declared.says("snacking").never_says("SessionUnbound");
 
     s.wrap("declared a type after booting").await;
-    story.finish().await;
 }

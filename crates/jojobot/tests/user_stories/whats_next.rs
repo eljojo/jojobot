@@ -201,7 +201,6 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
     projects.says("project:atlas");
 
     s.wrap("work laid down on the shipped keys").await;
-    story.finish().await;
 }
 
 /// "What is behind this?" — the question asked of a thing, with no key named.
@@ -265,7 +264,6 @@ async fn a_work_item_depending_on_two_things_is_found_from_each_of_them() {
 
     s.wrap("looked behind two things and found the work that waits on both")
         .await;
-    story.finish().await;
 }
 
 /// "The note told me to write columns on the project, I did, and it named the
@@ -375,8 +373,6 @@ async fn a_project_under_no_project_is_held_to_its_own_columns_and_one_under_a_p
     s.recall("project:jojobot-server")
         .await
         .says("\"status\":\"inbox\"");
-
-    story.finish().await;
 }
 
 /// "The orientation said no write is ever blocked by a type, and the project
@@ -430,6 +426,4 @@ async fn a_cold_session_taught_by_the_essay_follows_a_status_note_to_a_write_tha
     .await;
     let quiet = s.call("capture", write).await.json();
     assert!(quiet.get("status_word_note").is_none(), "{quiet}");
-
-    story.finish().await;
 }

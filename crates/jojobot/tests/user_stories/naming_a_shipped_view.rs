@@ -93,5 +93,4 @@ async fn the_operator_gives_a_shipped_view_a_name_and_another_name() {
 
     s.wrap("gave the colleagues view a name of my own and another name")
         .await;
-    story.finish().await;
 }

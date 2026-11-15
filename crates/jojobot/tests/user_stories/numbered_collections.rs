@@ -133,7 +133,6 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
         .refused("recall", json!({"subject": format!("{COLLECTION}/9")}))
         .await;
     miss.says(&format!("{COLLECTION}/2"));
-    story.finish().await;
 }
 
 /// **A number names one member for good, whatever verb moves the member.**
@@ -251,7 +250,6 @@ async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retracti
         .says(COLLECTION);
     s.call("add_entity", asking("contract-ordinance-story-gates", "3"))
         .await;
-    story.finish().await;
 }
 
 /// **A merge refused for a number is told the ways a merge can go on, and each
@@ -341,7 +339,6 @@ async fn a_merge_refused_for_a_number_is_told_the_two_ways_that_work_and_each_wo
     )
     .await;
     s.recall(&format!("{COLLECTION}/4")).await.says(FIREWORKS);
-    story.finish().await;
 }
 
 /// **A move refused for a number is told the member can stay or be archived,
@@ -421,7 +418,6 @@ async fn a_move_refused_for_a_number_is_told_to_leave_it_or_archive_it_and_each_
     )
     .await;
     s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
-    story.finish().await;
 }
 
 /// **A mention written as a member's number links the member.** "See
@@ -479,7 +475,6 @@ async fn a_mention_written_as_a_members_number_links_the_member_or_is_refused() 
         )
         .await;
     refused.says(COLLECTION).says("999");
-    story.finish().await;
 }
 
 const INNER: &str = "topic:contract-ordinances-guard";
@@ -551,5 +546,4 @@ async fn a_mention_of_a_number_held_below_a_numbering_collection_links_the_membe
         "the refusal names a numbering marker, which is no thing: {}",
         refused.json()
     );
-    story.finish().await;
 }

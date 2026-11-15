@@ -1803,8 +1803,14 @@ impl Story {
         client.cancel().await.unwrap();
         body
     }
+}
 
-    pub async fn finish(self) {
+/// **A story ends when it goes out of scope.** The server it started is
+/// cancelled then, whether the story ran to its end or a failed assertion
+/// unwound through it. The cancel is a plain call and catches nothing, so a
+/// failure inside a story still fails the case.
+impl Drop for Story {
+    fn drop(&mut self) {
         self.ct.cancel();
     }
 }

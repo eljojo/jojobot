@@ -56,7 +56,6 @@ async fn a_cap_set_on_a_person_binds_the_connection_claim_a_bot_writes_there() {
         .collect();
     assert!(words.contains(&short), "the short claim landed: {words:?}");
     assert!(!words.contains(&long), "the long claim did not: {words:?}");
-    story.finish().await;
 }
 
 /// **A claim another bot writes on a bot does not make that bot a writer of the
@@ -117,7 +116,6 @@ async fn a_claim_another_bot_writes_on_a_bot_makes_no_writer_of_the_thread_it_po
     s.call("recall", json!({"subject": THREAD}))
         .await
         .says("\"thought_capacity\":\"6\"");
-    story.finish().await;
 }
 
 /// **A claim another bot writes on a bot whose room is over its ceiling gets no
@@ -170,7 +168,6 @@ async fn a_claim_another_bot_writes_on_an_over_full_room_is_not_told_it_used_the
     )
     .await
     .never_says("emergency reserve");
-    story.finish().await;
 }
 
 /// **A starred connection claim another bot writes on a bot is neither that bot's
@@ -272,5 +269,4 @@ async fn a_starred_connection_claim_another_bot_writes_is_neither_the_bots_rule_
     let mut borrowing = second;
     borrowing["borrow"] = json!(true);
     milhouse.call("capture", borrowing).await.says("2 of 1");
-    story.finish().await;
 }

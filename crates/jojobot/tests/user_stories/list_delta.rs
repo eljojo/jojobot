@@ -90,7 +90,6 @@ async fn adding_one_dependency_keeps_the_others_and_appends_it() {
         "work:paint-the-door",
         "a whole replacement replaces"
     );
-    story.finish().await;
 }
 
 /// **Removing one item keeps the others, through `update_fact` as well as
@@ -145,7 +144,6 @@ async fn removing_one_dependency_keeps_the_others_through_either_verb() {
         depends_on(&s).await,
         "work:frame-the-walls, work:paint-the-door"
     );
-    story.finish().await;
 }
 
 /// **Taking off the last item leaves the key holding an empty list** (rule 751),
@@ -183,7 +181,6 @@ async fn removing_the_last_dependency_leaves_an_empty_list_and_a_blank_status_le
         fields.get("status").is_none(),
         "a blank single-valued key is off the thing: {read}"
     );
-    story.finish().await;
 }
 
 /// **An item added must be a thing that exists, and a refusal names the
@@ -217,7 +214,6 @@ async fn adding_a_dependency_that_names_nothing_is_refused_with_candidates() {
         depends_on(&s).await,
         "work:pour-the-slab, work:order-the-lumber, work:frame-the-walls"
     );
-    story.finish().await;
 }
 
 /// **A reference to a thing that is gone can come off.** Removing a name that
@@ -257,7 +253,6 @@ async fn a_dependency_on_something_gone_can_be_removed() {
         )
         .await;
     ready.says("\"ready\":true");
-    story.finish().await;
 }
 
 /// **Only a key declared a list takes the forms**, and a refusal names the key.
@@ -298,7 +293,6 @@ async fn a_key_that_is_not_a_list_refuses_the_forms_and_a_clash_with_sets() {
         depends_on(&s).await,
         "work:pour-the-slab, work:order-the-lumber"
     );
-    story.finish().await;
 }
 
 /// **The ready view sees the dependency the moment it is added.** Before, the
@@ -330,7 +324,6 @@ async fn the_ready_view_sees_a_dependency_added_without_resending_the_list() {
         )
         .await;
     after.says("\"ready\":false").says("work:frame-the-walls");
-    story.finish().await;
 }
 
 /// **A delta is resolved against what the thing holds, not against the record it
@@ -364,7 +357,6 @@ async fn a_delta_is_resolved_against_the_thing_and_not_the_record_it_rides_on() 
         "work:pour-the-slab, work:frame-the-walls",
         "the earlier claim never held the framing, and the thing does"
     );
-    story.finish().await;
 }
 
 /// What the thing holds under `depends_on` now.
@@ -407,7 +399,6 @@ async fn an_address_kept_from_before_a_merge_adds_one_item_to_the_survivors_list
         depends_on_of(&s, "work:build-the-roof").await,
         "work:pour-the-slab, work:order-the-lumber, work:frame-the-walls"
     );
-    story.finish().await;
 }
 
 /// **A handle an item used to wear removes the thing it names now.** The list
@@ -434,7 +425,6 @@ async fn removing_an_item_by_the_handle_it_used_to_wear_removes_it() {
     .await;
 
     assert_eq!(depends_on(&s).await, "work:order-the-lumber");
-    story.finish().await;
 }
 
 /// **Adding an item by the handle it used to wear is refused, and the refusal
@@ -474,5 +464,4 @@ async fn adding_an_item_by_the_handle_it_used_to_wear_is_refused_with_the_curren
         depends_on(&s).await,
         "work:pour-the-slab, work:order-the-lumber, work:sand-the-floor"
     );
-    story.finish().await;
 }

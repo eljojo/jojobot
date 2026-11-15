@@ -59,7 +59,6 @@ async fn a_controller_pages_only_the_boxes_its_grant_names() {
         why.contains("bot:marge") && why.contains("bot:bart"),
         "{why}"
     );
-    story.finish().await;
 }
 
 /// **A controller whose grant lists recipients, on an instance that has an
@@ -124,7 +123,6 @@ async fn a_grant_that_lists_the_operator_pages_the_operator_and_no_other_box() {
         Some(0),
         "nothing reached the refused box: {inbox}"
     );
-    story.finish().await;
 }
 
 /// **A grant that lists a colleague refuses the operator's page**: a list names
@@ -196,7 +194,6 @@ async fn a_grant_that_lists_only_a_colleague_refuses_the_operator_page() {
         [("gate", "The gate is open.")],
         "the colleague holds the one page the grant allowed, and not the refused one: {inbox}"
     );
-    story.finish().await;
 }
 
 fn grant(operation: &str, kinds: &[&str], keys: &[&str]) -> OperationSpec {
@@ -387,7 +384,6 @@ async fn a_controller_reads_a_working_card_records_what_it_saw_pages_the_operato
         "the instant is the status write's, taken between {before_the_statuses} and \
          {after_the_statuses}, not the card's creation or a constant: {written_at}"
     );
-    story.finish().await;
 }
 
 /// **A controller reads what a bot is working on only while the session that
@@ -428,5 +424,4 @@ async fn a_controller_reads_working_on_only_while_the_declaring_session_is_live(
         gone["objects"][0]["fields"].get("working_on").is_none(),
         "the session is gone, so the app does not read its focus: {gone}"
     );
-    story.finish().await;
 }

@@ -222,6 +222,4 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     s.has_no_verb("discredit", &["search", "update_fact"]).await;
 
     s.wrap("acted on the sourced one").await;
-
-    story.finish().await;
 }

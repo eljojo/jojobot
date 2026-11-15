@@ -127,7 +127,6 @@ async fn a_run_served_across_a_week_boundary_is_counted_exactly_on_each_day() {
     later.the_store_changed_underneath().await;
     let again = week(&assistant, "usage:bart-2026-w41").await;
     assert_eq!(number(&again, "served_chars"), on_sunday, "{again}");
-    later.finish().await;
 }
 
 /// **A bot that was never served names no day its count starts from.** Milhouse
@@ -168,5 +167,4 @@ async fn a_bot_never_served_carries_no_day_its_served_count_starts_from() {
         None,
         "{milhouse_week}"
     );
-    story.finish().await;
 }

@@ -142,7 +142,6 @@ async fn one_span_of_a_long_note_is_changed_and_every_other_byte_stays() {
         "first paragraph\n\nsecond paragraph has a fix in it\n\nthird paragraph",
         "a stale edit left the text as the last edit made it"
     );
-    story.finish().await;
 }
 
 /// A claim to edit: `person:kenny` holds one note, and its address comes back.
@@ -227,7 +226,6 @@ async fn a_find_at_an_address_that_names_no_claim_is_refused_as_a_plain_edit_is(
         let receipt = run.call("update_fact", args).await.json();
         assert!(receipt["text_edit"].is_object(), "{receipt}");
     }
-    story.finish().await;
 }
 
 /// **The refusal for words that occur nowhere names the read that shows the
@@ -259,7 +257,6 @@ async fn a_find_that_matches_nothing_names_the_read_that_shows_the_text() {
         .await
         .json();
     assert_eq!(details_of(&read, &claim), NOTE, "{read}");
-    story.finish().await;
 }
 
 /// **An edit's receipt carries the claim's revision, so the next guarded edit
@@ -333,7 +330,6 @@ async fn an_edits_receipt_carries_the_revision_the_next_guarded_edit_sends() {
     )
     .await
     .says("\"fix_by\":\"retry\"");
-    story.finish().await;
 }
 
 /// **A find call that is not whole is refused and the text stays.** A find with
@@ -378,7 +374,6 @@ async fn a_find_call_that_is_not_whole_changes_nothing() {
             "{label}: the text stays"
         );
     }
-    story.finish().await;
 }
 
 /// **An empty `replace` deletes the words, and a find sent with the revision the
@@ -407,7 +402,6 @@ async fn an_empty_replace_deletes_and_a_find_at_the_current_revision_lands() {
         ),
         "first paragraph\n\nsecond paragraph\n\nthird paragraph"
     );
-    story.finish().await;
 }
 
 /// **A note that links to a thing is edited past the link.** The find means
@@ -498,7 +492,6 @@ async fn a_note_with_a_link_is_edited_past_the_link_and_a_cut_link_is_refused() 
         ),
         "met a friend at noon. A fix here."
     );
-    story.finish().await;
 }
 
 /// **A find and replace inside a fence that opens on the content keeps the code
@@ -592,5 +585,4 @@ async fn an_edit_inside_a_fence_that_opens_on_the_content_keeps_the_code_literal
     )
     .await
     .says("person:nelson");
-    story.finish().await;
 }

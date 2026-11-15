@@ -60,7 +60,6 @@ async fn lean_receipts_teach_read_and_revision_notes_once_per_session() {
         .await
         .json();
     assert_eq!(other["how_to_read"], how, "{other}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -87,7 +86,6 @@ async fn lean_receipts_replay_teaching_after_a_lost_answer() {
         .json();
     assert!(next.get("how_to_read").is_none(), "{next}");
     assert!(next.get("teaching").is_none(), "{next}");
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -126,5 +124,4 @@ async fn lean_receipts_keep_each_calls_warning_while_teaching_the_static_note_on
         .json();
     assert!(matching.get("recorded_at_note").is_none(), "{matching}");
     assert!(matching["address"].is_string(), "{matching}");
-    story.finish().await;
 }

@@ -251,7 +251,6 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     s.call("recall", json!({"subject": "thing:handcart"}))
         .await
         .says("\"operator\":\"person:milhouse\"");
-    story.finish().await;
 }
 
 /// "I retired one of the helpers. Is its manager still the coordinator?"
@@ -300,5 +299,4 @@ async fn a_report_held_by_an_archived_bot_still_makes_its_manager_the_head() {
     s.call("recall", json!({"subject": "topic:instance"}))
         .await
         .says("\"operator\":\"person:milhouse\"");
-    story.finish().await;
 }

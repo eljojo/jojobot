@@ -69,7 +69,6 @@ async fn a_bots_page_shows_no_row_for_the_release_notes_it_was_told() {
         fields.says("favourite_colour");
         fields.never_says("release_notes_told");
     }
-    later.finish().await;
 }
 
 /// **A thing defrag marked reviewed shows no `defragged_at` row.** The stamp is
@@ -108,5 +107,4 @@ async fn a_page_shows_no_row_for_the_stamp_defrag_leaves() {
     let fields = story.page("person:homer").await.section("fields");
     fields.says("favourite_colour");
     fields.never_says("defragged_at");
-    story.finish().await;
 }

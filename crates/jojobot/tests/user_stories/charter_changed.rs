@@ -116,8 +116,6 @@ async fn a_charter_rewritten_by_another_identity_is_told_to_the_running_session_
         .await;
     let renamed = gamma.call("list_entities", json!({ "kind": "bot" })).await;
     assert_eq!(entrant(&renamed)["by"], "bot:epsilon", "{}", renamed.raw());
-
-    story.finish().await;
 }
 
 #[tokio::test]
@@ -187,8 +185,6 @@ async fn a_bot_rewriting_its_own_charter_and_a_first_boot_after_a_change_are_tol
     let first = story.as_bot("bot:epsilon").await;
     let quiet = first.call("list_entities", json!({ "kind": "bot" })).await;
     assert_eq!(entrant(&quiet), Value::Null, "{}", quiet.raw());
-
-    story.finish().await;
 }
 
 /// The name of the one run of gamma a second boot offers back.
@@ -299,8 +295,6 @@ async fn a_resumed_run_is_told_until_it_reads_the_charter_the_same_after_a_resta
         .call("list_entities", json!({ "kind": "bot" }))
         .await;
     assert_eq!(entrant(&after), Value::Null, "{}", after.raw());
-
-    later.finish().await;
 }
 
 /// **A run that read the charter before it had a card keeps that when the card
@@ -366,8 +360,6 @@ async fn a_charter_read_before_the_run_had_a_card_is_remembered_by_the_card_it_m
         .call("list_entities", json!({ "kind": "bot" }))
         .await;
     assert_eq!(entrant(&told)["by"], "bot:delta", "{}", told.raw());
-
-    again.finish().await;
 }
 
 /// **Reading the instance's charter text through `prose` ends the notice too.**
@@ -414,8 +406,6 @@ async fn reading_ones_own_bots_prose_ends_the_notice_and_another_bots_does_not()
     assert_eq!(entrant(&read), Value::Null, "{}", read.raw());
     let after = gamma.call("list_entities", json!({ "kind": "bot" })).await;
     assert_eq!(entrant(&after), Value::Null, "{}", after.raw());
-
-    story.finish().await;
 }
 
 /// The code an offering boot carries, to send back beside the answer.
@@ -490,8 +480,6 @@ async fn a_new_run_is_told_of_a_charter_rewritten_between_the_offer_and_the_answ
             .await;
         let after = fresh.call("list_entities", json!({ "kind": "bot" })).await;
         assert_eq!(entrant(&after), Value::Null, "{case}: {}", after.raw());
-
-        story.finish().await;
     }
 }
 
@@ -577,6 +565,4 @@ async fn a_new_run_with_no_offer_code_keeps_the_notice_through_its_first_write_a
         .call("list_entities", json!({ "kind": "bot" }))
         .await;
     assert_eq!(entrant(&after), Value::Null, "{}", after.raw());
-
-    again.finish().await;
 }
