@@ -82,7 +82,10 @@ impl State {
                 .and_then(|object| self.numbers_by(object))
                 .is_some();
             if numbers {
-                let marker = EntityId(format!("{handle}/#"));
+                // Under the id the thing wears, as the listing enters it, and not under
+                // the spelling the text used: a handle the thing gave up, or a numbered
+                // address of a member that numbers its own, names no marker of its own.
+                let marker = EntityId(format!("{}/#", container.id));
                 if !names.known.iter().any(|held| held.id == marker) {
                     names.known.push(Entity {
                         id: marker,

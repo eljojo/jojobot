@@ -614,6 +614,28 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
         EntityId(format!("{}:{}", "topic", spelled_slug(10))),
     );
     numbered_collection(&layer, &collection, &[(&first, "1"), (&second, "2")]).await;
+    // Member 1 numbers members of its own, and a second collection is read by the
+    // handle it gave up.
+    let inner = EntityId(format!("{}:{}", "topic", spelled_slug(11)));
+    numbers_its_members(&layer, &first).await;
+    numbered_under(&layer, &first, &[(&inner, "3")]).await;
+    let (before, after, kept) = (
+        EntityId(format!("{}:{}", "topic", spelled_slug(12))),
+        EntityId(format!("{}:{}", "topic", spelled_slug(13))),
+        EntityId(format!("{}:{}", "topic", spelled_slug(14))),
+    );
+    numbered_collection(&layer, &before, &[(&kept, "1")]).await;
+    layer
+        .rename_entity(
+            &before,
+            &after,
+            None,
+            jiff::civil::date(2026, 9, 3),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("renamed");
 
     // The texts: every kind of name, typed and as a stored mark.
     let whole = render_roster(&*provisioned).await.expect("the roster");
@@ -644,6 +666,11 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
         (format!("{}/0", collection.0), false),
         (format!("{}/99999999999999999999999", collection.0), false),
         (format!("{}/01", plain.0), false),
+        (format!("{}/1/3", collection.0), true),
+        (format!("{}/1/4", collection.0), false),
+        (format!("{}/1", before.0), true),
+        (format!("{}/9", before.0), false),
+        (format!("{}/1", after.0), true),
         ("view:loops".to_string(), true),
         (format!("{}:{}", "person", spelled_slug(99)), false),
     ] {
@@ -850,46 +877,70 @@ async fn add_things(layer: &impl jojobot_domain::memory::Memory, ids: &[&EntityI
     }
 }
 
-/// A collection that numbers its members, and each member added under it holding its number.
-async fn numbered_collection(
+/// One claim on a thing, setting the one key it carries.
+async fn claim_key(
     layer: &impl jojobot_domain::memory::Memory,
-    collection: &EntityId,
+    subject: &EntityId,
+    words: &str,
+    field: &str,
+    value: &str,
+) {
+    use jojobot_domain::memory::NewFact;
+    use jojobot_domain::memory::testing::contract::state;
+
+    let mut fact = state(NewFact::about(
+        subject.clone(),
+        words,
+        jiff::civil::date(2026, 9, 2),
+    ));
+    fact.session = Some("fold-image".into());
+    fact.fields.insert(field.into(), value.into());
+    fact.sets = std::collections::BTreeSet::from([field.to_string()]);
+    layer
+        .capture(fact)
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+}
+
+/// A thing that numbers what it holds, by the key "number".
+async fn numbers_its_members(layer: &impl jojobot_domain::memory::Memory, container: &EntityId) {
+    let key = jojobot_domain::memory::numbered::NUMBERS_BY;
+    claim_key(layer, container, "numbers its members", key, "number").await;
+}
+
+/// Members added under a container, each holding its number.
+async fn numbered_under(
+    layer: &impl jojobot_domain::memory::Memory,
+    container: &EntityId,
     members: &[(&EntityId, &str)],
 ) {
-    use jojobot_domain::memory::testing::contract::state;
-    use jojobot_domain::memory::{NewEntity, NewFact};
+    use jojobot_domain::memory::NewEntity;
 
-    add_things(layer, &[collection]).await;
-    let key = jojobot_domain::memory::numbered::NUMBERS_BY;
-    let mut claims = vec![(collection, "numbers its members", key, "number")];
     for (member, number) in members {
         layer
             .add_entity(NewEntity {
-                parent: Some(collection.clone()),
+                parent: Some(container.clone()),
                 ..NewEntity::new((*member).clone(), &member.0, "fold-image")
             })
             .await
             .expect("add")
             .written()
             .expect("not blocked");
-        claims.push((member, "is a member", "number", number));
+        claim_key(layer, member, "is a member", "number", number).await;
     }
-    for (subject, words, field, value) in claims {
-        let mut fact = state(NewFact::about(
-            subject.clone(),
-            words,
-            jiff::civil::date(2026, 9, 2),
-        ));
-        fact.session = Some("fold-image".into());
-        fact.fields.insert(field.into(), value.into());
-        fact.sets = std::collections::BTreeSet::from([field.to_string()]);
-        layer
-            .capture(fact)
-            .await
-            .expect("captured")
-            .written()
-            .expect("not blocked");
-    }
+}
+
+/// A collection that numbers its members, and each member added under it holding its number.
+async fn numbered_collection(
+    layer: &impl jojobot_domain::memory::Memory,
+    collection: &EntityId,
+    members: &[(&EntityId, &str)],
+) {
+    add_things(layer, &[collection]).await;
+    numbers_its_members(layer, collection).await;
+    numbered_under(layer, collection, members).await;
 }
 
 /// **The instance the mention-write cases share**: a thing the claims are about, a thing
