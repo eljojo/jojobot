@@ -721,6 +721,12 @@ fn a_newer_push_cancels_the_same_branchs_older_run_and_no_protected_ref_is_pushe
                 group.contains("forgejo.event.pull_request.head.sha"),
                 "a trunk's group is not keyed on the head sha: {group}"
             );
+            // **The sha is only for a trunk**: an unconditional suffix would give every
+            // head of an ordinary pull request a group of its own, and none would cancel.
+            assert!(
+                group.contains("endsWith(forgejo.event.pull_request.head.ref, '-carry') &&"),
+                "the sha suffix is not conditional on a trunk head: {group}"
+            );
         }
     }
     for workflow in ["branch", "pull-request"] {
