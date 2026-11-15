@@ -7,11 +7,11 @@ use jojobot_domain::log::claims::{
     ClaimBody, ClaimEvent, FieldValue, KeyId, KindId, MovedRecord, MovedWrite, ObjectBody,
     ObjectSnapshot,
 };
-use jojobot_domain::log::{Event, ObjectId, RecordId, RunId};
+use jojobot_domain::log::{Event, ObjectId, RecordId, RequestId, RunId, SessionCardId};
 use jojobot_domain::memory::types::{DeclaredType, Field, Fold, Kinds, Origin, ValueType};
 use jojobot_domain::memory::{EntityKind, FactStatus, Provenance, Receipt, Standing, WriteClass};
 
-use super::codec::{DecodeError, SHAPES, decode, decode_own, encode};
+use super::codec::{DecodeError, SHAPES, decode, decode_own, encode, shapes_of_the_enum};
 
 fn object(key: &str) -> ObjectId {
     ObjectId(key.to_string())
@@ -215,8 +215,8 @@ fn enveloped(payload: ClaimEvent) -> Event<ClaimEvent> {
         meaning_version: 99,
         actor: Some(Actor::Operator),
         run: Some(RunId("run-a".into())),
-        session_card: None,
-        request: None,
+        session_card: Some(SessionCardId("card-1".into())),
+        request: Some(RequestId("request-1".into())),
         part: Some("part-1".into()),
         occurred_at: "2026-11-05T01:00:00Z".parse().ok(),
         written_at: "2026-11-05T01:00:01Z".parse().ok(),
@@ -238,6 +238,8 @@ fn every_kind_of_claims_event_round_trips_with_its_envelope() {
         assert_eq!(read.payload, event.payload, "{event:?}");
         assert_eq!(read.actor, event.actor);
         assert_eq!(read.run, event.run);
+        assert_eq!(read.session_card, event.session_card);
+        assert_eq!(read.request, event.request);
         assert_eq!(read.part, event.part);
         assert_eq!(read.occurred_at, event.occurred_at);
         assert_eq!(read.written_at, event.written_at);
@@ -454,4 +456,18 @@ fn the_stored_payload_of_every_shape_is_pinned() {
         listed,
         "a literal for every shape stored"
     );
+}
+
+/// **The inventory of shapes is the enum's own list.** The inventory and the events the cases
+/// build are kept by hand; a variant added to the payload and left out of them would pass every
+/// case that compares one hand-kept list with another. Serde names the variants it has, and the
+/// inventory must be exactly those.
+#[test]
+fn the_shape_inventory_is_the_list_the_payload_enum_has() {
+    let mut inventory: Vec<String> = SHAPES.iter().map(|shape| shape.to_string()).collect();
+    let mut enum_has = shapes_of_the_enum();
+    assert!(!enum_has.is_empty(), "serde named no shape");
+    inventory.sort();
+    enum_has.sort();
+    assert_eq!(inventory, enum_has);
 }

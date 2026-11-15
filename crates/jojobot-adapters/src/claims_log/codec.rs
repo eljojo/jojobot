@@ -147,6 +147,23 @@ pub const SHAPES: [&str; 16] = [
     "TypeWithdrawn",
 ];
 
+/// **The shapes serde itself says `Payload` has**, read from the error it gives for a name it
+/// does not know. A case holds [`SHAPES`] to this list, so a variant added to the enum and left
+/// out of the inventory fails there instead of passing with every hand-kept list one short.
+#[cfg(test)]
+pub(super) fn shapes_of_the_enum() -> Vec<String> {
+    let error = serde_json::from_str::<Payload>(r#"{"shape":"NoSuchShape"}"#)
+        .err()
+        .expect("a shape the enum does not have is refused")
+        .to_string();
+    error
+        .split('`')
+        .skip(3)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "shape")]
 enum Payload {
