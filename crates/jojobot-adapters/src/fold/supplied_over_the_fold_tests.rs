@@ -732,12 +732,11 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
         let scoped = known_among(&*provisioned, &[text.as_str()])
             .await
             .expect("names");
-        let reference = roster_for_whole(&*provisioned, &[text.as_str()])
-            .await
-            .expect("the whole roster");
+        // A render is held to what a store with no names read serves: the listing and
+        // the markers of the collections that number, and no synthetic member.
         assert_eq!(
             rendered(text, &scoped),
-            rendered(text, &reference.known),
+            rendered(text, &whole),
             "a render of {text:?}"
         );
         let scoped = roster_for(&*provisioned, &[text.as_str()])

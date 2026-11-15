@@ -198,13 +198,10 @@ pub async fn known_wanted(
         return Ok(Vec::new());
     }
     match memory.names(&wanted).await? {
-        Some(names) => {
-            // The numbered members ride along: a renderer reads a collection's
-            // numbering from them.
-            let mut known = names.known;
-            known.extend(names.members);
-            Ok(known)
-        }
+        // **No synthetic member rides along**: a render reads a collection's numbering
+        // from its marker, which `known` holds, and a typed address in stored text is
+        // marked as the whole listing marks it, whether or not a member holds the number.
+        Some(names) => Ok(names.known),
         None => render_roster(memory).await,
     }
 }
