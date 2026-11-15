@@ -1,6 +1,6 @@
 use crate::dolt::Dolt;
 use crate::dolt_log::DoltLog;
-use crate::testing::{Scratch, free_port, migrated_database};
+use crate::testing::{Scratch, free_port, migrated_database, start_unhurried};
 use crate::writer::Writer;
 use jojobot_domain::log::Position;
 
@@ -61,13 +61,13 @@ async fn an_import_is_snapshotted_and_a_quiet_second_boot_is_not() {
 
 /// **A stored snapshot the boot refuses is no coverage, so the stop of that boot
 /// replaces it.** The snapshot is this build's by fingerprint, but its body no
-/// longer matches its checksum, so the boot replays the log. The keeper starts at
+/// longer matches its stored length, so the boot replays the log. The keeper starts at
 /// zero, the shutdown snapshot covers the head with no new write, and the boot
 /// after it restores from that one.
 #[tokio::test]
 async fn a_refused_stored_snapshot_is_replaced_by_the_stop_of_the_boot_that_refused_it() {
     let scratch = Scratch::new("serving-refused-snapshot");
-    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let mut server = start_unhurried(&scratch.0, free_port()).await.unwrap();
     let pool = migrated_database(&server, "alpha").await.unwrap();
     sqlx::query("INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, ?, ?)")
         .bind("homer")
