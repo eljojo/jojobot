@@ -187,11 +187,19 @@ async fn a_declaration_of_held_kinds_opens_with_the_claims_state_current() {
         .await
         .expect("a declaration of kinds the process holds opens");
     assert!(!opened.seam.claims_behind());
-    assert!(
-        opened
-            .seam
-            .read_claims(|claims| claims.declared(&ObjectId("k5".into())).is_some()),
-        "the declaration is in the claims state"
+    let narrowed = opened.seam.read_claims(|claims| {
+        claims.declared(&ObjectId("k5".into())).map(|declared| {
+            declared
+                .fields
+                .iter()
+                .map(|field| field.points_at.clone())
+                .collect::<Vec<_>>()
+        })
+    });
+    assert_eq!(
+        narrowed,
+        Some(vec![Kinds::any_of(&[EntityKind::PERSON, EntityKind::BOT])]),
+        "the declaration is in the claims state with the narrowing it was written with"
     );
     opened.finish().await;
 }

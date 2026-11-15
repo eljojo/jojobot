@@ -471,3 +471,48 @@ fn the_shape_inventory_is_the_list_the_payload_enum_has() {
     enum_has.sort();
     assert_eq!(inventory, enum_has);
 }
+
+/// **The variants of `ClaimEvent` itself**, read from the enum's source in the domain crate. The
+/// inventory above is held to the private wire enum, so a variant added to `ClaimEvent` and
+/// encoded through a variant that already exists passed every case that compared the wire enum
+/// with its own list. The enum's own variants are the list this reads, with nothing kept by hand.
+fn claim_event_variants() -> Vec<String> {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../jojobot-domain/src/log/claims.rs");
+    let text = std::fs::read_to_string(source).expect("the domain source reads");
+    let body = text
+        .split("pub enum ClaimEvent {")
+        .nth(1)
+        .expect("the enum is in the source");
+    body.lines()
+        .skip(1)
+        .take_while(|line| *line != "}")
+        .filter(|line| {
+            line.starts_with("    ")
+                && !line.starts_with("     ")
+                && line.chars().nth(4).is_some_and(char::is_uppercase)
+        })
+        .map(|line| {
+            line.trim()
+                .chars()
+                .take_while(|c| c.is_alphanumeric())
+                .collect()
+        })
+        .collect()
+}
+
+/// **Every variant of `ClaimEvent` is a shape the wire enum has under the same name.** A new event
+/// encoded through an existing wire variant, or a wire variant renamed, makes the two lists differ.
+#[test]
+fn every_claim_event_variant_is_a_shape_of_its_own_on_the_wire() {
+    let mut events = claim_event_variants();
+    let mut wire = shapes_of_the_enum();
+    assert_eq!(
+        events.len(),
+        16,
+        "the variants read from the source: {events:?}"
+    );
+    events.sort();
+    wire.sort();
+    assert_eq!(events, wire);
+}

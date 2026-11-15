@@ -1424,6 +1424,22 @@ async fn deleting_a_renamed_thing_keeps_the_page_of_a_thing_at_its_vacated_handl
         .expect("the rename is answered")
         .written()
         .expect("nothing collides with the new handle");
+    // **A rename moves the page**: a scan serves it at the new handle.
+    let page_of = |scans: &[search::DocScan], handle: &EntityId| {
+        scans
+            .iter()
+            .find(|doc| {
+                doc.entity
+                    .as_ref()
+                    .is_some_and(|entity| &entity.id == handle)
+            })
+            .map(|doc| doc.prose.clone())
+    };
+    assert_eq!(
+        page_of(&store.scan().await.expect("the scan reads"), &renamed).as_deref(),
+        Some("the first page"),
+        "the page follows the thing to its new handle"
+    );
     // The vacated handle is screened against the former one, so the creation is
     // refused once and made again with the override its refusal offers.
     let mut second = NewEntity::new(EntityId("person:nelson".into()), "Gamma Prime", "fixture");
@@ -1447,6 +1463,11 @@ async fn deleting_a_renamed_thing_keeps_the_page_of_a_thing_at_its_vacated_handl
                 .id
         }
     };
+    assert_eq!(
+        page_of(&store.scan().await.expect("the scan reads"), &later).as_deref(),
+        Some(""),
+        "the vacated handle holds no page of the thing that left it"
+    );
     store
         .set_prose(&later, "the second page", None)
         .await
@@ -1614,77 +1635,4 @@ async fn every_refused_composite_leaves_the_whole_store_and_the_claims_state_as_
         .await
         .unwrap();
     assert_ne!(leaves_to_keep(&store).await.1, before.1, "the control");
-}
-
-/// **A renamed thing's page goes with it.** Prose is keyed by the handle it is written under, and a
-/// rename gave the thing a new handle and left the page at the old one: a scan lost the page, and a
-/// thing made later at the vacated handle read the former page as its own.
-#[tokio::test]
-async fn a_renamed_things_prose_follows_it_and_the_vacated_handle_reads_none() {
-    let store = InMemoryMemory::booted();
-    let lisa = thing(&store, "person:lisa", "Lisa").await;
-    store
-        .set_prose(&lisa, "plays the saxophone", None)
-        .await
-        .expect("the page is written");
-    let renamed = EntityId("person:delta".into());
-    store
-        .rename_entity(
-            &lisa,
-            &renamed,
-            None,
-            date(2026, 6, 4),
-            crate::memory::Override::none(),
-            None,
-        )
-        .await
-        .expect("the rename is answered")
-        .written()
-        .expect("nothing collides with the new handle");
-    let page_of = |scans: &[search::DocScan], handle: &EntityId| {
-        scans
-            .iter()
-            .find(|doc| {
-                doc.entity
-                    .as_ref()
-                    .is_some_and(|entity| &entity.id == handle)
-            })
-            .map(|doc| doc.prose.clone())
-    };
-    let scans = store.scan().await.expect("the scan reads");
-    assert_eq!(
-        page_of(&scans, &renamed).as_deref(),
-        Some("plays the saxophone"),
-        "the page follows the thing to its new handle"
-    );
-
-    // The vacated handle is screened against the former one, so the creation is refused once
-    // and made again with the override its refusal offers.
-    let mut second = NewEntity::new(EntityId("person:lisa".into()), "Bart", "fixture");
-    let again = match store.add_entity(second.clone()).await.expect("add") {
-        crate::memory::Guarded::Written(entity) => entity.id,
-        crate::memory::Guarded::Blocked {
-            attempted,
-            candidates,
-        } => {
-            second.override_token = Some(crate::memory::guard::override_token(
-                &attempted,
-                &candidates,
-            ));
-            second.override_reason = Some("a different person at the vacated handle".into());
-            store
-                .add_entity(second)
-                .await
-                .expect("add")
-                .written()
-                .expect("the override lifts the refusal")
-                .id
-        }
-    };
-    let scans = store.scan().await.expect("the scan reads");
-    assert_eq!(
-        page_of(&scans, &again).as_deref(),
-        Some(""),
-        "the vacated handle holds no page of the thing that left it"
-    );
 }
