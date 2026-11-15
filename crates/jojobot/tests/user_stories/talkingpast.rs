@@ -20,9 +20,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn posting_hands_back_the_reply_that_was_already_waiting() {
-    let story = Story::begin("bot:otto").await;
-
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
 
     // ── gamma answers a question otto has not read yet ──────────────────────

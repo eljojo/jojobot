@@ -17,9 +17,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn an_answer_says_there_is_mail_waiting_even_when_nothing_asked() {
-    let story = Story::begin("bot:otto").await;
-
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:gamma", "Gamma").await;
 
     // ── the quiet case first, and everything below rests on it ──────────────

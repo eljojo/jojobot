@@ -18,9 +18,7 @@ use super::dsl::Story;
 
 #[tokio::test]
 async fn you_write_to_a_colleague_and_never_to_their_container() {
-    let story = Story::begin("bot:otto").await;
-
-    let s = story.session().await;
+    let (story, s) = Story::begin_with_session("bot:otto").await;
     s.add("bot:epsilon", "Epsilon").await;
 
     // ── you address the identity, and never say where its mail lives ────────

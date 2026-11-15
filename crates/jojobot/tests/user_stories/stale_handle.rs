@@ -94,9 +94,7 @@ async fn a_write_on_a_handle_the_server_no_longer_holds_is_told_where_to_get_ano
 
 #[tokio::test]
 async fn a_read_on_a_lost_handle_is_refused_while_one_with_no_handle_is_served() {
-    let story = Story::begin("bot:otto").await;
-
-    let s = story.session().await;
+    let (_story, s) = Story::begin_with_session("bot:otto").await;
     s.add("person:milhouse", "Milhouse").await;
     s.fact("person:milhouse", "allergic to shellfish").await;
 
