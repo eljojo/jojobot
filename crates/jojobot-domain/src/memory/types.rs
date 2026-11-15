@@ -2034,40 +2034,6 @@ mod tests {
     /// value named twice is a caller error the store should not keep; a value
     /// carrying a comma cannot survive the list shape, where a comma is what
     /// separates one item from the next.
-    #[test]
-    fn a_closed_set_that_cannot_be_satisfied_is_refused_by_its_own_name() {
-        let declaring = |field: Field| {
-            validate_type(&DeclaredType::new("check_in", vec![field]))
-                .expect_err("this declaration is refused")
-                .to_string()
-        };
-
-        let empty = declaring(Field::one_of("outcome", Vec::<String>::new()));
-        assert!(
-            empty.contains("outcome") && empty.contains("no values"),
-            "the refusal names the empty set: {empty:?}",
-        );
-
-        let twice = declaring(Field::one_of("outcome", ["ran", "skipped", "ran"]));
-        assert!(
-            twice.contains("outcome") && twice.contains("ran") && twice.contains("twice"),
-            "the refusal names the repeated value: {twice:?}",
-        );
-
-        let comma = declaring(Field::one_of("outcome", ["ran", "did not, quite"]));
-        assert!(
-            comma.contains("outcome") && comma.contains("comma"),
-            "the refusal names the separator the value collides with: {comma:?}",
-        );
-
-        // The positive all three rest on: the same declaration, a good set.
-        validate_type(&DeclaredType::new(
-            "check_in",
-            vec![Field::one_of("outcome", ["ran", "skipped", "snoozed"])],
-        ))
-        .expect("a set of three plain values is a declaration a store can keep");
-    }
-
     /// **A declaration nothing could ever satisfy is refused, whichever pair of
     /// its own properties rules everything out.**
     ///
@@ -2081,67 +2047,79 @@ mod tests {
     /// property**, because a case sending only bad declarations passes on a
     /// build that refuses every declaration.
     #[test]
-    fn a_declaration_no_value_could_satisfy_is_refused() {
-        let declaring = |field: Field| validate_type(&DeclaredType::new("snacking", vec![field]));
-        let refused = |field: Field| {
-            declaring(field)
-                .expect_err("no value could satisfy this key")
-                .to_string()
-        };
-
-        // ① The set is empty, so it names no value at all.
-        let said = refused(Field::one_of("flavour", Vec::<String>::new()));
-        assert!(
-            said.contains("flavour") && said.contains("no values"),
-            "{said}",
-        );
-
-        // ② The set names values, and the key holds something none of them is.
-        let said = refused(Field {
-            one_of: Some(vec!["cherry".to_string(), "plain".to_string()]),
-            ..Field::new("flavour", ValueType::Number)
-        });
-        assert!(
-            said.contains("flavour") && said.contains("number"),
-            "the refusal names the key and the half that rules the set out: {said}",
-        );
-        // …and one value the key CAN hold is enough, because the key is
-        // writable then. The dead value is a value nobody can write, not a
-        // declaration nothing can satisfy.
-        declaring(Field {
-            one_of: Some(vec!["4".to_string(), "cherry".to_string()]),
-            ..Field::new("flavour", ValueType::Number)
-        })
-        .expect("one value the key holds is a key somebody can write to");
-
-        // ③ A counter is read as the total of its writes, which is any number
-        // at all, and a set holds only the values it names.
-        let said = refused(Field {
-            folds: Fold::Sum,
-            one_of: Some(vec!["1".to_string(), "2".to_string()]),
-            ..Field::new("donuts", ValueType::Number)
-        });
-        assert!(
-            said.contains("donuts") && said.contains("total"),
-            "the refusal names the key and what a counter is read as: {said}",
-        );
-        // The same key without the set is what a counter is.
-        declaring(Field::summing("donuts")).expect("a counter holding a number is a counter");
-        // …and the same set without the counter is an ordinary narrowed key.
-        declaring(Field {
-            one_of: Some(vec!["1".to_string(), "2".to_string()]),
-            ..Field::new("donuts", ValueType::Number)
-        })
-        .expect("a narrowed key that folds newest is ordinary");
-
-        // ④ A counter over a key that holds something a total is not. The
-        // oldest of these, and it is the same question: what the fold produces
-        // has to be something the key can hold.
-        let said = refused(Field {
-            folds: Fold::Sum,
-            ..Field::new("visits", ValueType::Date)
-        });
-        assert!(said.contains("visits") && said.contains("date"), "{said}");
+    fn declaration_refusals_and_their_satisfiable_pairs() {
+        let rows: [(Field, &[&str]); 11] = [
+            (
+                Field::one_of("outcome", Vec::<String>::new()),
+                &["outcome", "no values"],
+            ),
+            (
+                Field::one_of("outcome", ["ran", "skipped", "ran"]),
+                &["outcome", "ran", "twice"],
+            ),
+            (
+                Field::one_of("outcome", ["ran", "did not, quite"]),
+                &["outcome", "comma"],
+            ),
+            (Field::one_of("outcome", ["ran", "skipped", "snoozed"]), &[]),
+            (
+                Field::one_of("flavour", Vec::<String>::new()),
+                &["flavour", "no values"],
+            ),
+            (
+                Field {
+                    one_of: Some(vec!["cherry".to_string(), "plain".to_string()]),
+                    ..Field::new("flavour", ValueType::Number)
+                },
+                &["flavour", "number"],
+            ),
+            (
+                Field {
+                    one_of: Some(vec!["4".to_string(), "cherry".to_string()]),
+                    ..Field::new("flavour", ValueType::Number)
+                },
+                &[],
+            ),
+            (
+                Field {
+                    folds: Fold::Sum,
+                    one_of: Some(vec!["1".to_string(), "2".to_string()]),
+                    ..Field::new("donuts", ValueType::Number)
+                },
+                &["donuts", "total"],
+            ),
+            (Field::summing("donuts"), &[]),
+            (
+                Field {
+                    one_of: Some(vec!["1".to_string(), "2".to_string()]),
+                    ..Field::new("donuts", ValueType::Number)
+                },
+                &[],
+            ),
+            (
+                Field {
+                    folds: Fold::Sum,
+                    ..Field::new("visits", ValueType::Date)
+                },
+                &["visits", "date"],
+            ),
+        ];
+        for (field, fragments) in rows {
+            let name = if field.key == "outcome" {
+                "check_in"
+            } else {
+                "snacking"
+            };
+            let result = validate_type(&DeclaredType::new(name, vec![field.clone()]));
+            if fragments.is_empty() {
+                assert!(result.is_ok(), "{field:?}: {result:?}");
+            } else {
+                let said = result.expect_err("this declaration is refused").to_string();
+                for fragment in fragments {
+                    assert!(said.contains(fragment), "{field:?}: {fragment}: {said}");
+                }
+            }
+        }
     }
 
     /// **A declared reference names the kind it points at, and a handle of
