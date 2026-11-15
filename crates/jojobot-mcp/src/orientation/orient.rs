@@ -1251,6 +1251,34 @@ impl Jojobot {
                 );
             }
         }
+        // **A bot that says its role claims need an agent refuses a claim that names
+        // none**, unless the operator's word presented for this bot takes it. The
+        // bot is the one that carries the role: the ownership check above refused
+        // any other bot that does not own it.
+        let held = match self.memory.fields(bot).await {
+            Ok(fields) => Some(fields),
+            Err(e) => {
+                tracing::warn!(error = %e, %bot, role, "the claiming bot could not be read");
+                return unavailable_claim(
+                    role,
+                    "the claim could not be decided, because the bot that claims could not \
+                     be read. Nothing is held.",
+                );
+            }
+        };
+        if jojobot_domain::session::role_agent::claim_lacks_required_agent(
+            held.as_ref(),
+            agent,
+            runs_agent,
+            operator.is_some_and(|word| word.bot == *bot),
+        ) {
+            return serde_json::json!({
+                "role": role,
+                "status": "refused",
+                FixBy::KEY: FixBy::Change.as_token(),
+                "how_to_proceed": crate::memory::role_needs_agent_way_forward(role),
+            });
+        }
         let mut written = self
             .write_role_keys(
                 bot,

@@ -191,6 +191,9 @@ pub struct OrientArgs {
     /// `claims_role`, if it carries one**, and is otherwise unchanged.
     /// `claims_role` is written about a bot by
     /// a different identity, never by the bot itself.
+    /// **A bot that carries `requires_agent: true`, written the same way, has
+    /// a claim refused unless it names an agent**: send `agent` as the value of
+    /// `$PASEO_AGENT_ID`. The operator's code takes a role without one.
     ///
     /// **Every write you make while holding it renews the lease**, not
     /// only a journal beat — capture, add_entity, post_message and the

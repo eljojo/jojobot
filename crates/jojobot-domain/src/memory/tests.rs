@@ -718,12 +718,17 @@ fn a_walk_up_the_chart_stops_at_the_top_a_loop_a_non_handle_and_the_depth_bound(
 }
 
 /// **The keys a bot cannot write about itself are declarations in the one
-/// table.** Three are different-identity keys. A room's capacity and how long its
+/// table.** Four are different-identity keys. A room's capacity and how long its
 /// thoughts may go untouched are the same on a bot and reach the bots above the
 /// writers on a thread.
 #[test]
 fn the_ceilings_a_bot_does_not_write_about_itself_are_declared_in_the_one_table() {
-    for key in [THOUGHT_BODY_CAP, RULE_SEATS, CLAIMS_ROLE] {
+    for key in [
+        THOUGHT_BODY_CAP,
+        RULE_SEATS,
+        CLAIMS_ROLE,
+        crate::session::role_agent::REQUIRES_AGENT,
+    ] {
         let rule = GUARDED_KEYS
             .iter()
             .find(|rule| rule.key == key)
@@ -763,7 +768,7 @@ fn the_ceilings_a_bot_does_not_write_about_itself_are_declared_in_the_one_table(
     );
     assert_eq!(OPERATOR, "operator");
     assert_eq!(INSTANCE_RECORD, "topic:instance");
-    assert_eq!(GUARDED_KEYS.len(), 18);
+    assert_eq!(GUARDED_KEYS.len(), 19);
 }
 
 /// **The assistant is exempt from the writers' rule on a record ceiling, and

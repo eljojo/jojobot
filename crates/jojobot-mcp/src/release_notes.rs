@@ -59,6 +59,12 @@ pub(crate) struct Note {
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
+        "a-bot-can-be-marked-to-claim-its-role-only-with-an-agent",
+        include_str!(
+            "../release-notes/deploy-9.3.3.1/a-bot-can-be-marked-to-claim-its-role-only-with-an-agent.md"
+        ),
+    ),
+    (
         "a-bots-new-thing-sits-under-that-bot",
         include_str!("../release-notes/deploy-9.3.3/a-bots-new-thing-sits-under-that-bot.md"),
     ),

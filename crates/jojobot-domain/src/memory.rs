@@ -2601,7 +2601,7 @@ pub const INSTANCE_RECORD: &str = "topic:instance";
 /// superior. And who the operator is:
 /// named by any bot while nobody is, changed afterwards only by the head of the
 /// chart.
-pub const GUARDED_KEYS: [GuardedKey; 18] = [
+pub const GUARDED_KEYS: [GuardedKey; 19] = [
     GuardedKey {
         key: THOUGHT_CAPACITY,
         may: MayWrite::WritersSuperior,
@@ -2624,6 +2624,12 @@ pub const GUARDED_KEYS: [GuardedKey; 18] = [
     },
     GuardedKey {
         key: CLAIMS_ROLE,
+        may: MayWrite::DifferentIdentity,
+    },
+    // A bot says its role claims need an agent. Like `claims_role` it binds the
+    // bot it is written on, so that bot cannot write it.
+    GuardedKey {
+        key: crate::session::role_agent::REQUIRES_AGENT,
         may: MayWrite::DifferentIdentity,
     },
     GuardedKey {

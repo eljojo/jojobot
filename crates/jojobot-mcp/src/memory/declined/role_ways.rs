@@ -40,6 +40,18 @@ pub(crate) fn role_name_way_forward(role: &str) -> String {
     )
 }
 
+/// **What to do about a claim of a role that is held only by a runtime agent.**
+/// The refusal a claim at the boot door gets when it names no agent and the
+/// run recorded none at its boot: the agent is the caller's to send.
+// TEMPORARY(9.3.7): off the composer, start_here.
+pub(crate) fn role_needs_agent_way_forward(role: &str) -> String {
+    format!(
+        "'{role}' is held only by a runtime agent, and this claim names none. Call start_here \
+         again with the same claim and agent set to the value of $PASEO_AGENT_ID. Nothing was \
+         held."
+    )
+}
+
 /// **What to do about a role that belongs to another bot.** The refusal a claim
 /// at the boot door gets when the role is carried by, or sits under, a bot
 /// other than the one booting.

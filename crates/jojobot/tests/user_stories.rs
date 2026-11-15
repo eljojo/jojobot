@@ -456,6 +456,8 @@ mod rhythm_calendar;
 mod rhythms;
 #[path = "user_stories/role_owner.rs"]
 mod role_owner;
+#[path = "user_stories/role_requires_agent.rs"]
+mod role_requires_agent;
 #[path = "user_stories/rule_seats.rs"]
 mod rule_seats;
 /// What a run changed, and what an entry said before it was corrected.
