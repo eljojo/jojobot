@@ -322,13 +322,7 @@ async fn ticks_leaving_an_entry_open_on_a_plan_teach_the_carry() {
     let two = tick_many(&s, &at, 2).await;
     assert!(the_line(&two).contains("derived_from"), "{}", two.raw());
 
-    let last = s
-        .call(
-            "capture",
-            json!({"subject": "list:errands", "content": "done", "provenance": "testimony",
-                   "tick": {"entry": at[2], "act": "done"}}),
-        )
-        .await;
+    let last = tick_one(&s, &at[2]).await;
     let receipt = last.json();
     assert_eq!(receipt["success"], true, "{receipt}");
     assert_eq!(receipt["ticked"]["entry"], at[2], "{receipt}");
@@ -359,26 +353,14 @@ async fn one_tick_on_a_plan_teaches_the_carry_and_a_checklist_does_not() {
     let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
     let s = story.session().await;
     let at = three_entries(&s, Some("2026-10-22")).await;
-    let one = s
-        .call(
-            "capture",
-            json!({"subject": "list:errands", "content": "done", "provenance": "testimony",
-                   "tick": {"entry": at[0], "act": "done"}}),
-        )
-        .await;
+    let one = tick_one(&s, &at[0]).await;
     assert!(the_line(&one).contains("derived_from"), "{}", one.raw());
     drop(story);
 
     let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
     let s = story.session().await;
     let at = three_entries(&s, None).await;
-    let one = s
-        .call(
-            "capture",
-            json!({"subject": "list:errands", "content": "done", "provenance": "testimony",
-                   "tick": {"entry": at[0], "act": "done"}}),
-        )
-        .await;
+    let one = tick_one(&s, &at[0]).await;
     let receipt = one.json();
     assert_eq!(receipt["success"], true, "{receipt}");
     assert_eq!(receipt["ticked"]["entry"], at[0], "{receipt}");
