@@ -2999,7 +2999,11 @@ impl Board {
     }
 }
 
-#[async_trait]
+#[jojobot_domain::forward(
+    jojobot_domain::forward_mailboxes,
+    unimplemented = "this double only scans messages",
+    required_only
+)]
 impl jojobot_domain::mailbox::Mailboxes for Board {
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
         if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
@@ -3015,42 +3019,6 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
                 .store(false, std::sync::atomic::Ordering::SeqCst);
         }
         Ok(snapshot)
-    }
-
-    async fn message_by_id(
-        &self,
-        _: &jojobot_domain::mailbox::MessageId,
-    ) -> Result<Option<Message>, MailboxError> {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn messages_by_id(
-        &self,
-        _: &[jojobot_domain::mailbox::MessageId],
-    ) -> Result<Vec<Message>, MailboxError> {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn sent_by(&self, _: &[&str]) -> Result<Vec<Message>, MailboxError> {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn create_mailbox(
-        &self,
-        _: &MailboxName,
-        _: &jojobot_domain::memory::EntityId,
-        _: Option<&str>,
-    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError>
-    {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn repoint_owner(
-        &self,
-        _: &jojobot_domain::memory::EntityId,
-        _: &jojobot_domain::memory::EntityId,
-    ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
-        unimplemented!("this double only scans messages")
     }
 
     /// **One box per name the messages sit in, each owned by the bot of that
@@ -3080,71 +3048,6 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
                 quarantined: Vec::new(),
             })
             .collect())
-    }
-
-    async fn post_message(
-        &self,
-        _: jojobot_domain::mailbox::NewMessage,
-    ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn read_mailbox(
-        &self,
-        _: &MailboxName,
-        _: jojobot_domain::mailbox::TakenBy,
-        _acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
-    {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn read_message(
-        &self,
-        _: &MessageId,
-        _acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn mark_processed(
-        &self,
-        _: &MessageId,
-        _: &MailboxName,
-        _: Option<&str>,
-        _acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<Message, MailboxError> {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn quarantine(
-        &self,
-        _: &MessageId,
-        _: &MailboxName,
-        _: &str,
-        _acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn message_history(
-        &self,
-        _id: &jojobot_domain::mailbox::MessageId,
-    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
-    {
-        unimplemented!("this double only scans messages")
-    }
-
-    async fn scan_message_events(
-        &self,
-    ) -> Result<
-        Vec<(
-            jojobot_domain::mailbox::MessageId,
-            Vec<jojobot_domain::mailbox::MessageEvent>,
-        )>,
-        jojobot_domain::mailbox::MailboxError,
-    > {
-        unimplemented!("this double only scans messages")
     }
 }
 
@@ -3325,14 +3228,12 @@ impl SummarizedSessions {
     }
 }
 
-#[async_trait]
+#[jojobot_domain::forward(
+    jojobot_domain::forward_sessions,
+    unimplemented = "this double only answers all_sessions and write_summary",
+    required_only
+)]
 impl jojobot_domain::session::Sessions for SummarizedSessions {
-    async fn sessions_of(
-        &self,
-        _: &EntityId,
-    ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
     async fn all_sessions(
         &self,
     ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError> {
@@ -3348,193 +3249,6 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
         &self,
     ) -> Result<Option<(i64, Option<jiff::Timestamp>)>, jojobot_domain::session::SessionError> {
         Ok(*self.summary.read().expect("summary poisoned"))
-    }
-    async fn read_session(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn begin(
-        &self,
-        _: jojobot_domain::session::NewSession,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn append(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: jojobot_domain::session::NewEntry,
-    ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn amend_last(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: &str,
-    ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn amend_beat(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: &jojobot_domain::session::EntryId,
-        _: &str,
-        _: jiff::Timestamp,
-    ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn set_focus(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: &str,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn set_timezone(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: Option<&str>,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn set_agent(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: &str,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn wrapped_by_agent(
-        &self,
-        _: &str,
-    ) -> Result<Option<jojobot_domain::session::Session>, jojobot_domain::session::SessionError>
-    {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn set_stated_day(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: Option<jiff::civil::Date>,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn set_wrap_window(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: Option<jojobot_domain::session::WrapWindow>,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn close(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: jojobot_domain::session::SessionState,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn close_displaced(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: &jojobot_domain::session::Sid,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn add_served(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: u64,
-        _: jiff::civil::Date,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn reset_served(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn reopen(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn set_charter_told(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: jiff::Timestamp,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-
-    async fn scan_session_history(
-        &self,
-    ) -> Result<
-        jojobot_domain::session::history::SessionHistories,
-        jojobot_domain::session::SessionError,
-    > {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-
-    async fn session_history(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-    ) -> Result<
-        Vec<jojobot_domain::session::history::SessionChange>,
-        jojobot_domain::session::SessionError,
-    > {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-
-    async fn journal_history(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: &jojobot_domain::session::EntryId,
-    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
-    {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn set_key_hash(
-        &self,
-        _: &jojobot_domain::session::SessionId,
-        _: &str,
-        _: &jojobot_domain::session::KeyTrail,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn note_minted(
-        &self,
-        _: &jojobot_domain::session::MintedRun,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn minted_without_a_card(
-        &self,
-    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
-    {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn prune_minted(
-        &self,
-        _: jiff::Timestamp,
-    ) -> Result<usize, jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn note_charter_change(
-        &self,
-        _: &EntityId,
-        _: jojobot_domain::session::CharterChange,
-        _: Option<&str>,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        unimplemented!("this double only answers all_sessions and write_summary")
-    }
-    async fn charter_change_of(
-        &self,
-        _: &EntityId,
-    ) -> Result<Option<jojobot_domain::session::CharterChange>, jojobot_domain::session::SessionError>
-    {
-        unimplemented!("this double only answers all_sessions and write_summary")
     }
 }
 
