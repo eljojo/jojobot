@@ -275,6 +275,7 @@ impl SuppliedOverFold {
     }
 }
 
+// TEMPORARY(9.3.8) `deploy-9-3-8`: a forwarder of the `Memory` port, which rule 682 removes at 9.3.8.
 #[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
 impl Memory for SuppliedOverFold {}
 
