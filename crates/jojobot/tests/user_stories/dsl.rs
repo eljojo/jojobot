@@ -2294,6 +2294,17 @@ impl Session {
         address_of(&body)
     }
 
+    /// The collection `subject` numbers its members by their `number` field.
+    pub async fn numbers_its_members(&self, subject: &str) {
+        self.write(
+            &format!("{subject} numbering its members"),
+            "capture",
+            json!({"subject": subject, "content": "numbers its members by number",
+                   "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+        )
+        .await;
+    }
+
     /// A fact carrying a date — **the day the CLAIM is about**, which is not
     /// the day the thing happened. See [`Session::fact_that_happened_on`] and
     /// [`Session::fact_with_no_day`] for the other question.

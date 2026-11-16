@@ -18,12 +18,7 @@ const RULES: &str = "topic:rules-springfield";
 /// nothing to ask about.
 async fn rules_of_springfield(s: &Session, decisions: &[(&str, &str, &str, &str)]) {
     s.add(RULES, "Springfield rules").await;
-    s.call(
-        "capture",
-        json!({"subject": RULES, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
+    s.numbers_its_members(RULES).await;
     for (slug, number, name, words) in decisions {
         s.call(
             "add_entity",
@@ -200,12 +195,7 @@ async fn a_decision_replaced_by_one_under_another_topic_says_so_with_the_new_wor
     .await;
     // The correction is made in the next town's topic.
     s.add("topic:rules-shelbyville", "Shelbyville rules").await;
-    s.call(
-        "capture",
-        json!({"subject": "topic:rules-shelbyville", "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
+    s.numbers_its_members("topic:rules-shelbyville").await;
     s.call(
         "add_entity",
         json!({"kind": "decision", "handle": "shelbyville-40", "name": "Eleven o'clock",

@@ -18,12 +18,7 @@ const OCTOBER: &str = "2026-10-08";
 /// A collection that numbers its members, holding one member numbered 2.
 async fn ordinances(s: &Session) {
     s.add(COLLECTION, "Town ordinances").await;
-    s.call(
-        "capture",
-        json!({"subject": COLLECTION, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
+    s.numbers_its_members(COLLECTION).await;
     let (kind, slug) = PARKING.split_once(':').expect("a handle");
     s.call(
         "add_entity",
@@ -455,12 +450,7 @@ async fn a_restore_of_history_naming_a_number_nobody_holds_is_refused_whole() {
     let (opening, parking) = (address_of("at six"), address_of("before parking"));
 
     clock.stating(OCTOBER.parse().expect("a day"));
-    s.call(
-        "capture",
-        json!({"subject": COLLECTION, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
+    s.numbers_its_members(COLLECTION).await;
     s.call(
         "update_fact",
         json!({"address": opening, "field": "details", "find": "at six", "replace": "at five"}),

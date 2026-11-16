@@ -15,12 +15,7 @@ const RULES: &str = "topic:rules-springfield";
 /// which rule governs it.
 async fn the_ledger_under_the_twelfth_rule(s: &Session) {
     s.add(RULES, "Springfield rules").await;
-    s.call(
-        "capture",
-        json!({"subject": RULES, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
+    s.numbers_its_members(RULES).await;
     s.call(
         "add_entity",
         json!({"kind": "decision", "handle": "springfield-12", "name": "Leads",
@@ -301,12 +296,7 @@ async fn nest(s: &Session, kind: &str, handle: &str, parent: &str, number: &str)
 /// chapter's rule 7 is a document. The outer collection is [`RULES`].
 async fn rules_in_a_book_in_a_chapter(s: &Session) {
     s.add(RULES, "Springfield rules").await;
-    s.call(
-        "capture",
-        json!({"subject": RULES, "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
+    s.numbers_its_members(RULES).await;
     nest(s, "topic", "rules-shelbyville", RULES, "2").await;
     nest(
         s,
@@ -427,12 +417,7 @@ async fn a_relabelling_too_big_to_read_is_refused_by_number_as_by_handle() {
 async fn a_number_through_a_renamed_collections_old_handle_names_its_member() {
     let (_story, s) = Story::begin_with_session("bot:gamma").await;
     s.add("topic:rules-old", "Old rules").await;
-    s.call(
-        "capture",
-        json!({"subject": "topic:rules-old", "content": "numbers its members by number",
-               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
-    )
-    .await;
+    s.numbers_its_members("topic:rules-old").await;
     nest(&s, "document", "homer", "topic:rules-old", "20").await;
     s.call(
         "put_document",
