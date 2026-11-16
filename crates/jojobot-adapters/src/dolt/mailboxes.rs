@@ -1493,20 +1493,8 @@ mod tests {
     use super::*;
     use crate::dolt::tests::free_port;
     use crate::dolt::{Dolt, migrate};
-    use crate::testing::{Scratch, shared_database};
+    use crate::testing::{AnyOwner, Scratch, shared_database};
     use jojobot_domain::mailbox::NewMessage;
-
-    /// Every well-formed owner resolves. The owner question has its own case in
-    /// the shared contract; these are about quarantine, and a store that
-    /// refused an owner here would be answering a question nobody asked.
-    struct AnyOwner;
-
-    #[async_trait]
-    impl OwnerIndex for AnyOwner {
-        async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
-            Ok(OwnerLookup::Known)
-        }
-    }
 
     /// A live store with one box and one ordinary message in it, plus the
     /// process holding it up, and the directory it lives in. **The directory

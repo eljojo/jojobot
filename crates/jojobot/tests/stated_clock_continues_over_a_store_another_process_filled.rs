@@ -15,25 +15,13 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
+use jojobot_adapters::testing::AnyOwner;
 use jojobot_adapters::testing::{free_port, start_unhurried};
-use jojobot_domain::mailbox::{
-    MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
-};
+use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{NewSession, Sessions, Sid};
 
 const DAY: &str = "2026-06-01";
-
-/// An owner index that answers for anybody: the case needs a box a person owns,
-/// not the roster that decides who may.
-struct AnyOwner;
-
-#[async_trait::async_trait]
-impl OwnerIndex for AnyOwner {
-    async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
-        Ok(OwnerLookup::Known)
-    }
-}
 
 use jojobot_adapters::testing::Scratch;
 

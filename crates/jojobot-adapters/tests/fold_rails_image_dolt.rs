@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use jojobot_adapters::counted_rails::{CountedMailboxes, CountedSessions};
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
@@ -20,9 +19,9 @@ use jojobot_adapters::fold::sessions::FoldedSessions;
 use jojobot_adapters::fold_rails_battery::{
     MailRails, SessionRails, walk_every_kind_of_mail_write, walk_every_kind_of_session_write,
 };
+use jojobot_adapters::testing::AnyOwner;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database, shared_database};
 use jojobot_domain::clock::Clock;
-use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::history::WriteStamp;
 
@@ -56,17 +55,6 @@ const SWITCHED_MAIL: &[&str] = &[
     "read_mailbox",
     "message_history",
 ];
-
-/// Every well-formed owner resolves: the walk is about the board, not about who
-/// may own a box.
-struct AnyOwner;
-
-#[async_trait]
-impl OwnerIndex for AnyOwner {
-    async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
-        Ok(OwnerLookup::Known)
-    }
-}
 
 async fn database(what: &str) -> sqlx::MySqlPool {
     prepared(shared_database(what).await.expect("a database of its own")).await

@@ -6,17 +6,9 @@
 use super::*;
 use crate::dolt::tests::free_port;
 use crate::dolt::{Dolt, migrate};
+use crate::testing::AnyOwner;
 use crate::testing::Scratch;
 use jojobot_domain::mailbox::NewMessage;
-
-struct AnyOwner;
-
-#[async_trait]
-impl OwnerIndex for AnyOwner {
-    async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
-        Ok(OwnerLookup::Known)
-    }
-}
 
 /// **Two messages whose stamps order differently as text and as moments come back
 /// in moment order**, oldest first. The later moment is posted first, so neither

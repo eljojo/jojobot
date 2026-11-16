@@ -17,23 +17,11 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::requests::DoltRequests;
 use jojobot_adapters::fold::Folded;
+use jojobot_adapters::testing::AnyOwner;
 use jojobot_adapters::testing::shared_database;
-use jojobot_domain::mailbox::{
-    MailboxError, MailboxName, Mailboxes, MessageId, NewMessage, OwnerIndex, OwnerLookup,
-};
+use jojobot_domain::mailbox::{MailboxName, Mailboxes, MessageId, NewMessage};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
 use jojobot_domain::request::{Request, RequestId, Requests, Scope, armed, digest_of, within};
-
-/// An owner index that answers for anybody: the cases need a box, not the
-/// roster that decides who may have one.
-struct AnyOwner;
-
-#[async_trait::async_trait]
-impl OwnerIndex for AnyOwner {
-    async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
-        Ok(OwnerLookup::Known)
-    }
-}
 
 fn sent(mailbox: &MailboxName, sender: &str, body: &str) -> NewMessage {
     NewMessage {

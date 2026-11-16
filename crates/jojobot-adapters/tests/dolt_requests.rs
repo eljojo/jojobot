@@ -173,21 +173,10 @@ async fn a_capture_spends_its_id_with_the_claim_and_a_second_one_stores_nothing(
 
 use jiff::Timestamp;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
-use jojobot_domain::mailbox::{
-    Acting, MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
-};
+use jojobot_adapters::testing::AnyOwner;
+use jojobot_domain::mailbox::{Acting, MailboxError, MailboxName, Mailboxes, NewMessage};
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{EntityPatch, FactPatch};
-
-/// Any well-formed owner resolves.
-struct AnyOwner;
-
-#[async_trait::async_trait]
-impl OwnerIndex for AnyOwner {
-    async fn look_up(&self, _owner: &EntityId) -> Result<OwnerLookup, MailboxError> {
-        Ok(OwnerLookup::Known)
-    }
-}
 
 fn request_on(verb: &str, id: &str) -> Request {
     Request {

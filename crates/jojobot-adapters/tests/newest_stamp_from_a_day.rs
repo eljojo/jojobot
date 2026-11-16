@@ -11,11 +11,10 @@ use jiff::civil::date;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
+use jojobot_adapters::testing::AnyOwner;
 use jojobot_adapters::testing::shared_database;
 use jojobot_domain::clock::Clock;
-use jojobot_domain::mailbox::{
-    MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
-};
+use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::push::Outbox;
 use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
@@ -165,17 +164,6 @@ async fn a_store_stamped_only_before_the_day_has_no_newest_stamp() {
         .expect("the store answers");
 
     assert_eq!(newest, None);
-}
-
-/// An owner index that answers for anybody: the case needs a box a person owns,
-/// not the roster that decides who may.
-struct AnyOwner;
-
-#[async_trait::async_trait]
-impl OwnerIndex for AnyOwner {
-    async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
-        Ok(OwnerLookup::Known)
-    }
 }
 
 /// **A push is chased on the wall clock, so the rows that chase it are not

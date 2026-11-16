@@ -756,6 +756,20 @@ pub fn split_sql_statements(dump: &str) -> Vec<String> {
     statements
 }
 
+/// **An owner index that answers for anybody.** A case about a box, a message or a
+/// store needs a box that exists, not the roster that decides who may own one.
+pub struct AnyOwner;
+
+#[async_trait::async_trait]
+impl jojobot_domain::mailbox::OwnerIndex for AnyOwner {
+    async fn look_up(
+        &self,
+        _: &jojobot_domain::memory::EntityId,
+    ) -> Result<jojobot_domain::mailbox::OwnerLookup, jojobot_domain::mailbox::MailboxError> {
+        Ok(jojobot_domain::mailbox::OwnerLookup::Known)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

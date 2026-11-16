@@ -19,22 +19,12 @@ use std::sync::Arc;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::migrate;
+use jojobot_adapters::testing::AnyOwner;
 use jojobot_adapters::testing::free_port;
-use jojobot_domain::mailbox::{MailboxError, MailboxName, Mailboxes, OwnerIndex, OwnerLookup};
+use jojobot_domain::mailbox::{MailboxName, Mailboxes};
 use jojobot_domain::memory::EntityId;
 
 use jojobot_adapters::testing::Scratch;
-
-/// An owner index that answers for anybody, so the refusal under test is the
-/// kind set's and not this.
-struct AnyOwner;
-
-#[async_trait::async_trait]
-impl OwnerIndex for AnyOwner {
-    async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
-        Ok(OwnerLookup::Known)
-    }
-}
 
 #[tokio::test]
 async fn an_unseeded_process_says_so_rather_than_blaming_the_handle() {

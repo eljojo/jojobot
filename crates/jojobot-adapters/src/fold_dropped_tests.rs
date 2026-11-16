@@ -857,28 +857,13 @@ async fn every_teaching_write_dropped(
 /// guard sits above the store, and these cases hold that to the store's own
 /// answers rather than to a fake's.
 mod over_the_real_store {
-    use async_trait::async_trait;
-    use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
-
     use super::*;
     use crate::dolt::mailboxes::DoltMailboxes;
     use crate::dolt::memory::DoltMemory;
     use crate::dolt::sessions::DoltSessions;
     use crate::dolt::tests::free_port;
     use crate::dolt::{Dolt, migrate};
-    use crate::testing::Scratch;
-    use crate::testing::migrated_database;
-
-    /// Every well-formed owner resolves: the table is about the board, not about
-    /// who may own a box.
-    struct AnyOwner;
-
-    #[async_trait]
-    impl OwnerIndex for AnyOwner {
-        async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
-            Ok(OwnerLookup::Known)
-        }
-    }
+    use crate::testing::{AnyOwner, Scratch, migrated_database};
 
     /// A store of its own, migrated and seeded with the shipped kinds.
     async fn database(server: &Dolt, what: &str) -> sqlx::MySqlPool {

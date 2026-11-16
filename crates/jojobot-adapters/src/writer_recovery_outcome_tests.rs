@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use jiff::Timestamp;
 use jojobot_domain::session::Sid;
 
@@ -257,18 +256,9 @@ async fn writer_recovery_an_ambiguous_mail_commit_uses_the_same_native_rail_relo
     use crate::counted_rails::CountedMailboxes;
     use crate::dolt::mailboxes::DoltMailboxes;
     use crate::fold::mail::FoldedMailboxes;
-    use jojobot_domain::mailbox::{
-        MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
-    };
+    use crate::testing::AnyOwner;
+    use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
     use jojobot_domain::memory::EntityId;
-
-    struct AnyOwner;
-    #[async_trait]
-    impl OwnerIndex for AnyOwner {
-        async fn look_up(&self, _: &EntityId) -> Result<OwnerLookup, MailboxError> {
-            Ok(OwnerLookup::Known)
-        }
-    }
 
     jojobot_domain::memory::kinds::load_shipped();
     let scratch = Scratch::new("writer-mail-reload");
