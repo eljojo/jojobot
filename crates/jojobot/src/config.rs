@@ -532,23 +532,8 @@ mod tests {
 
     fn raw_subjects(subjects: Option<&str>) -> RawEnv {
         RawEnv {
-            apps_file: None,
-            metrics_bind: None,
-            credentials_dir: None,
-            today: None,
-            ntfy_url: None,
-            ntfy_topic: None,
-            ntfy_token: None,
-            bind: "127.0.0.1:8080".to_string(),
-            resource: None,
-            issuer: Some("https://issuer.example".to_string()),
-            audience: None,
-            jwks_uri: None,
             allowed_subjects: subjects.map(str::to_string),
-            allow_no_auth: false,
-            ui_client_id: None,
-            ui_client_secret_set: false,
-            ui_base_url: None,
+            ..raw("127.0.0.1:8080", Some("https://issuer.example"), false)
         }
     }
 
@@ -581,23 +566,8 @@ mod tests {
         // issuer is a misconfiguration that must fail loud, not silently drop —
         // even in loopback dev mode.
         let raw = RawEnv {
-            apps_file: None,
-            metrics_bind: None,
-            credentials_dir: None,
-            today: None,
-            ntfy_url: None,
-            ntfy_topic: None,
-            ntfy_token: None,
-            bind: "127.0.0.1:8080".to_string(),
-            resource: None,
-            issuer: None,
-            audience: None,
-            jwks_uri: None,
             allowed_subjects: Some("sub-1".to_string()),
-            allow_no_auth: true,
-            ui_client_id: None,
-            ui_client_secret_set: false,
-            ui_base_url: None,
+            ..raw("127.0.0.1:8080", None, true)
         };
         assert!(
             Config::build(raw).is_err(),
@@ -724,23 +694,9 @@ mod tests {
 
     fn raw_ui(issuer: Option<&str>, client_id: Option<&str>, base_url: Option<&str>) -> RawEnv {
         RawEnv {
-            apps_file: None,
-            metrics_bind: None,
-            credentials_dir: None,
-            today: None,
-            ntfy_url: None,
-            ntfy_topic: None,
-            ntfy_token: None,
-            bind: "127.0.0.1:8080".to_string(),
-            resource: None,
-            issuer: issuer.map(str::to_string),
-            audience: None,
-            jwks_uri: None,
-            allowed_subjects: None,
-            allow_no_auth: true,
             ui_client_id: client_id.map(str::to_string),
-            ui_client_secret_set: false,
             ui_base_url: base_url.map(str::to_string),
+            ..raw("127.0.0.1:8080", issuer, true)
         }
     }
 
