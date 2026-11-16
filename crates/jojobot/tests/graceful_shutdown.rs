@@ -639,36 +639,46 @@ fn a_stream_held_open_is_cut_when_the_drain_window_ends() {
     );
 }
 
+/// A `sh` script that stands in for a server, watched as a started one is.
+fn a_script_for_a_server(name: &str, script: &str) -> Running {
+    let state_dir = jojobot_adapters::testing::scratch_path(name);
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let scratch = Scratch(state_dir.clone());
+    let stderr_path = state_dir.join("server.stderr");
+    let child = Command::new("sh")
+        .args(["-c", script])
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr_path).expect("a file for stderr"))
+        .spawn()
+        .expect("sh runs");
+    watch(child, 0, stderr_path, scratch)
+}
+
+/// The message the wait for the serving line fails with: the server never serves.
+fn what_waiting_for_the_serving_line_fails_with(running: &mut Running) -> String {
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        running.wait_for_line("serving http://", jojobot_exercise::room::READY_TIMEOUT);
+    }))
+    .expect_err("a server that never serves is a failure");
+    panic
+        .downcast_ref::<String>()
+        .cloned()
+        .expect("the failure is a message")
+}
+
 /// **A server that exits while it starts is reported with how it exited and
 /// what it wrote to its standard error.** The log closes, the wait ends at once
 /// rather than at its limit, and the failure names the exit status and the
 /// stderr: that is the only place a server that cannot start says why.
 #[test]
 fn a_server_that_exits_while_starting_is_reported_with_its_exit_and_stderr() {
-    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-exits-early");
-    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
-    let scratch = Scratch(state_dir.clone());
-    let stderr_path = state_dir.join("server.stderr");
-    let child = Command::new("sh")
-        .args([
-            "-c",
-            "echo 'starting up'; echo 'the store would not open' >&2; exit 3",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(std::fs::File::create(&stderr_path).expect("a file for stderr"))
-        .spawn()
-        .expect("sh runs");
-    let mut running = watch(child, 0, stderr_path, scratch);
+    let mut running = a_script_for_a_server(
+        "jojobot-exits-early",
+        "echo 'starting up'; echo 'the store would not open' >&2; exit 3",
+    );
 
     let started = Instant::now();
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        running.wait_for_line("serving http://", jojobot_exercise::room::READY_TIMEOUT);
-    }))
-    .expect_err("a server that never serves is a failure");
-    let said = panic
-        .downcast_ref::<String>()
-        .cloned()
-        .expect("the failure is a message");
+    let said = what_waiting_for_the_serving_line_fails_with(&mut running);
 
     assert!(
         started.elapsed() < Duration::from_secs(30),
@@ -687,29 +697,12 @@ fn a_server_that_exits_while_starting_is_reported_with_its_exit_and_stderr() {
 /// "still running" about a server that exits a moment later.
 #[test]
 fn a_server_that_closes_its_log_and_exits_a_moment_later_is_reported_with_its_exit() {
-    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-exits-late");
-    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
-    let scratch = Scratch(state_dir.clone());
-    let stderr_path = state_dir.join("server.stderr");
-    let child = Command::new("sh")
-        .args([
-            "-c",
-            "echo 'starting up'; echo 'the store would not open' >&2; exec >&-; sleep 1; exit 3",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(std::fs::File::create(&stderr_path).expect("a file for stderr"))
-        .spawn()
-        .expect("sh runs");
-    let mut running = watch(child, 0, stderr_path, scratch);
+    let mut running = a_script_for_a_server(
+        "jojobot-exits-late",
+        "echo 'starting up'; echo 'the store would not open' >&2; exec >&-; sleep 1; exit 3",
+    );
 
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        running.wait_for_line("serving http://", jojobot_exercise::room::READY_TIMEOUT);
-    }))
-    .expect_err("a server that never serves is a failure");
-    let said = panic
-        .downcast_ref::<String>()
-        .cloned()
-        .expect("the failure is a message");
+    let said = what_waiting_for_the_serving_line_fails_with(&mut running);
 
     assert!(said.contains("exit status: 3"), "{said}");
     assert!(said.contains("the store would not open"), "{said}");
@@ -721,17 +714,7 @@ fn a_server_that_closes_its_log_and_exits_a_moment_later_is_reported_with_its_ex
 /// an exit.
 #[test]
 fn a_server_that_closes_its_log_and_stays_alive_is_reported_as_running() {
-    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-stays-alive");
-    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
-    let scratch = Scratch(state_dir.clone());
-    let stderr_path = state_dir.join("server.stderr");
-    let child = Command::new("sh")
-        .args(["-c", "exec >&-; sleep 60"])
-        .stdout(Stdio::piped())
-        .stderr(std::fs::File::create(&stderr_path).expect("a file for stderr"))
-        .spawn()
-        .expect("sh runs");
-    let mut running = watch(child, 0, stderr_path, scratch);
+    let mut running = a_script_for_a_server("jojobot-stays-alive", "exec >&-; sleep 60");
 
     let started = Instant::now();
     let said = running.how_it_ended(Duration::from_millis(300));
