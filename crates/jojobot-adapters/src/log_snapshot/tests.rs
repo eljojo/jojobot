@@ -98,6 +98,7 @@ async fn tail(log: &dyn LogStore) {
 struct ReadLog {
     log: InMemoryLog,
     positions: Mutex<Vec<Position>>,
+    fail_snapshot: bool,
 }
 
 #[async_trait::async_trait]
@@ -120,6 +121,9 @@ impl LogStore for ReadLog {
         self.log.load_snapshot().await
     }
     async fn store_snapshot(&self, snapshot: &ValidatedSnapshot) -> Result<(), LogError> {
+        if self.fail_snapshot {
+            return Err(LogError::Store("snapshot write refused".into()));
+        }
         self.log.store_snapshot(snapshot).await
     }
 }
@@ -639,4 +643,33 @@ async fn snapshot_none_held_levels_follow_history_and_the_migration_account() {
             "{said}"
         );
     }
+}
+
+#[tokio::test]
+async fn snapshot_publication_failure_keeps_the_replayed_boot() {
+    use tracing::instrument::WithSubscriber;
+    let log = ReadLog {
+        fail_snapshot: true,
+        ..ReadLog::default()
+    };
+    prefix(&log, "homer").await;
+    tail(&log).await;
+    let expected = replay(&log, false, false).await.unwrap();
+    let captured = crate::log_capture::Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(captured.clone())
+        .with_max_level(tracing::Level::INFO)
+        .finish();
+    let boot = boot(&log).with_subscriber(subscriber).await.unwrap();
+    assert_eq!(projection(&boot.state), projection(&expected.state));
+    assert_eq!(boot.position, Position(6));
+    assert_eq!(credited(&boot.report), Position(0));
+    assert!(log.load_snapshot().await.unwrap().is_none());
+    let said = captured.text();
+    assert!(
+        said.lines()
+            .any(|line| line.contains("WARN") && line.contains("snapshot write refused")),
+        "{said}"
+    );
 }

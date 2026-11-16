@@ -399,8 +399,9 @@ async fn replay(
                 && !from_snapshot
                 && boot.position != Position(0)
                 && boot.claims_unreadable.is_none()
+                && let Err(error) = publish(log, validity, &boot, jiff::Timestamp::now()).await
             {
-                publish(log, validity, &boot, jiff::Timestamp::now()).await?;
+                tracing::warn!(%error, "no snapshot after replay; the boot uses the replayed State");
             }
             return Ok(boot);
         }

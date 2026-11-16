@@ -204,7 +204,10 @@ impl jojobot_domain::log::LogStore for BootLog<'_> {
                 let _ = tx.rollback().await;
                 Ok(())
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                let _ = tx.rollback().await;
+                Err(error)
+            }
             Ok(()) => sql::commit(tx)
                 .await
                 .map_err(sql::store_error::<jojobot_domain::log::LogError>),
