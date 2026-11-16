@@ -32,7 +32,6 @@ pub mod claims_view;
 mod image;
 pub mod mail;
 pub mod sessions;
-pub mod shadow;
 mod uncertain;
 
 use crate::writer::owned;
@@ -89,9 +88,6 @@ pub struct Folded {
     ///
     /// [`write_summary`]: Memory::write_summary
     generation: Arc<AtomicU64>,
-    /// The projection families whose reads are computed two ways and compared
-    /// ([`shadow`]); none unless the configuration names one.
-    shadow: Arc<shadow::Shadow>,
 }
 
 /// The kinds the store declares, as rows and as the set every admission asks.
@@ -133,7 +129,6 @@ impl Folded {
             kinds: Arc::new(RwLock::new(None)),
             before_the_import: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
-            shadow: Arc::new(shadow::Shadow::default()),
         }
     }
 
@@ -203,23 +198,6 @@ impl Folded {
     /// The owner the other serving rails must use too.
     pub fn writer(&self) -> crate::writer::Writer {
         self.writer.clone()
-    }
-
-    /// **Shadow the families a configuration value names** (see [`shadow`]), and
-    /// refuse a name no family answers to.
-    pub fn shadowing(mut self, families: &str) -> Result<Self, String> {
-        self.shadow = Arc::new(shadow::Shadow::named(families)?);
-        Ok(self)
-    }
-
-    /// The shadow the serving rails report their comparisons to.
-    pub fn shadow(&self) -> Arc<shadow::Shadow> {
-        self.shadow.clone()
-    }
-
-    /// What each shadowed family has counted.
-    pub fn shadow_counts(&self) -> Vec<shadow::Counts> {
-        self.shadow.counts()
     }
 
     /// Fill the image from a full read of the store — the boot path. Returns
@@ -1675,18 +1653,10 @@ impl Memory for Folded {
             return self.inner.referring_to(target).await;
         };
         jojobot_domain::memory::validate_subject_in(&kinds, target)?;
-        let Ok(mine) = self.claims(|state| state.referring(target)) else {
-            return self.inner.referring_to(target).await;
-        };
-        // **Shadowed: the store is asked as well and the two are compared**; the
-        // State's answer is the one served.
-        if self.shadow.watches(shadow::Family::ReferringTo)
-            && !self.writer.rail_uncertain("memory")
-            && let Ok(theirs) = self.inner.referring_to(target).await
-        {
-            self.shadow.compared_referring_to(target, &mine, &theirs);
+        match self.claims(|state| state.referring(target)) {
+            Ok(mine) => Ok(mine),
+            Err(_) => self.inner.referring_to(target).await,
         }
-        Ok(mine)
     }
 
     /// **Straight through**: the width of a read is the inner store's.
