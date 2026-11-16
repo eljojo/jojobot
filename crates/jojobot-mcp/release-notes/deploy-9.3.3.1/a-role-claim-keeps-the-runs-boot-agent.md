@@ -14,4 +14,3 @@ Gamma boots with an agent and later claims its role without sending that value a
 ## What to do
 
 Send the runtime agent at boot. Later claims in that run can use the recorded agent.
-

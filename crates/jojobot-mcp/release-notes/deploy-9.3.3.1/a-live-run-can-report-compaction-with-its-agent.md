@@ -14,4 +14,3 @@ Gamma reports `compacted: true` with the agent of its live run and receives that
 ## What to do
 
 Report compaction from the live run. A finished run's agent is still refused.
-

@@ -14,4 +14,3 @@ A dashboard queries `jojobot_shadow_comparisons` after the upgrade and finds no 
 ## What to do
 
 Remove queries and alerts that depend on either shadow metric.
-

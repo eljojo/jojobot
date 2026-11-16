@@ -244,8 +244,9 @@ A session here starts at jojobot, not at these files. The whole protocol:
   surface stops or what shape a line takes — a size limit, the answer ceiling,
   a boot budget — carries no beat a person follows: it lives in a `contract_*`
   file beside the stories, headed as a contract, and does not count as a story.
-  **A story's server starts the way the binary does** — the claims State is
-  restored or replayed on every start through the same wiring call boot makes, and the
+  **A story's server assembles memory and calls `fill_memory` on every start**
+  over the fake store's existing claims State. The fold loads declared kinds,
+  and the search index scans that State; this does not restore or replay the log. The
   startup passes (the handle registry, the keys of runs that have not written,
   the prune of their spent notes, the default identity, the instance record and
   the shipped types) are one function, `run_startup_passes`, that the binary and

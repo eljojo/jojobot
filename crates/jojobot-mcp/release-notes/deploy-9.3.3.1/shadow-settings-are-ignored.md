@@ -14,4 +14,3 @@ A deployment sets `JOJOBOT_SHADOW`. The server makes no shadow comparisons and e
 ## What to do
 
 Remove these settings from deployment configuration and instance setup.
-

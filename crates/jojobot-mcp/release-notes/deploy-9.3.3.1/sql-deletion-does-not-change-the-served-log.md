@@ -14,4 +14,3 @@ A maintainer deletes a claim row with SQL. A re-read still serves the claim; a r
 ## What to do
 
 Keep all writes through jojobot. Account for the log itself when repairing a store; a SQL row deletion alone does not change what the server serves.
-

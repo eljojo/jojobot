@@ -42,8 +42,9 @@ pub struct SnapshotKeeper {
 
 impl SnapshotKeeper {
     /// Start from the position the boot's snapshot covered, as
-    /// [`crate::log_snapshot::credited`] reads it off the boot: zero when the boot
-    /// restored from none, so a snapshot the boot refused is replaced and not counted.
+    /// [`crate::log_snapshot::credited`] reads it off the boot: a restored snapshot
+    /// or one successfully published from the boot's full replay earns coverage.
+    /// A full replay whose snapshot publication failed earns zero coverage.
     pub async fn open(
         log: Arc<dyn LogStore>,
         cadence: Cadence,
