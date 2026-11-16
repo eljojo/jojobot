@@ -10,7 +10,7 @@ use serde_json::json;
 
 use super::dsl::Story;
 
-fn reporting_to(subject: &str, manager: &str) -> serde_json::Value {
+pub(super) fn reporting_to(subject: &str, manager: &str) -> serde_json::Value {
     json!({
         "subject": subject, "content": format!("{subject} reports to {manager}"),
         "provenance": "testimony", "sets": {"reports_to": manager},

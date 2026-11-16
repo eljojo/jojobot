@@ -10,6 +10,7 @@
 
 use serde_json::json;
 
+use super::chart::reporting_to;
 use super::dsl::{Session, Story};
 
 /// **The listing of roles no longer carries `role:dinners`**, read as the list of
@@ -121,13 +122,6 @@ async fn a_claim_at_the_door_is_refused_when_the_role_belongs_to_another_bot() {
     s.list("role").await.says("role:carpool");
 
     s.wrap("kept dinners with marge").await;
-}
-
-fn reporting_to(subject: &str, manager: &str) -> serde_json::Value {
-    json!({
-        "subject": subject, "content": format!("{subject} reports to {manager}"),
-        "provenance": "testimony", "sets": {"reports_to": manager},
-    })
 }
 
 /// "Can the carpool assistant archive the dinner plan, then claim it for itself?"

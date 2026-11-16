@@ -9,6 +9,7 @@
 use serde_json::{Value, json};
 
 use super::dsl::{Session, Story};
+use super::usage::is_served;
 
 fn field(record: &Value, key: &str) -> Option<String> {
     record["fields"][key].as_str().map(str::to_string)
@@ -19,16 +20,6 @@ fn number(record: &Value, key: &str) -> u64 {
         .unwrap_or_else(|| panic!("{key} on {record}"))
         .parse()
         .unwrap_or_else(|_| panic!("{key} is a number on {record}"))
-}
-
-/// The run writes once, which gives it a record to be served on, and then reads:
-/// every answer it is handed counts towards its total.
-async fn is_served(who: &Session, reads: usize) {
-    who.journal("working").await;
-    for _ in 0..reads {
-        who.call("recall", json!({"subject": "person:lisa", "facts": true}))
-            .await;
-    }
 }
 
 /// What the run has been served over its whole life, as it lists its own

@@ -10,16 +10,7 @@ use jojobot_domain::session::SessionId;
 use serde_json::{Value, json};
 
 use super::dsl::{Session, Story};
-
-/// The run writes once, which gives it a record to be served on, and then reads:
-/// every answer it is handed counts towards its total.
-async fn is_served(who: &Session, reads: usize) {
-    who.journal("working").await;
-    for _ in 0..reads {
-        who.call("recall", json!({"subject": "person:lisa", "facts": true}))
-            .await;
-    }
-}
+use super::usage::is_served;
 
 /// Each total a compaction set back, as the run reads them from its own history
 /// of what it was served.

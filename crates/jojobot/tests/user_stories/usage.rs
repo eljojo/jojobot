@@ -10,18 +10,12 @@
 
 use serde_json::{Value, json};
 
+use super::chart::reporting_to;
 use super::dsl::{Session, Story};
-
-fn reporting_to(subject: &str, manager: &str) -> Value {
-    json!({
-        "subject": subject, "content": format!("{subject} reports to {manager}"),
-        "provenance": "testimony", "sets": {"reports_to": manager},
-    })
-}
 
 /// The run writes once, which gives it a record to be served on, and then reads:
 /// every answer it is handed counts towards its total.
-async fn is_served(who: &Session, reads: usize) {
+pub(super) async fn is_served(who: &Session, reads: usize) {
     who.journal("working").await;
     for _ in 0..reads {
         who.call("recall", json!({"subject": "person:lisa", "facts": true}))
