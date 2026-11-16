@@ -3621,13 +3621,8 @@ async fn the_backfill_rewrites_every_retired_status_to_archived() {
     );
 }
 
-/// TEMPORARY(9.3.5) kept witness: W: SQL fast path hit.
-/// **A `fields` hit never pays for a listing of every entity.** `resolve`
-/// answers a live handle from one targeted row; the full listing exists only
-/// to say what a name that answered to nothing resembles, and a hit never
-/// needs that question asked.
-#[tokio::test]
-async fn a_fields_hit_answers_with_no_full_listing() {
+/// **A memory over a database of its own, holding one thing: Gamma.**
+async fn a_memory_with_gamma() -> (DoltMemory, EntityId) {
     let pool = shared_database("memory")
         .await
         .expect("a database of this case's own");
@@ -3642,6 +3637,17 @@ async fn a_fields_hit_answers_with_no_full_listing() {
         .expect("add ok")
         .written()
         .expect("not blocked");
+    (memory, gamma)
+}
+
+/// TEMPORARY(9.3.5) kept witness: W: SQL fast path hit.
+/// **A `fields` hit never pays for a listing of every entity.** `resolve`
+/// answers a live handle from one targeted row; the full listing exists only
+/// to say what a name that answered to nothing resembles, and a hit never
+/// needs that question asked.
+#[tokio::test]
+async fn a_fields_hit_answers_with_no_full_listing() {
+    let (memory, gamma) = a_memory_with_gamma().await;
     memory
         .capture(memory::state(NewFact {
             fields: std::collections::BTreeMap::from([(
@@ -4479,20 +4485,7 @@ async fn a_lease_renewal_stamps_the_row_it_overwrites() {
 /// every write.
 #[tokio::test]
 async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
-    let pool = shared_database("memory")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    let memory = DoltMemory::open(pool);
-    let gamma = EntityId::person("person:gamma");
-    memory
-        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
-        .await
-        .expect("add ok")
-        .written()
-        .expect("not blocked");
+    let (memory, gamma) = a_memory_with_gamma().await;
     memory
         .capture(memory::state(NewFact {
             fields: std::collections::BTreeMap::from([(
@@ -4549,20 +4542,7 @@ async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_ge
 /// eagerly before a resolve.
 #[tokio::test]
 async fn a_recall_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
-    let pool = shared_database("memory")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    let memory = DoltMemory::open(pool);
-    let gamma = EntityId::person("person:gamma");
-    memory
-        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
-        .await
-        .expect("add ok")
-        .written()
-        .expect("not blocked");
+    let (memory, gamma) = a_memory_with_gamma().await;
     memory
         .capture(NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1)))
         .await
@@ -4602,20 +4582,7 @@ async fn a_recall_hit_answers_with_no_full_listing_and_a_miss_still_gets_candida
 /// **`history` deferred the same way.**
 #[tokio::test]
 async fn a_history_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
-    let pool = shared_database("memory")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    let memory = DoltMemory::open(pool);
-    let gamma = EntityId::person("person:gamma");
-    memory
-        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
-        .await
-        .expect("add ok")
-        .written()
-        .expect("not blocked");
+    let (memory, gamma) = a_memory_with_gamma().await;
     memory
         .capture(memory::state(NewFact {
             fields: std::collections::BTreeMap::from([(
@@ -5020,20 +4987,7 @@ async fn an_update_fact_naming_a_source_or_a_mark_builds_no_listing_until_a_name
 /// **`claim_histories` deferred the same way.**
 #[tokio::test]
 async fn a_claim_histories_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
-    let pool = shared_database("memory")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    let memory = DoltMemory::open(pool);
-    let gamma = EntityId::person("person:gamma");
-    memory
-        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
-        .await
-        .expect("add ok")
-        .written()
-        .expect("not blocked");
+    let (memory, gamma) = a_memory_with_gamma().await;
     memory
         .capture(NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1)))
         .await
@@ -5079,20 +5033,7 @@ async fn a_claim_histories_hit_answers_with_no_full_listing_and_a_miss_still_get
 #[tokio::test]
 async fn a_claim_history_hit_answers_with_no_full_listing_and_both_misses_still_get_candidates_or_repair()
  {
-    let pool = shared_database("memory")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    let memory = DoltMemory::open(pool);
-    let gamma = EntityId::person("person:gamma");
-    memory
-        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
-        .await
-        .expect("add ok")
-        .written()
-        .expect("not blocked");
+    let (memory, gamma) = a_memory_with_gamma().await;
     let claim = memory
         .capture(NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1)))
         .await
@@ -5159,20 +5100,7 @@ async fn a_claim_history_hit_answers_with_no_full_listing_and_both_misses_still_
 /// `claim_history` does.**
 #[tokio::test]
 async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_the_listing() {
-    let pool = shared_database("memory")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    let memory = DoltMemory::open(pool);
-    let gamma = EntityId::person("person:gamma");
-    memory
-        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
-        .await
-        .expect("add ok")
-        .written()
-        .expect("not blocked");
+    let (memory, gamma) = a_memory_with_gamma().await;
     let claim = memory
         .capture(NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1)))
         .await
