@@ -1,7 +1,7 @@
 use super::*;
 use crate::dolt::tests::free_port;
 use crate::dolt::{Dolt, migrate};
-use crate::testing::{Scratch, migrated_database, shared_database};
+use crate::testing::{Scratch, shared_database};
 use jiff::civil::date;
 use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
 
@@ -524,8 +524,8 @@ async fn a_badge_draw_that_never_frees_gives_up_rather_than_duplicating() {
 }
 
 /// A role's exclusivity against the real store — the same suite the
-/// fake answers for, run against a disposable Dolt instance this test
-/// spawns and tears down itself.
+/// fake answers for, run against a database of its own on the Dolt
+/// server this test binary shares.
 #[tokio::test]
 async fn dolt_satisfies_the_role_claim_contract() {
     let pool = shared_database("roleclaims")

@@ -13,20 +13,16 @@ use super::*;
 use jojobot_domain::memory::testing::contract;
 use jojobot_domain::memory::{Guarded, guard};
 
-/// A store and a database of this case's own, with the kinds seeded.
-async fn a_store_of_its_own(tag: &str) -> (Scratch, Dolt, sqlx::MySqlPool) {
-    let scratch = Scratch::new(&format!("current-handle-{tag}"));
-    let store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, &format!("currenthandle{tag}"))
+/// A database of this case's own on the shared store, with the kinds seeded.
+async fn a_store_of_its_own(tag: &str) -> sqlx::MySqlPool {
+    let pool = shared_database(&format!("currenthandle{tag}"))
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    (scratch, store, pool)
+    pool
 }
 
 /// **Every entity and every badge the store holds, asked of `current_handle` and
@@ -66,7 +62,7 @@ async fn compared_with_entity_wearing(
 
 /// **One part of the contract, then the comparison over what that part left.**
 async fn current_handle_after_part(part: usize) {
-    let (_scratch, mut store, pool) = a_store_of_its_own(&format!("part{part}")).await;
+    let pool = a_store_of_its_own(&format!("part{part}")).await;
     let memory = DoltMemory::open(pool.clone());
     let expected = contract::part_share(contract::case_count(), part);
     let ran = contract::run_part(&memory, part, contract::PARTS).await;
@@ -77,7 +73,6 @@ async fn current_handle_after_part(part: usize) {
         checked >= known && checked > 0,
         "part {part} compared {checked} candidates over {known} entities",
     );
-    store.stop().await;
 }
 
 /// **The parts cover every case of the contract once.** Pure: no store.
@@ -114,7 +109,7 @@ jojobot_domain::contract_parts!(tokio::test, current_handle_after_part:
 /// wore": the badge does not move when the handle does.
 #[tokio::test]
 async fn current_handle_compares_a_nontrivial_corpus_and_follows_a_rename() {
-    let (_scratch, mut store, pool) = a_store_of_its_own("control").await;
+    let pool = a_store_of_its_own("control").await;
     let memory = DoltMemory::open(pool.clone());
 
     // Entities of one family share words, and the guard asks to be told apart.
@@ -212,6 +207,4 @@ async fn current_handle_compares_a_nontrivial_corpus_and_follows_a_rename() {
         "current_handle did not follow a rename to the handle its badge wears now",
     );
     tx.commit().await.expect("the read commits");
-
-    store.stop().await;
 }

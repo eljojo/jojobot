@@ -7,11 +7,7 @@ use super::*;
 
 #[tokio::test]
 async fn a_transaction_that_began_before_a_declaration_does_not_leave_its_kinds_behind() {
-    let scratch = Scratch::new("held-kinds-tx");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "heldkindstx")
+    let pool = shared_database("heldkindstx")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -42,5 +38,4 @@ async fn a_transaction_that_began_before_a_declaration_does_not_leave_its_kinds_
         held.standing("otter").is_ok(),
         "the store forgot a kind it declared: {held:?}"
     );
-    store.stop().await;
 }
