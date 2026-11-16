@@ -2478,58 +2478,37 @@ fn bare_room(created_at: jiff::Timestamp, edited_at: Option<jiff::Timestamp>) ->
 
 /// **A thought with no fields ages from the write that created it**, as the
 /// store ages it, and does not stay in the room for good.
-#[test]
-fn a_thought_with_no_fields_ages_out_of_the_room() {
-    crate::memory::kinds::load_shipped();
-    let created_at: jiff::Timestamp = "2026-04-01T10:00:00Z".parse().unwrap();
-    let room = bare_room(created_at, None);
-    let later = CaptureRequest {
-        door: Door {
-            aged_before: Some("2026-04-02T00:00:00Z".parse().unwrap()),
-            ..thinking().door
-        },
-        ..thinking()
-    };
-    assert!(prepare(&room, &[], &later).is_ok(), "both are quiet");
-    let sooner = CaptureRequest {
-        door: Door {
-            aged_before: Some("2026-04-01T09:00:00Z".parse().unwrap()),
-            ..thinking().door
-        },
-        ..thinking()
-    };
-    assert!(
-        matches!(
-            prepare(&room, &[], &sooner),
-            Err(Refusal::RoomFull { live: 2, .. })
-        ),
-        "neither is quiet yet"
-    );
-}
-
 /// **An edit of a thought is a touch**, whatever fields it wrote: an edited
 /// thought stays in the room while the edit is newer than the age line.
 #[test]
-fn an_edited_thought_stays_in_the_room() {
+fn a_thought_ages_from_its_latest_touch_with_or_without_fields() {
     crate::memory::kinds::load_shipped();
-    let created_at: jiff::Timestamp = "2026-04-01T10:00:00Z".parse().unwrap();
-    let edited_at: jiff::Timestamp = "2026-04-03T10:00:00Z".parse().unwrap();
-    let room = bare_room(created_at, Some(edited_at));
-    let between = CaptureRequest {
-        door: Door {
-            aged_before: Some("2026-04-02T00:00:00Z".parse().unwrap()),
-            ..thinking().door
-        },
-        ..thinking()
-    };
-    assert!(matches!(
-        prepare(&room, &[], &between),
-        Err(Refusal::RoomFull {
-            live: 2,
-            aged_out: 0,
-            ..
-        })
-    ));
+    let created_at = "2026-04-01T10:00:00Z".parse().unwrap();
+    for (edited_at, cutoff, full) in [
+        (None, "2026-04-02T00:00:00Z", false),
+        (None, "2026-04-01T09:00:00Z", true),
+        (Some("2026-04-03T10:00:00Z"), "2026-04-02T00:00:00Z", true),
+    ] {
+        let room = bare_room(created_at, edited_at.map(|at| at.parse().unwrap()));
+        let mut sent = thinking();
+        sent.door.aged_before = Some(cutoff.parse().unwrap());
+        let answer = prepare(&room, &[], &sent);
+        if full {
+            assert!(
+                matches!(
+                    answer,
+                    Err(Refusal::RoomFull {
+                        live: 2,
+                        aged_out,
+                        ..
+                    }) if edited_at.is_none() || aged_out == 0
+                ),
+                "{edited_at:?} {cutoff}: {answer:?}"
+            );
+        } else {
+            assert!(answer.is_ok(), "{edited_at:?} {cutoff}: {answer:?}");
+        }
+    }
 }
 
 fn thinking() -> CaptureRequest {
