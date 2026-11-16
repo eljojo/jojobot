@@ -730,121 +730,100 @@ mod tests {
     /// the kind it must be is the kind of the member and not of the collection it
     /// is addressed through. A member of another kind is still refused, and so is
     /// a number nobody holds.
-    #[test]
-    fn a_kind_input_takes_a_member_by_its_number_and_judges_the_member_kind() {
-        let known = vec![
-            entity("topic:rules-springfield", "p3w8zc"),
-            entity("decision:springfield-12", "k7h2mn"),
-            entity("person:homer", "q4r9xt"),
-        ];
-        let former = |address: &str, badge: &str| crate::memory::FormerHandle {
-            former: EntityId(address.to_string()),
-            badge: badge.to_string(),
-            changed_at: TODAY,
-        };
-        let held = vec![
-            former("topic:rules-springfield/12", "k7h2mn"),
-            former("topic:rules-springfield/13", "q4r9xt"),
-        ];
-        let view = decls("ruling: kind decision");
-        let ask = |address: &str| {
-            bind(
-                "view:rulings",
-                &view,
-                &given(&[("ruling", address)]),
-                &known,
-                &held,
-                TODAY,
-            )
-        };
-        let bound = ask("topic:rules-springfield/12").expect("the number binds the member");
-        assert_eq!(
-            bound.get("ruling").flatten().expect("a value").text,
-            "decision:springfield-12"
-        );
-        let other = ask("topic:rules-springfield/13").expect_err("a person is no decision");
-        assert!(other.words.contains("kind decision"), "{}", other.words);
-        let missing = ask("topic:rules-springfield/99").expect_err("nobody holds 99");
-        assert!(missing.words.contains("names nothing"), "{}", missing.words);
-    }
-
     /// **A nested address binds the final member.** Outer numbers its members;
     /// member 2 is an inner collection that numbers its own; the decision is
     /// member 5 of that. The derived former handles name `outer/2` and `inner/5`,
     /// and `outer/2/5` is read through both, as `recall` reads it.
-    #[test]
-    fn a_kind_input_takes_a_nested_address_through_every_collection() {
-        let known = vec![
-            entity("topic:rules-springfield", "p3w8zc"),
-            entity("topic:rules-shelbyville", "m5c2yd"),
-            entity("decision:springfield-12", "k7h2mn"),
-        ];
-        let former = |address: &str, badge: &str| crate::memory::FormerHandle {
-            former: EntityId(address.to_string()),
-            badge: badge.to_string(),
-            changed_at: TODAY,
-        };
-        let held = vec![
-            former("topic:rules-springfield/2", "m5c2yd"),
-            former("topic:rules-shelbyville/5", "k7h2mn"),
-        ];
-        let view = decls("ruling: kind decision");
-        let ask = |address: &str| {
-            bind(
-                "view:rulings",
-                &view,
-                &given(&[("ruling", address)]),
-                &known,
-                &held,
-                TODAY,
-            )
-        };
-        let bound = ask("topic:rules-springfield/2/5").expect("the chain binds the member");
-        assert_eq!(
-            bound.get("ruling").flatten().expect("a value").text,
-            "decision:springfield-12"
-        );
-        let missing = ask("topic:rules-springfield/2/9").expect_err("nobody holds 9");
-        assert!(missing.words.contains("names nothing"), "{}", missing.words);
-    }
-
     /// **A number through a collection's FORMER handle finds the member.** The
     /// collection was renamed: the held numbers are derived under its handle now,
     /// and its old handle is an ordinary former handle of the collection alone. A
     /// whole former handle as the reference is still refused.
     #[test]
-    fn a_kind_input_takes_a_number_through_a_renamed_collection() {
-        let known = vec![
-            entity("topic:rules-shelbyville", "m5c2yd"),
-            entity("decision:springfield-12", "k7h2mn"),
-        ];
+    fn kind_inputs_follow_numbered_nested_and_renamed_collections() {
         let former = |address: &str, badge: &str| crate::memory::FormerHandle {
             former: EntityId(address.to_string()),
             badge: badge.to_string(),
             changed_at: TODAY,
         };
-        let held = vec![
-            former("topic:rules-springfield", "m5c2yd"),
-            former("topic:rules-shelbyville/20", "k7h2mn"),
-        ];
         let view = decls("ruling: kind decision");
-        let ask = |address: &str| {
-            bind(
-                "view:rulings",
-                &view,
-                &given(&[("ruling", address)]),
-                &known,
-                &held,
-                TODAY,
-            )
-        };
-        let bound = ask("topic:rules-springfield/20").expect("the old handle still reads");
-        assert_eq!(
-            bound.get("ruling").flatten().expect("a value").text,
-            "decision:springfield-12"
-        );
-        let whole = ask("topic:rules-springfield").expect_err("a collection is no decision");
-        assert!(whole.words.contains("kind decision"), "{}", whole.words);
+        for (known, held, asks) in [
+            (
+                vec![
+                    entity("topic:rules-springfield", "p3w8zc"),
+                    entity("decision:springfield-12", "k7h2mn"),
+                    entity("person:homer", "q4r9xt"),
+                ],
+                vec![
+                    former("topic:rules-springfield/12", "k7h2mn"),
+                    former("topic:rules-springfield/13", "q4r9xt"),
+                ],
+                vec![
+                    ("topic:rules-springfield/12", Ok("decision:springfield-12")),
+                    ("topic:rules-springfield/13", Err("kind decision")),
+                    ("topic:rules-springfield/99", Err("names nothing")),
+                ],
+            ),
+            (
+                vec![
+                    entity("topic:rules-springfield", "p3w8zc"),
+                    entity("topic:rules-shelbyville", "m5c2yd"),
+                    entity("decision:springfield-12", "k7h2mn"),
+                ],
+                vec![
+                    former("topic:rules-springfield/2", "m5c2yd"),
+                    former("topic:rules-shelbyville/5", "k7h2mn"),
+                ],
+                vec![
+                    ("topic:rules-springfield/2/5", Ok("decision:springfield-12")),
+                    ("topic:rules-springfield/2/9", Err("names nothing")),
+                ],
+            ),
+            (
+                vec![
+                    entity("topic:rules-shelbyville", "m5c2yd"),
+                    entity("decision:springfield-12", "k7h2mn"),
+                ],
+                vec![
+                    former("topic:rules-springfield", "m5c2yd"),
+                    former("topic:rules-shelbyville/20", "k7h2mn"),
+                ],
+                vec![
+                    ("topic:rules-springfield/20", Ok("decision:springfield-12")),
+                    ("topic:rules-springfield", Err("kind decision")),
+                ],
+            ),
+        ] {
+            for (address, expected) in asks {
+                let result = bind(
+                    "view:rulings",
+                    &view,
+                    &given(&[("ruling", address)]),
+                    &known,
+                    &held,
+                    TODAY,
+                );
+                match expected {
+                    Ok(text) => assert_eq!(
+                        result
+                            .expect(address)
+                            .get("ruling")
+                            .flatten()
+                            .expect("a value")
+                            .text,
+                        text,
+                        "{address}"
+                    ),
+                    Err(words) => {
+                        let refused = result.expect_err(address);
+                        assert!(
+                            refused.words.contains(words),
+                            "{address}: {}",
+                            refused.words
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// **`handle` takes a handle of any kind, and still needs the thing to
