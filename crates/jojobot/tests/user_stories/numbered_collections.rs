@@ -379,11 +379,7 @@ async fn a_move_refused_for_a_number_is_told_to_leave_it_or_archive_it_and_each_
 
     // ── leaving it where it is: nothing moved, and the member takes writes ──
     s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
-    s.call(
-        "capture",
-        json!({"subject": PARKING, "content": "no parking after ten", "provenance": "testimony"}),
-    )
-    .await;
+    s.fact(PARKING, "no parking after ten").await;
 
     // ── archiving it: the number still names it ─────────────────────────────
     s.call(

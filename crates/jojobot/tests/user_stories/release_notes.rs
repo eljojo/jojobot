@@ -628,13 +628,7 @@ async fn the_record_of_what_a_bot_was_told_is_out_of_an_ordinary_recall() {
     s.add("bot:delta", "Delta").await;
     let later = story.restarted().await;
     let delta = later.as_bot("bot:delta").await;
-    delta
-        .call(
-            "capture",
-            json!({"subject": "bot:delta", "content": "keeps the kiln lit",
-                   "provenance": "testimony"}),
-        )
-        .await;
+    delta.fact("bot:delta", "keeps the kiln lit").await;
     let is_ledger = |fact: &serde_json::Value| fact["fields"]["engine_record"] == "release_notes";
 
     let plain = delta
@@ -685,11 +679,7 @@ async fn the_record_of_what_a_bot_was_told_is_no_rule_of_the_bot() {
     later
         .as_bot("bot:delta")
         .await
-        .call(
-            "capture",
-            json!({"subject": "bot:delta", "content": "keeps the kiln lit",
-                   "provenance": "testimony"}),
-        )
+        .fact("bot:delta", "keeps the kiln lit")
         .await;
     let booted = later
         .call(
@@ -975,13 +965,7 @@ async fn a_start_that_sends_a_note_leaves_a_reviewed_bot_reviewed() {
 
     // The pair: a real write on delta does.
     let delta_session = later.as_bot("bot:delta").await;
-    delta_session
-        .call(
-            "capture",
-            json!({"subject": "bot:delta", "content": "keeps the shelves",
-                   "provenance": "testimony"}),
-        )
-        .await;
+    delta_session.fact("bot:delta", "keeps the shelves").await;
     let queue = waiting(
         defrag
             .call("recall", json!({"unreviewed": true}))

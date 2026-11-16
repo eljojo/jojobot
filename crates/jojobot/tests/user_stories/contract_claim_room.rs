@@ -731,11 +731,7 @@ async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
     );
 
     // And after it a new claim lands, and reads back.
-    otto.call(
-        "capture",
-        json!({"subject": handle, "content": "a short note", "provenance": "testimony"}),
-    )
-    .await;
+    otto.fact(&handle, "a short note").await;
     let read = otto
         .call(
             "recall",

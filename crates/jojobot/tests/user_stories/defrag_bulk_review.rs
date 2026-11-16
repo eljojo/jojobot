@@ -79,11 +79,7 @@ async fn defrag_marks_several_things_reviewed_in_one_call() {
         assert_eq!(marks_of(&defrag, handle).await, 1, "{handle}");
     }
 
-    dev.call(
-        "capture",
-        json!({"subject": "person:bart", "content": "skateboards", "provenance": "testimony"}),
-    )
-    .await;
+    dev.fact("person:bart", "skateboards").await;
     let back = queue(&defrag).await;
     assert!(back.contains(&"person:bart".to_string()), "{back:?}");
     assert!(!back.contains(&"person:homer".to_string()), "{back:?}");

@@ -213,12 +213,8 @@ async fn a_decision_replaced_by_one_under_another_topic_says_so_with_the_new_wor
                "sets": {"number": "40", "replaces": "decision:springfield-13"}}),
     )
     .await;
-    s.call(
-        "capture",
-        json!({"subject": "decision:shelbyville-40", "content": "Fireworks end at eleven",
-               "provenance": "testimony"}),
-    )
-    .await;
+    s.fact("decision:shelbyville-40", "Fireworks end at eleven")
+        .await;
     s.call(
         "archive_entity",
         json!({"handle": "decision:springfield-13", "reason": "replaced by 40"}),

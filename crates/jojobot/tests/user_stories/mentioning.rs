@@ -201,13 +201,9 @@ async fn a_real_handle_inside_code_stays_as_written_through_a_rename_and_the_sam
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:milhouse", "Milhouse").await;
-    s.call(
-        "capture",
-        json!({
-            "subject": "person:milhouse",
-            "content": "code `@place:shelbyvile` and prose @place:shelbyvile",
-            "provenance": "testimony",
-        }),
+    s.fact(
+        "person:milhouse",
+        "code `@place:shelbyvile` and prose @place:shelbyvile",
     )
     .await;
     s.call(
@@ -494,13 +490,9 @@ async fn a_walk_with_no_shape_named_reaches_an_edge_a_mention_and_a_ref_at_once(
     )
     .await;
 
-    s.call(
-        "capture",
-        json!({
-            "subject": "person:nelson",
-            "content": "helped pull an all-nighter on @topic:widgets before the deadline",
-            "provenance": "testimony",
-        }),
+    s.fact(
+        "person:nelson",
+        "helped pull an all-nighter on @topic:widgets before the deadline",
     )
     .await;
 
@@ -829,13 +821,9 @@ async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_o
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:milhouse", "Milhouse").await;
-    s.call(
-        "capture",
-        json!({
-            "subject": "person:milhouse",
-            "content": "fished from the riverbank near @place:shelbyvile every spring",
-            "provenance": "testimony",
-        }),
+    s.fact(
+        "person:milhouse",
+        "fished from the riverbank near @place:shelbyvile every spring",
     )
     .await;
 

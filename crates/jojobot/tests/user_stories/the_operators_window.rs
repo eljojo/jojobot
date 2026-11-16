@@ -136,12 +136,7 @@ async fn a_kinds_page_lists_every_thing_of_that_kind_and_no_other() {
 async fn the_search_box_finds_what_a_bot_wrote_and_says_when_nothing_is_found() {
     let (story, s) = Story::begin_with_session("bot:marge").await;
     s.add("person:homer", "Homer").await;
-    s.call(
-        "capture",
-        json!({"subject": "person:homer", "content": "keeps bees behind the plant",
-               "provenance": "testimony"}),
-    )
-    .await;
+    s.fact("person:homer", "keeps bees behind the plant").await;
 
     let found = story.follow("/ui/search?q=bees").await;
     let table = section(&found, "found");

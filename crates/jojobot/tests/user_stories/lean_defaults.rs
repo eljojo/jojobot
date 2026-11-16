@@ -99,12 +99,7 @@ async fn a_records_read_leads_with_each_claim_and_says_how_many_details_it_left_
 
     // ── a read with nothing to leave out carries no line ────────────────────
     s.add("topic:marge-baking", "Marge baking").await;
-    s.call(
-        "capture",
-        json!({"subject": "topic:marge-baking", "content": "rises overnight",
-               "provenance": "testimony"}),
-    )
-    .await;
+    s.fact("topic:marge-baking", "rises overnight").await;
     s.call(
         "recall",
         json!({"subject": "topic:marge-baking", "facts": true}),

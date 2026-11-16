@@ -585,12 +585,7 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
         .await;
     for (thread, detail, _) in THREADS {
         owner.add(thread, thread).await;
-        owner
-            .call(
-                "capture",
-                json!({"subject": thread, "content": detail, "provenance": "testimony"}),
-            )
-            .await;
+        owner.fact(thread, detail).await;
     }
 
     // ── the first session: three pointers, and the session wraps ────────────

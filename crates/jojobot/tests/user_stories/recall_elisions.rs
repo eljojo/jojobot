@@ -66,12 +66,7 @@ async fn a_read_of_things_with_no_prose_says_nothing_of_prose() {
         ("person:bart", "Bart"),
     ] {
         s.add(handle, name).await;
-        s.call(
-            "capture",
-            json!({"subject": handle, "content": "lives on Evergreen Terrace",
-                   "provenance": "testimony"}),
-        )
-        .await;
+        s.fact(handle, "lives on Evergreen Terrace").await;
     }
     let read = s
         .call("recall", json!({"kind": "person", "facts": true}))

@@ -77,11 +77,7 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
     let defrag = story.as_bot("bot:defrag").await;
 
     // ── a thing another bot writes appears in the queue ─────────────────────
-    dev.call(
-        "capture",
-        json!({"subject": "person:homer", "content": "likes donuts", "provenance": "testimony"}),
-    )
-    .await;
+    dev.fact("person:homer", "likes donuts").await;
     let waiting = queue(&defrag).await;
     assert!(waiting.contains(&"person:homer".to_string()), "{waiting:?}");
     assert!(waiting.contains(&"person:bart".to_string()), "{waiting:?}");
@@ -117,11 +113,7 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
     );
 
     // ── anyone else writes again and it returns ─────────────────────────────
-    dev.call(
-        "capture",
-        json!({"subject": "person:homer", "content": "likes beer too", "provenance": "testimony"}),
-    )
-    .await;
+    dev.fact("person:homer", "likes beer too").await;
     let back = queue(&defrag).await;
     assert!(back.contains(&"person:homer".to_string()), "{back:?}");
     assert!(!back.contains(&"person:bart".to_string()), "{back:?}");
@@ -250,11 +242,7 @@ async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes
     dev.add("thread:milhouse-moves", "Milhouse moves").await;
     let defrag = story.as_bot("bot:defrag").await;
     for note in ["first", "second", "third"] {
-        dev.call(
-            "capture",
-            json!({"subject": "thread:milhouse-moves", "content": note, "provenance": "testimony"}),
-        )
-        .await;
+        dev.fact("thread:milhouse-moves", note).await;
     }
     // The premise: the thread holds its three live records, so one more is
     // refused. Without it the mark below proves nothing about the ceiling.
@@ -359,11 +347,7 @@ async fn defrag_marks_a_thread_that_borrowed_over_its_ceiling_and_the_mark_takes
     dev.add("thread:milhouse-moves", "Milhouse moves").await;
     let defrag = story.as_bot("bot:defrag").await;
     for note in ["first", "second", "third"] {
-        dev.call(
-            "capture",
-            json!({"subject": "thread:milhouse-moves", "content": note, "provenance": "testimony"}),
-        )
-        .await;
+        dev.fact("thread:milhouse-moves", note).await;
     }
     // The premise: the reserve puts a fourth live record on the thread, so it
     // holds more than its ceiling. A second borrow is refused at four.
@@ -434,11 +418,7 @@ async fn a_thing_defrag_creates_is_reviewed_and_a_thing_another_bot_creates_wait
     );
 
     // …and another bot's write to it brings it back, as to any reviewed thing.
-    dev.call(
-        "capture",
-        json!({"subject": "person:lisa", "content": "plays the saxophone", "provenance": "testimony"}),
-    )
-    .await;
+    dev.fact("person:lisa", "plays the saxophone").await;
     assert!(queue(&defrag).await.contains(&"person:lisa".to_string()));
 }
 
@@ -464,11 +444,7 @@ async fn a_read_of_a_marked_thing_leaves_the_review_mark_out_and_names_the_argum
     dev.add("person:lisa", "Lisa").await;
     let defrag = story.as_bot("bot:defrag").await;
     for handle in ["person:bart", "person:lisa"] {
-        dev.call(
-            "capture",
-            json!({"subject": handle, "content": "plays the saxophone", "provenance": "testimony"}),
-        )
-        .await;
+        dev.fact(handle, "plays the saxophone").await;
     }
     defrag
         .call(
@@ -538,11 +514,7 @@ async fn a_search_leaves_the_review_mark_out_names_it_in_left_out_and_returns_it
     let (story, dev) = Story::begin_with_session("bot:otto").await;
     dev.add("person:bart", "Bart").await;
     let defrag = story.as_bot("bot:defrag").await;
-    dev.call(
-        "capture",
-        json!({"subject": "person:bart", "content": "reviewed the donut budget", "provenance": "testimony"}),
-    )
-    .await;
+    dev.fact("person:bart", "reviewed the donut budget").await;
     defrag
         .call(
             "update_entity",

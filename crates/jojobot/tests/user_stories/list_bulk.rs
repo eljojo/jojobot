@@ -573,11 +573,7 @@ async fn a_capture_with_no_words_on_a_list_names_the_ways_to_write_to_one() {
     elsewhere.never_says("`entries`");
 
     // The way named works: one entry by `content`.
-    s.call(
-        "capture",
-        json!({"subject": "list:packing", "content": "tent", "provenance": "testimony"}),
-    )
-    .await;
+    s.fact("list:packing", "tent").await;
     assert_eq!(read_states(&s, "list:packing").await, ["tent:open"]);
 }
 

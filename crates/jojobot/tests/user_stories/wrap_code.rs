@@ -365,11 +365,7 @@ async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
     // A last change is more than a journal beat: a claim lands, and a message
     // goes out.
     reopened
-        .call(
-            "capture",
-            json!({"subject": "person:milhouse", "content": "likes the last change",
-                   "provenance": "testimony"}),
-        )
+        .fact("person:milhouse", "likes the last change")
         .await;
     reopened
         .call(
@@ -722,11 +718,7 @@ async fn inside_two_hours_a_reopened_run_rewrites_its_story_and_writes_on_withou
         .call("journal", json!({"entry": "an afterthought"}))
         .await;
     again
-        .call(
-            "capture",
-            json!({"subject": "person:milhouse", "content": "likes the afterthought",
-                   "provenance": "testimony"}),
-        )
+        .fact("person:milhouse", "likes the afterthought")
         .await;
     again
         .call(
