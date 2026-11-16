@@ -1292,34 +1292,35 @@ mod tests {
     // --- each detection channel ---------------------------------------------
 
     #[test]
-    fn case_and_whitespace_are_folded_before_comparing() {
-        assert_eq!(
-            reasons("person:alpha-2", Some("  ALPHA  ")),
-            vec![MatchReason::SameName]
-        );
+    fn detection_channels_report_the_reason_and_leave_unrelated_names() {
+        use MatchReason::{NearName, NearSlug, SameName, SameNameOtherKind};
+        for (handle, name, expected) in [
+            ("person:alpha-2", Some("  ALPHA  "), Some(SameName)),
+            // "Daredevil Gorge" slugifies onto the existing `place:daredevil-gorge` handle.
+            ("place:gorge-spot", Some("daredevil gorge"), Some(SameName)),
+            // …and an incoming handle that spells out an existing entity's name.
+            ("place:daredevil-gorge-2", None, Some(NearSlug)),
+            ("person:alphaa", None, Some(NearSlug)),
+            ("person:bet", None, Some(NearSlug)),
+            // Three edits is a different person, not a typo.
+            ("person:contract-ghost", None, None),
+            ("person:otto", Some("Bet"), Some(NearName)),
+            (
+                "place:contract-atlas",
+                Some("Atlas"),
+                Some(SameNameOtherKind),
+            ),
+            // `place:bet` is one edit from `person:beta`, but a place is not a
+            // person — only an outright name collision crosses kinds.
+            ("place:bet", None, None),
+        ] {
+            assert_eq!(
+                reasons(handle, name),
+                expected.into_iter().collect::<Vec<_>>(),
+                "{handle} {name:?}"
+            );
+        }
         assert_eq!(normalize_name("  Alpha   One "), "alpha one");
-    }
-
-    #[test]
-    fn a_name_matches_an_existing_handle_and_vice_versa() {
-        // "Daredevil Gorge" slugifies onto the existing `place:daredevil-gorge` handle.
-        assert_eq!(
-            reasons("place:gorge-spot", Some("daredevil gorge")),
-            vec![MatchReason::SameName]
-        );
-        // …and an incoming handle that spells out an existing entity's name.
-        assert_eq!(
-            reasons("place:daredevil-gorge-2", None),
-            vec![MatchReason::NearSlug]
-        );
-    }
-
-    #[test]
-    fn a_typo_in_the_slug_is_caught_within_two_edits() {
-        assert_eq!(reasons("person:alphaa", None), vec![MatchReason::NearSlug]);
-        assert_eq!(reasons("person:bet", None), vec![MatchReason::NearSlug]);
-        // Three edits is a different person, not a typo.
-        assert!(reasons("person:contract-ghost", None).is_empty());
     }
 
     /// **What the two channels catch, measured on realistic names.** A record
@@ -1465,29 +1466,6 @@ mod tests {
                 edit_distance(incoming.slug(), existing.id.slug()),
             );
         }
-    }
-
-    #[test]
-    fn a_typo_in_the_name_is_caught_within_two_edits() {
-        assert_eq!(
-            reasons("person:otto", Some("Bet")),
-            vec![MatchReason::NearName]
-        );
-    }
-
-    #[test]
-    fn the_same_name_under_another_kind_is_reported_not_hidden() {
-        assert_eq!(
-            reasons("place:contract-atlas", Some("Atlas")),
-            vec![MatchReason::SameNameOtherKind]
-        );
-    }
-
-    #[test]
-    fn near_matching_does_not_cross_kinds() {
-        // `place:bet` is one edit from `person:beta`, but a place is not a
-        // person — only an outright name collision crosses kinds.
-        assert!(reasons("place:bet", None).is_empty());
     }
 
     // --- no false positives, and a stable report ------------------------------
