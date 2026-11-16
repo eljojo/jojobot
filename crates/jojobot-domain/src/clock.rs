@@ -170,20 +170,6 @@ mod tests {
         raw.parse().expect("a test date")
     }
 
-    /// **The stamp lands on the stated day**, which is what makes *when jojobot
-    /// recorded this* true inside the story rather than the day the run
-    /// happened to be executed on.
-    #[test]
-    fn a_stated_clock_stamps_the_day_it_states() {
-        let clock = Clock::stating(day("2026-06-01"));
-
-        assert_eq!(
-            clock.now().to_zoned(TimeZone::UTC).date(),
-            day("2026-06-01"),
-            "a stated clock stamps its own day"
-        );
-    }
-
     /// **Every zone gets the stated day.** A named day is not a moment, so
     /// there is nothing to read in a frame.
     #[test]
@@ -214,18 +200,6 @@ mod tests {
         );
     }
 
-    /// **A stated clock advances**, so two writes in one run are readable in
-    /// the order they happened. Stated as an ordering rather than a rate: what
-    /// a reader needs is that the second stamp is not before the first.
-    #[test]
-    fn a_stated_clock_does_not_run_backwards() {
-        let clock = Clock::stating(day("2026-06-01"));
-
-        let first = clock.now();
-        let second = clock.now();
-
-        assert!(second >= first, "{second} is not before {first}");
-    }
     /// **Two writes inside one second do not share a stamp.** A stated clock
     /// advances so that writes are readable in the order they happened, and a
     /// reader that sorts by stamp, or takes the oldest, is told a lie by two
