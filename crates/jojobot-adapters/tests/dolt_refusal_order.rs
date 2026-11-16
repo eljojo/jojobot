@@ -6,7 +6,7 @@
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::{Scratch, free_port, migrated_database, shared_database};
 use jojobot_domain::memory::Guarded;
 use jojobot_domain::memory::testing::contract;
 
@@ -40,13 +40,9 @@ async fn dolt_still_names_a_missing_subject_before_it_judges_a_malformed_write()
 
 #[tokio::test]
 async fn dolt_judges_two_missing_names_in_the_decided_order() {
-    let scratch = Scratch::new("refusal-order");
-    let mut store = Dolt::start(&scratch.0, free_port())
+    let pool = shared_database("refusalorder")
         .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "refusalorder")
-        .await
-        .expect("a database of the case's own");
+        .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
@@ -59,5 +55,4 @@ async fn dolt_judges_two_missing_names_in_the_decided_order() {
     contract::a_full_room_is_refused_before_a_full_thread(&memory).await;
     contract::a_missing_source_is_refused_before_a_held_role(&memory).await;
     contract::a_write_after_a_merge_is_the_newest_of_its_key(&memory).await;
-    store.stop().await;
 }

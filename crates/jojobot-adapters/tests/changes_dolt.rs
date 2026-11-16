@@ -10,26 +10,19 @@
 use std::sync::Arc;
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::fold::sessions::FoldedSessions;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::history::WriteStamp;
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionState, Sessions, Sid, WrapWindow};
 
-use jojobot_adapters::testing::Scratch;
-
 #[tokio::test]
 async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() {
-    let scratch = Scratch::new("sessions");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "signal")
+    let pool = shared_database("signal")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -157,5 +150,4 @@ async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() 
         vec!["append", "amend_last", "set_focus"],
         "the signal moves on the calls that change what the index holds: {moved:?}"
     );
-    server.stop().await;
 }

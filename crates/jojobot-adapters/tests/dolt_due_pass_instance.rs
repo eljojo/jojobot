@@ -12,21 +12,17 @@ use jiff::civil::date;
 use jojobot_adapters::counted::Counted;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::{
-    Dolt, Migrated, UNREADABLE_DUE_PASS, backfill_unreadable_due_days, migrate,
+    Migrated, UNREADABLE_DUE_PASS, backfill_unreadable_due_days, migrate,
 };
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 
 #[tokio::test]
 async fn the_due_day_pass_runs_over_an_absent_record_and_is_skipped_over_an_unreadable_one() {
-    let scratch = Scratch::new("due_pass_instance");
-    let mut store = Dolt::start(&scratch.0, free_port())
+    let pool = shared_database("memory")
         .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
-        .await
-        .expect("a database of this case's own");
+        .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
@@ -105,20 +101,14 @@ async fn the_due_day_pass_runs_over_an_absent_record_and_is_skipped_over_an_unre
         marks().await.iter().any(|name| name == UNREADABLE_DUE_PASS),
         "the pass is finished"
     );
-
-    store.stop().await;
 }
 
 /// The stored fold removes a blank source; the due arithmetic belongs to MCP.
 #[tokio::test]
 async fn a_blank_due_source_is_absent_from_the_stored_fold() {
-    let scratch = Scratch::new("due_source_clear");
-    let mut store = Dolt::start(&scratch.0, free_port())
+    let pool = shared_database("memory")
         .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "memory")
-        .await
-        .expect("a database of this case's own");
+        .expect("a database of its own");
     let memory_store = DoltMemory::open(pool);
     jojobot_domain::memory::kinds::seed(&memory_store)
         .await
@@ -160,5 +150,4 @@ async fn a_blank_due_source_is_absent_from_the_stored_fold() {
     assert!(!held.contains_key("decide_by"), "{held:?}");
     assert!(!held.contains_key("due_on"), "{held:?}");
     assert_eq!(held["note"], "retained");
-    store.stop().await;
 }

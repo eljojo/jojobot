@@ -6,16 +6,13 @@
 //! in-memory store's case (`jojobot-domain`, `thread_writers.rs`).
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
-use jojobot_adapters::testing::{booted, free_port, migrated_database};
+use jojobot_adapters::testing::{booted, shared_database};
 use jojobot_domain::memory::{Edge, EdgeShape, EntityId, Memory, NewEntity, NewFact};
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewSession, Sessions, Sid};
-
-use jojobot_adapters::testing::Scratch;
 
 /// **What a handle's row is stored under**, for a session row that names the bot
 /// by the key its entity is filed under.
@@ -34,11 +31,7 @@ async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dolt_counts_the_bots_that_wrote_a_record_among_the_writers_a_merge_is_judged_by() {
     use jojobot_domain::memory::MemoryError;
-    let scratch = Scratch::new("record-writers");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "recordwriters")
+    let pool = shared_database("recordwriters")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -204,5 +197,4 @@ async fn dolt_counts_the_bots_that_wrote_a_record_among_the_writers_a_merge_is_j
         .merge(&beta, &alpha, None, date(2026, 10, 4), &lisa, None)
         .await
         .expect("lisa wrote no record of her own on alpha, so she may carry a ceiling onto it");
-    store.stop().await;
 }

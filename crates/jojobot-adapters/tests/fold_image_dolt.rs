@@ -8,7 +8,6 @@
 use std::sync::Arc;
 
 use jojobot_adapters::counted::Counted;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::fold::Folded;
@@ -17,7 +16,7 @@ use jojobot_adapters::fold_battery::{
     walk_a_merge_among_holders_of_one_name, walk_a_merge_and_a_rename_among_holders,
     walk_every_kind_of_write,
 };
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::Memory;
 
 /// The reads the image serves. Each is added in the commit that switches it.
@@ -45,8 +44,6 @@ const SWITCHED: &[&str] = &[
     "entity_history",
     "write_summary",
 ];
-
-use jojobot_adapters::testing::Scratch;
 
 /// **A fold over the real store, loaded, with a counter between them.**
 async fn loaded(pool: sqlx::MySqlPool) -> (Arc<DoltMemory>, Arc<Counted>, Folded) {
@@ -80,11 +77,7 @@ async fn loaded(pool: sqlx::MySqlPool) -> (Arc<DoltMemory>, Arc<Counted>, Folded
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_image_answers_as_the_real_store_does_after_every_kind_of_write() {
-    let scratch = Scratch::new("walk");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "walk")
+    let pool = shared_database("walk")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -98,16 +91,11 @@ async fn the_image_answers_as_the_real_store_does_after_every_kind_of_write() {
         last_signal: Default::default(),
     };
     walk_every_kind_of_write(&probe).await;
-    server.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_real_store_answers() {
-    let scratch = Scratch::new("holders");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, "holders")
+    let pool = shared_database("holders")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -128,5 +116,4 @@ async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_real_store_an
     // Whether the real store holds engine records that point at names is not assumed: the case
     // requires the ordinary records to outnumber them, and every name to answer as the store does.
     the_fold_answers_who_points_at_every_name_as_the_store_does(&fresh, &*store).await;
-    server.stop().await;
 }
