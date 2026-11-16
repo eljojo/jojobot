@@ -30,7 +30,7 @@ pub(super) async fn read_states(s: &Session, list: &str) -> Vec<String> {
 }
 
 /// One tick, as a caller sends it.
-fn ticking(list: &str, entry: &str, act: &str) -> Value {
+pub(super) fn ticking(list: &str, entry: &str, act: &str) -> Value {
     json!({"subject": list, "content": format!("{act} it"), "provenance": "testimony",
            "tick": {"entry": entry, "act": act}})
 }

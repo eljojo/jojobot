@@ -7,9 +7,10 @@
 //!
 //! The roster names are the cast: a slab to pour, a checklist, a rotation.
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::dsl::{Session, Story};
+use super::list_ticks::ticking;
 use super::lists::add_entry;
 
 /// A piece of work in progress with a list of the given setting hung on it.
@@ -27,11 +28,6 @@ async fn work_with_a_list(s: &Session, list: &str, setting: &str) {
                "sets": {"tick": setting}}),
     )
     .await;
-}
-
-fn ticking(list: &str, entry: &str, act: &str) -> Value {
-    json!({"subject": list, "content": format!("{act} it"), "provenance": "testimony",
-           "tick": {"entry": entry, "act": act}})
 }
 
 async fn status_of(s: &Session) -> String {

@@ -11,13 +11,8 @@
 use serde_json::{Value, json};
 
 use super::dsl::{Answer, Session, Story};
+use super::list_ticks::ticking;
 use super::lists::{a_list_on_the_trip, add_entry, read_back};
-
-/// One tick, as a caller sends it.
-fn ticking(list: &str, entry: &str, act: &str) -> Value {
-    json!({"subject": list, "content": format!("{act} it"), "provenance": "testimony",
-           "tick": {"entry": entry, "act": act}})
-}
 
 /// A move of an existing entry: where it goes is `first`, `last`, or the address
 /// of the entry it should follow.

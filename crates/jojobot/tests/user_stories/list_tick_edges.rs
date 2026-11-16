@@ -7,33 +7,11 @@
 //!
 //! The roster names are the cast: Homer's chores.
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::dsl::{Session, Story};
+use super::list_ticks::{read_states, ticking};
 use super::lists::{a_list_on_the_trip, add_entry};
-
-/// One tick, as a caller sends it.
-fn ticking(list: &str, entry: &str, act: &str) -> Value {
-    json!({"subject": list, "content": format!("{act} it"), "provenance": "testimony",
-           "tick": {"entry": entry, "act": act}})
-}
-
-/// What a list serves: its entries as `text:state`, in order.
-async fn read_states(s: &Session, list: &str) -> Vec<String> {
-    let answer = s.call("recall", json!({"subject": list})).await;
-    answer.json()["objects"][0]["entries"]
-        .as_array()
-        .unwrap_or_else(|| panic!("a list answers with its entries: {}", answer.raw()))
-        .iter()
-        .map(|entry| {
-            format!(
-                "{}:{}",
-                entry["text"].as_str().unwrap_or_default(),
-                entry["state"].as_str().unwrap_or_default()
-            )
-        })
-        .collect()
-}
 
 /// How many ticks the list holds, read the way a caller reads the history.
 async fn ticks_held(s: &Session, list: &str) -> usize {

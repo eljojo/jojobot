@@ -10,6 +10,7 @@
 use serde_json::{Value, json};
 
 use super::dsl::{Answer, Session, Story};
+use super::list_ticks::read_states;
 use super::lists::{a_list_on_the_trip, add_entry, read_back};
 
 /// The keys the server mints on a list write.
@@ -53,23 +54,6 @@ fn names_no_minted_key(answer: &Answer) {
         "the receipt says the caller sent an own field: {}",
         answer.raw()
     );
-}
-
-/// The open entries of a list as `text:state`, in the order `recall` serves them.
-async fn states(s: &Session, list: &str) -> Vec<String> {
-    let answer = s.call("recall", json!({"subject": list})).await;
-    answer.json()["objects"][0]["entries"]
-        .as_array()
-        .unwrap_or_else(|| panic!("a list answers with its entries: {}", answer.raw()))
-        .iter()
-        .map(|entry| {
-            format!(
-                "{}:{}",
-                entry["text"].as_str().unwrap_or_default(),
-                entry["state"].as_str().unwrap_or_default()
-            )
-        })
-        .collect()
 }
 
 async fn the_packing_list(s: &Session) {
@@ -122,7 +106,7 @@ async fn a_tick_does_not_say_the_caller_sent_what_the_server_recorded() {
         .await;
     names_no_minted_key(&ticked);
     assert_eq!(
-        states(&s, "list:packing").await,
+        read_states(&s, "list:packing").await,
         ["tent:done"],
         "the ticked entry reads done on a sink list"
     );

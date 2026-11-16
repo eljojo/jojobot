@@ -11,24 +11,8 @@
 use serde_json::{Value, json};
 
 use super::dsl::{Session, Story};
+use super::list_ticks::read_states;
 use super::lists::{a_list_on_the_trip, add_entry};
-
-/// A list's entries as `text:state`, in order.
-async fn read_states(s: &Session, list: &str) -> Vec<String> {
-    let answer = s.call("recall", json!({"subject": list})).await;
-    answer.json()["objects"][0]["entries"]
-        .as_array()
-        .unwrap_or_else(|| panic!("a list answers with its entries: {}", answer.raw()))
-        .iter()
-        .map(|entry| {
-            format!(
-                "{}:{}",
-                entry["text"].as_str().unwrap_or_default(),
-                entry["state"].as_str().unwrap_or_default()
-            )
-        })
-        .collect()
-}
 
 /// The ticks a list holds, newest first.
 async fn ticks_of(s: &Session, list: &str) -> Vec<Value> {
