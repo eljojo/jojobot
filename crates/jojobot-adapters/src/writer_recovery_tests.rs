@@ -441,6 +441,8 @@ where
     assert!(first.await.expect("first caller finishes"));
 }
 
+/// The index no longer wraps the store: a write enters the memory State, which
+/// runs it in the process writer.
 #[tokio::test]
 async fn writer_recovery_rail_memory_waits_for_teaching_publication() {
     use jojobot_domain::memory::testing::InMemoryMemory;
@@ -551,29 +553,6 @@ async fn writer_recovery_rebuild_sessions_uses_the_process_writer() {
         )
         .with_writer(writer);
         sessions.rebuild().await.expect("session reload");
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn writer_recovery_memory_state_uses_the_process_writer() {
-    use jojobot_domain::memory::testing::InMemoryMemory;
-    use jojobot_domain::memory::{Memory, NewEntity};
-    // The index no longer wraps the store: a write enters the memory State, which
-    // runs it in the process writer.
-    behind_teaching(|writer| async move {
-        let memory =
-            crate::fold::Folded::new(Arc::new(InMemoryMemory::booted())).with_writer(writer);
-        memory
-            .add_entity(NewEntity::new(
-                EntityId("person:alpha".into()),
-                "Alpha",
-                "contract-fixture",
-            ))
-            .await
-            .unwrap()
-            .written()
-            .unwrap();
     })
     .await;
 }
