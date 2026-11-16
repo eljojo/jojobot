@@ -14,16 +14,6 @@ use serde_json::json;
 
 use super::dsl::{Session, Story};
 
-/// The handles an answer lists, in order.
-fn listed(answer: &super::dsl::Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .expect("objects")
-        .iter()
-        .map(|o| o["id"].as_str().expect("an id").to_string())
-        .collect()
-}
-
 /// A piece of work as `add_entity` takes it.
 fn work(slug: &str, name: &str, sets: serde_json::Value) -> serde_json::Value {
     json!({"kind": "work", "handle": slug, "name": name,
@@ -83,7 +73,7 @@ async fn what_can_be_started_and_what_stops_the_rest() {
     // ── the question, by name ───────────────────────────────────────────────
     let ready = s.call("recall", json!({"view": "ready"})).await;
     assert_eq!(
-        listed(&ready),
+        ready.ids(),
         ["work:frame-the-walls", "work:order-the-lumber"],
         "{}",
         ready.raw()
@@ -118,7 +108,7 @@ async fn what_can_be_started_and_what_stops_the_rest() {
     .await;
     let after = s.call("recall", json!({"view": "ready"})).await;
     assert_eq!(
-        listed(&after),
+        after.ids(),
         ["work:build-the-roof", "work:frame-the-walls"],
         "{}",
         after.raw()
@@ -178,7 +168,7 @@ async fn the_whole_plan_and_what_stops_each_piece_come_in_one_call() {
         .await;
 
     assert_eq!(
-        listed(&plan),
+        plan.ids(),
         [
             "work:build-the-roof",
             "work:frame-the-walls",
@@ -220,7 +210,7 @@ async fn the_ready_answer_says_where_narrows_it_and_an_ordinary_read_does_not() 
     // is in the list it sits beside.
     let ready = s.call("recall", json!({"view": "ready"})).await;
     assert_eq!(
-        listed(&ready),
+        ready.ids(),
         ["work:frame-the-walls", "work:order-the-lumber"],
         "{}",
         ready.raw()
@@ -242,7 +232,7 @@ async fn the_ready_answer_says_where_narrows_it_and_an_ordinary_read_does_not() 
         .call("recall", json!({"view": "ready", "where": "status = next"}))
         .await;
     assert_eq!(
-        listed(&narrowed),
+        narrowed.ids(),
         ["work:frame-the-walls"],
         "{}",
         narrowed.raw()
@@ -343,7 +333,7 @@ async fn the_ready_view_narrows_to_one_project_and_a_walk_lists_what_it_unblocks
     // The whole board lists both projects' ready work; the project narrows it.
     let board = s.call("recall", json!({"view": "ready"})).await;
     assert_eq!(
-        listed(&board),
+        board.ids(),
         ["work:frame-the-walls", "work:lay-the-tiles"],
         "{}",
         board.raw()
@@ -354,7 +344,7 @@ async fn the_ready_view_narrows_to_one_project_and_a_walk_lists_what_it_unblocks
             json!({"view": "ready", "parent": "project:the-shed"}),
         )
         .await;
-    assert_eq!(listed(&one), ["work:frame-the-walls"], "{}", one.raw());
+    assert_eq!(one.ids(), ["work:frame-the-walls"], "{}", one.raw());
 
     // What finishing the walls unblocks: the work that names it in depends_on.
     let unblocks = s
@@ -427,12 +417,7 @@ async fn the_ready_view_turns_a_person_away_and_still_answers_for_work() {
     let of_work = s
         .call("recall", json!({"view": "ready", "kind": "work"}))
         .await;
-    assert_eq!(
-        listed(&of_work),
-        ["work:frame-the-walls"],
-        "{}",
-        of_work.raw()
-    );
+    assert_eq!(of_work.ids(), ["work:frame-the-walls"], "{}", of_work.raw());
 
     // A record's address is no subject for the view, as it is no subject for any
     // recall: it is refused as no handle, and the piece of work it belongs to

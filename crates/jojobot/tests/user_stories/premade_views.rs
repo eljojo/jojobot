@@ -12,16 +12,6 @@ use serde_json::json;
 
 use super::dsl::Story;
 
-/// The handles an answer lists, in order.
-fn listed(answer: &super::dsl::Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .expect("objects")
-        .iter()
-        .map(|o| o["id"].as_str().expect("an id").to_string())
-        .collect()
-}
-
 #[tokio::test]
 async fn a_session_reads_the_board_of_one_project_by_name() {
     let (_story, s) = Story::begin_with_session("bot:gamma").await;
@@ -82,7 +72,7 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
         )
         .await;
     assert_eq!(
-        listed(&board),
+        board.ids(),
         [
             "work:pour-the-slab",
             "work:build-the-roof",
@@ -170,7 +160,7 @@ async fn a_project_with_no_work_has_an_empty_board_and_a_misspelt_order_is_still
             json!({"view": "board", "inputs": {"project": "project:backyard-shed"}}),
         )
         .await;
-    assert!(listed(&empty).is_empty(), "{}", empty.raw());
+    assert!(empty.ids().is_empty(), "{}", empty.raw());
 
     // A misspelt order key on a selection that holds nothing answers empty too.
     let misspelt_on_nothing = s
@@ -181,7 +171,7 @@ async fn a_project_with_no_work_has_an_empty_board_and_a_misspelt_order_is_still
         )
         .await;
     assert!(
-        listed(&misspelt_on_nothing).is_empty(),
+        misspelt_on_nothing.ids().is_empty(),
         "{}",
         misspelt_on_nothing.raw()
     );
@@ -193,7 +183,7 @@ async fn a_project_with_no_work_has_an_empty_board_and_a_misspelt_order_is_still
             json!({"view": "board", "inputs": {"project": "project:the-shed"}}),
         )
         .await;
-    assert_eq!(listed(&board), ["work:frame-the-walls"], "{}", board.raw());
+    assert_eq!(board.ids(), ["work:frame-the-walls"], "{}", board.raw());
 
     // And a misspelt order key where work exists is refused, naming the keys held.
     let refused = s
@@ -280,7 +270,7 @@ async fn the_plan_view_takes_a_project_and_lists_only_its_plan() {
         )
         .await;
     assert_eq!(
-        listed(&plan),
+        plan.ids(),
         ["work:build-the-roof", "work:frame-the-walls"],
         "{}",
         plan.raw()
@@ -304,7 +294,7 @@ async fn the_plan_view_takes_a_project_and_lists_only_its_plan() {
     // Asked with nothing, it is every project's plan, as it was.
     let everything = s.call("recall", json!({"view": "plan"})).await;
     assert_eq!(
-        listed(&everything),
+        everything.ids(),
         [
             "work:build-the-roof",
             "work:frame-the-walls",
@@ -354,7 +344,7 @@ async fn a_session_asks_which_things_are_of_a_type_and_is_told_what_each_lacks()
         )
         .await;
     assert_eq!(
-        listed(&bikes),
+        bikes.ids(),
         ["thing:gravel-bike", "thing:road-bike"],
         "{}",
         bikes.raw()

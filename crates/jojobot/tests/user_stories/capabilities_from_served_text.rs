@@ -18,16 +18,6 @@ const ORDINANCES: &str = "topic:contract-ordinances-story";
 const CURFEW: &str = "decision:contract-ordinance-story-curfew";
 const PARKING: &str = "decision:contract-ordinance-story-parking";
 
-/// The handles an answer lists, in order.
-fn listed(answer: &super::dsl::Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .expect("objects")
-        .iter()
-        .map(|o| o["id"].as_str().expect("an id").to_string())
-        .collect()
-}
-
 /// The asking skill's text, as the door serves it.
 async fn skill_body(story: &Story) -> String {
     story.skill("asking").await["skill"]["body"]
@@ -153,12 +143,7 @@ async fn a_cold_session_declares_a_view_that_takes_a_project_and_runs_it() {
             json!({"view": "urgent-things", "inputs": {"lane": "project:atlas"}}),
         )
         .await;
-    assert_eq!(
-        listed(&under_atlas),
-        ["work:sigma"],
-        "{}",
-        under_atlas.raw()
-    );
+    assert_eq!(under_atlas.ids(), ["work:sigma"], "{}", under_atlas.raw());
 
     // The paired refusal: the input is required, and the refusal names it. `lane`
     // is in no other answer to this call: the call sent none, and the view is

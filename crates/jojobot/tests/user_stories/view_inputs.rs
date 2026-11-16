@@ -15,16 +15,6 @@ use serde_json::json;
 
 use super::dsl::Story;
 
-/// The handles an answer lists, in order.
-fn listed(answer: &super::dsl::Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .expect("objects")
-        .iter()
-        .map(|o| o["id"].as_str().expect("an id").to_string())
-        .collect()
-}
-
 #[tokio::test]
 async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_query_language() {
     let (_story, s) = Story::begin_with_session("bot:gamma").await;
@@ -70,7 +60,7 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
         )
         .await;
     assert_eq!(
-        listed(&under_the_shed),
+        under_the_shed.ids(),
         ["work:build-the-roof", "work:frame-the-walls"],
         "{}",
         under_the_shed.raw()
@@ -83,17 +73,12 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
             json!({"view": "ready", "parent": "project:the-shed"}),
         )
         .await;
-    assert_eq!(
-        listed(&long_way),
-        listed(&under_the_shed),
-        "{}",
-        long_way.raw()
-    );
+    assert_eq!(long_way.ids(), under_the_shed.ids(), "{}", long_way.raw());
 
     // ── the same view asked with nothing answers for all the ready work ─────
     let everything = s.call("recall", json!({"view": "ready"})).await;
     assert_eq!(
-        listed(&everything),
+        everything.ids(),
         [
             "work:build-the-roof",
             "work:frame-the-walls",
@@ -145,7 +130,7 @@ async fn a_session_asks_the_ready_view_for_one_project_without_learning_the_quer
             )
             .await;
         assert_eq!(
-            listed(&after),
+            after.ids(),
             ["work:build-the-roof", "work:frame-the-walls"],
             "asked as {handle}: {}",
             after.raw()
@@ -205,7 +190,7 @@ async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_r
                    "inputs": {"project": "project:the-shed", "before": "2026-11-01"}}),
         )
         .await;
-    assert_eq!(listed(&both), ["work:frame-the-walls"], "{}", both.raw());
+    assert_eq!(both.ids(), ["work:frame-the-walls"], "{}", both.raw());
 
     // The optional input left out drops its term: every piece under the project.
     let only_project = s
@@ -215,7 +200,7 @@ async fn a_view_declared_with_inputs_is_asked_by_name_and_a_bad_declaration_is_r
         )
         .await;
     assert_eq!(
-        listed(&only_project),
+        only_project.ids(),
         ["work:build-the-roof", "work:frame-the-walls"],
         "{}",
         only_project.raw()
@@ -302,7 +287,7 @@ async fn a_session_asks_the_due_view_what_is_coming_and_what_is_late() {
     // ── asked with nothing, a week ahead: the late loop, then the near promise
     let week = s.call("recall", json!({"view": "due"})).await;
     assert_eq!(
-        listed(&week),
+        week.ids(),
         ["rhythm:descale", "promise:delta"],
         "{}",
         week.raw()
@@ -327,7 +312,7 @@ async fn a_session_asks_the_due_view_what_is_coming_and_what_is_late() {
         week.raw()
     );
     let promises = s.call("recall", json!({"kind": "promise"})).await;
-    let mut promises = listed(&promises);
+    let mut promises = promises.ids();
     promises.sort();
     assert_eq!(
         promises,
@@ -343,7 +328,7 @@ async fn a_session_asks_the_due_view_what_is_coming_and_what_is_late() {
         )
         .await;
     assert_eq!(
-        listed(&later),
+        later.ids(),
         ["rhythm:descale", "promise:delta", "promise:gamma"],
         "{}",
         later.raw()

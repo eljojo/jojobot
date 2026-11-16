@@ -8,16 +8,6 @@ use serde_json::json;
 
 use super::dsl::Story;
 
-/// The handles an answer lists, in order.
-fn listed(answer: &super::dsl::Answer) -> Vec<String> {
-    answer.json()["objects"]
-        .as_array()
-        .expect("objects")
-        .iter()
-        .map(|o| o["id"].as_str().expect("an id").to_string())
-        .collect()
-}
-
 #[tokio::test]
 async fn a_fresh_instance_boots_defrag_and_its_queue_is_the_unreviewed_read() {
     let (story, dev) = Story::begin_with_session("bot:otto").await;
@@ -33,7 +23,10 @@ async fn a_fresh_instance_boots_defrag_and_its_queue_is_the_unreviewed_read() {
     let before = booted.json()["identity"]["review_queue"]["count"]
         .as_u64()
         .expect("the boot names how many wait");
-    let waiting = listed(&defrag.call("recall", json!({"unreviewed": true})).await);
+    let waiting = defrag
+        .call("recall", json!({"unreviewed": true}))
+        .await
+        .ids();
     assert_eq!(before, waiting.len() as u64, "{waiting:?}");
     assert!(waiting.contains(&"person:homer".to_string()), "{waiting:?}");
 
@@ -52,7 +45,10 @@ async fn a_fresh_instance_boots_defrag_and_its_queue_is_the_unreviewed_read() {
     let after = booted.json()["identity"]["review_queue"]["count"]
         .as_u64()
         .expect("the boot names how many wait");
-    let waiting_after = listed(&defrag.call("recall", json!({"unreviewed": true})).await);
+    let waiting_after = defrag
+        .call("recall", json!({"unreviewed": true}))
+        .await
+        .ids();
     assert_eq!(after, before - 1, "the boot's count fell by one");
     assert_eq!(waiting_after.len() as u64, before - 1, "{waiting_after:?}");
 }
