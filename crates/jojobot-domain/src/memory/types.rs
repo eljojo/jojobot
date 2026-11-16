@@ -1949,42 +1949,50 @@ mod tests {
     /// member is accepted, a non-member is not, and the SAME non-member is
     /// accepted by an unnarrowed text key. Without the third this passes
     /// identically on a build where a closed set refuses everything.
-    #[test]
-    fn a_closed_set_takes_its_own_values_and_no_others() {
-        let outcome = Field::one_of("outcome", ["ran", "skipped", "snoozed"]);
-        for member in ["ran", "skipped", "snoozed"] {
-            assert!(outcome.accepts(member), "the set names {member:?}");
-        }
-        assert!(
-            !outcome.accepts("done"),
-            "'done' is not one of the values the declaration names",
-        );
-        assert!(
-            Field::new("outcome", ValueType::Text).accepts("done"),
-            "…and the refusal is the SET talking, not text: an unnarrowed key takes it",
-        );
-    }
-
     /// **A closed set narrows a list the same way it narrows one value.**
     ///
     /// The list prefix wraps what a key holds, and a set is on the key, so
     /// every item is measured against it. Paired with a list whose items are
     /// all members, because a build that refused every list would pass the
     /// negative alone.
+    /// **A declared reference names the kind it points at, and a handle of
+    /// another kind does not hold it.**
+    ///
+    /// Three beats, because each covers the way the other two pass on a build
+    /// that is wrong: the right kind is accepted, the wrong one is not, and a
+    /// reference that named no kind still takes any handle. Without the third,
+    /// this passes identically on a build that narrowed every reference to one
+    /// kind nobody asked for.
     #[test]
-    fn a_closed_set_narrows_every_item_of_a_list() {
-        let outcome = Field {
+    fn fields_accept_members_and_matching_reference_kinds() {
+        // **The set is this case's subject, not its setup.** Which kind a
+        // handle names is the thing being refused on, and the set is what
+        // answers it.
+        crate::memory::kinds::load_shipped();
+        let outcome = Field::one_of("outcome", ["ran", "skipped", "snoozed"]);
+        let list = Field {
             list: true,
-            ..Field::one_of("outcome", ["ran", "skipped", "snoozed"])
+            ..outcome.clone()
         };
-        assert!(
-            outcome.accepts("ran, snoozed"),
-            "every item is one the set names",
-        );
-        assert!(
-            !outcome.accepts("ran, done"),
-            "one item outside the set is enough to refuse the value",
-        );
+        let venue = Field::pointing_at("venue", EntityKind::PLACE).needed();
+        for (field, value, accepted) in [
+            (outcome.clone(), "ran", true),
+            (outcome.clone(), "skipped", true),
+            (outcome.clone(), "snoozed", true),
+            (outcome, "done", false),
+            (Field::new("outcome", ValueType::Text), "done", true),
+            (list.clone(), "ran, snoozed", true),
+            (list, "ran, done", false),
+            (venue.clone(), "place:moes", true),
+            (venue, "pet:santas-little-helper", false),
+            (
+                Field::required("venue", ValueType::Reference),
+                "pet:santas-little-helper",
+                true,
+            ),
+        ] {
+            assert_eq!(field.accepts(value), accepted, "{field:?}: {value}");
+        }
     }
 
     /// **A value outside the set is flagged on a read, and the flag names the
@@ -2120,36 +2128,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    /// **A declared reference names the kind it points at, and a handle of
-    /// another kind does not hold it.**
-    ///
-    /// Three beats, because each covers the way the other two pass on a build
-    /// that is wrong: the right kind is accepted, the wrong one is not, and a
-    /// reference that named no kind still takes any handle. Without the third,
-    /// this passes identically on a build that narrowed every reference to one
-    /// kind nobody asked for.
-    #[test]
-    fn a_reference_declared_for_one_kind_refuses_a_handle_of_another() {
-        // **The set is this case's subject, not its setup.** Which kind a
-        // handle names is the thing being refused on, and the set is what
-        // answers it.
-        crate::memory::kinds::load_shipped();
-        let venue = Field::pointing_at("venue", EntityKind::PLACE).needed();
-        assert!(
-            venue.accepts("place:moes"),
-            "the kind it was declared for is what it holds",
-        );
-        assert!(
-            !venue.accepts("pet:santas-little-helper"),
-            "a handle of another kind does not hold a key declared for places",
-        );
-        assert!(
-            Field::required("venue", ValueType::Reference).accepts("pet:santas-little-helper"),
-            "a reference that named no kind is any handle, which is what makes \
-             naming one a narrowing rather than the default",
-        );
     }
 
     fn counter(key: &str) -> Field {
