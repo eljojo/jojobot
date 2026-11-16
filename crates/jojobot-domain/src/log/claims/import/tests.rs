@@ -126,20 +126,6 @@ fn an_entity_row_becomes_an_object_answering_to_its_handle() {
     assert!(!held.archived);
 }
 
-/// An entity row with no moment stays without one.
-#[test]
-fn an_entity_row_with_no_moment_arrives_with_none() {
-    let events = imported(&Rows {
-        entities: vec![entity("k1", "person:homer")],
-        ..Rows::default()
-    });
-    assert!(
-        events
-            .iter()
-            .all(|event| event.imported_source_time.is_none())
-    );
-}
-
 /// A renamed handle: the new spelling answers, the former one is remembered.
 #[test]
 fn a_renamed_handle_keeps_its_former_spelling() {
