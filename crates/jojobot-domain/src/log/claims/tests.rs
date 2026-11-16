@@ -408,6 +408,17 @@ fn a_merge_renumbers_the_survivors_writes_it_places_a_folded_write_before() {
     assert_eq!(held(&state, "alpha"), map(&[("mood", "steady")]));
 }
 
+fn apply_checking_payload(state: &mut State, events: &[ClaimEvent]) {
+    for (at, event) in events.iter().enumerate() {
+        apply(state, event);
+        assert_eq!(
+            state.payload(),
+            state.payload_by_walk(),
+            "after event {at}: {event:?}"
+        );
+    }
+}
+
 /// **One claim that wrote a key under both merged things serves its newest write by
 /// the same order everywhere**: the claim ordinal. The folded thing's write
 /// takes the place before the survivor's newest, so the stream joins with that
@@ -454,14 +465,7 @@ fn one_claim_that_wrote_a_key_under_both_merged_things_serves_the_higher_ordinal
     // The kept payload counts the newest write of the claim, and the two values differ
     // in length: a count taken before the sort would be off by a byte.
     let mut state = State::default();
-    for (at, event) in events.iter().enumerate() {
-        apply(&mut state, event);
-        assert_eq!(
-            state.payload(),
-            state.payload_by_walk(),
-            "after event {at}: {event:?}"
-        );
-    }
+    apply_checking_payload(&mut state, &events);
     let fact = state.fact(&record("r1")).expect("the claim is served");
     assert_eq!(
         fact.fields.get("mood").map(String::as_str),
@@ -1270,14 +1274,7 @@ fn the_kept_payload_equals_a_fresh_walk_after_every_event() {
         },
     ];
     let mut state = State::default();
-    for (at, event) in events.iter().enumerate() {
-        apply(&mut state, event);
-        assert_eq!(
-            state.payload(),
-            state.payload_by_walk(),
-            "after event {at}: {event:?}"
-        );
-    }
+    apply_checking_payload(&mut state, &events);
     let held = state.payload();
     assert!(held.bytes > 0 && held.records > 0, "{held:?}");
 }
@@ -1300,14 +1297,7 @@ fn a_merge_that_leaves_one_claim_two_writes_of_a_key_counts_its_newest() {
         },
     ];
     let mut state = State::default();
-    for (at, event) in events.iter().enumerate() {
-        apply(&mut state, event);
-        assert_eq!(
-            state.payload(),
-            state.payload_by_walk(),
-            "after event {at}: {event:?}"
-        );
-    }
+    apply_checking_payload(&mut state, &events);
 }
 
 #[test]
