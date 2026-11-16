@@ -1045,85 +1045,14 @@ mod tests {
     /// and nothing outside this process declares them, so a rename that moved
     /// the constant and its assertion together would orphan every record
     /// already written under the old spelling.
-    #[test]
-    fn the_work_kind_names_the_project_management_keys_and_requires_none() {
-        use super::super::types::ValueType;
-        let declared = keys_of("work");
-        let by_key = |key: &str| {
-            declared
-                .iter()
-                .find(|f| f.key == key)
-                .unwrap_or_else(|| panic!("the work kind names '{key}': {declared:?}"))
-        };
-        for reference in ["owner", "waiting_on"] {
-            let field = by_key(reference);
-            assert_eq!(field.holds, ValueType::Reference, "{field:?}");
-            assert!(!field.list, "{reference} names one thing: {field:?}");
-        }
-        let depends_on = by_key("depends_on");
-        assert_eq!(depends_on.holds, ValueType::Reference, "{depends_on:?}");
-        assert!(depends_on.list, "depends_on names several: {depends_on:?}");
-        for text in ["commit", "verified_by"] {
-            assert_eq!(by_key(text).holds, ValueType::Text, "{text}");
-        }
-        assert!(
-            declared.iter().all(|f| !f.required),
-            "a work thing is whole without any of them: {declared:?}",
-        );
-        assert!(
-            declared.iter().all(|f| f.key != "due_on"),
-            "a deadline key on work is not shipped: {declared:?}",
-        );
-    }
-
     /// **A bot names who it reports to, as a link to another bot, and requires
     /// nothing.** The key is declared so that the chart is walkable by its own
     /// name in both directions: out to a manager, in to everyone who reports
     /// there. The spelling is pinned as a literal because it is stored in a
     /// fields bag and nothing outside this process declares it.
-    #[test]
-    fn the_bot_kind_names_reports_to_as_a_link_to_a_bot_and_requires_nothing() {
-        use super::super::types::ValueType;
-        let declared = keys_of("bot");
-        let reports_to = declared
-            .iter()
-            .find(|f| f.key == "reports_to")
-            .unwrap_or_else(|| panic!("the bot kind names 'reports_to': {declared:?}"));
-        assert_eq!(reports_to.holds, ValueType::Reference, "{reports_to:?}");
-        assert_eq!(
-            reports_to.points_at,
-            Some(super::super::types::Kinds::one(
-                crate::memory::EntityKind::BOT
-            )),
-            "a manager is another bot: {reports_to:?}"
-        );
-        assert!(!reports_to.list, "a bot reports to one: {reports_to:?}");
-        assert!(
-            declared.iter().all(|f| !f.required),
-            "a bot is whole without a manager: {declared:?}"
-        );
-    }
-
     /// **A bot names what it is working on, as a link to any thing, and
     /// requires nothing.** The spelling is pinned as a literal because it is
     /// stored in a fields bag and nothing outside this process declares it.
-    #[test]
-    fn the_bot_kind_names_working_on_as_a_link_to_any_thing_and_requires_nothing() {
-        use super::super::types::ValueType;
-        let declared = keys_of("bot");
-        let working_on = declared
-            .iter()
-            .find(|f| f.key == "working_on")
-            .unwrap_or_else(|| panic!("the bot kind names 'working_on': {declared:?}"));
-        assert_eq!(working_on.holds, ValueType::Reference, "{working_on:?}");
-        assert_eq!(
-            working_on.points_at, None,
-            "it points at work, a project or a list, so no one kind: {working_on:?}"
-        );
-        assert!(!working_on.list, "a bot works on one thing: {working_on:?}");
-        assert!(!working_on.required, "{working_on:?}");
-    }
-
     /// **A topic names the operator, as a link to a person, and requires
     /// nothing.** The instance's own record holds it, so the key is declared for
     /// the same reason `reports_to` is: a handle held in a field is a link, and
@@ -1131,26 +1060,68 @@ mod tests {
     /// pinned as a literal because it is stored in a fields bag and nothing
     /// outside this process declares it.
     #[test]
-    fn the_topic_kind_names_the_operator_as_a_link_to_a_person_and_requires_nothing() {
-        use super::super::types::ValueType;
-        let declared = keys_of("topic");
-        let operator = declared
-            .iter()
-            .find(|f| f.key == "operator")
-            .unwrap_or_else(|| panic!("the topic kind names 'operator': {declared:?}"));
-        assert_eq!(operator.holds, ValueType::Reference, "{operator:?}");
-        assert_eq!(
-            operator.points_at,
-            Some(super::super::types::Kinds::one(
-                crate::memory::EntityKind::PERSON
-            )),
-            "the operator is a person: {operator:?}"
-        );
-        assert!(!operator.list, "an instance has one operator: {operator:?}");
-        assert!(
-            declared.iter().all(|f| !f.required),
-            "a topic is whole without an operator: {declared:?}"
-        );
+    fn shipped_work_bot_and_topic_keys_keep_their_declared_shapes() {
+        use super::super::types::{Kinds, ValueType};
+        // An open reference needs Some(None); None would omit its check.
+        for (kind, key, holds, list, points_at) in [
+            ("work", "owner", ValueType::Reference, Some(false), None),
+            (
+                "work",
+                "waiting_on",
+                ValueType::Reference,
+                Some(false),
+                None,
+            ),
+            ("work", "depends_on", ValueType::Reference, Some(true), None),
+            ("work", "commit", ValueType::Text, None, None),
+            ("work", "verified_by", ValueType::Text, None, None),
+            (
+                "bot",
+                "reports_to",
+                ValueType::Reference,
+                Some(false),
+                Some(Some(crate::memory::EntityKind::BOT)),
+            ),
+            (
+                "bot",
+                "working_on",
+                ValueType::Reference,
+                Some(false),
+                Some(None),
+            ),
+            (
+                "topic",
+                "operator",
+                ValueType::Reference,
+                Some(false),
+                Some(Some(crate::memory::EntityKind::PERSON)),
+            ),
+        ] {
+            let declared = keys_of(kind);
+            let field = declared
+                .iter()
+                .find(|field| field.key == key)
+                .unwrap_or_else(|| panic!("{kind} names '{key}': {declared:?}"));
+            assert_eq!(field.holds, holds, "{kind}: {field:?}");
+            if let Some(list) = list {
+                assert_eq!(field.list, list, "{kind}: {field:?}");
+            }
+            if let Some(points_at) = points_at {
+                assert_eq!(
+                    field.points_at,
+                    points_at.map(Kinds::one),
+                    "{kind}: {field:?}"
+                );
+            }
+        }
+        for kind in ["work", "bot", "topic"] {
+            let declared = keys_of(kind);
+            assert!(
+                declared.iter().all(|field| !field.required),
+                "{kind}: {declared:?}"
+            );
+        }
+        assert!(keys_of("work").iter().all(|field| field.key != "due_on"));
     }
 
     /// **The words a work item's status may hold are the shipped five, the
