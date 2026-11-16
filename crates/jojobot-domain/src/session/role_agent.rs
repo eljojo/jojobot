@@ -35,7 +35,7 @@ pub fn claim_lacks_required_agent(
     let named = [agent, runs_agent]
         .into_iter()
         .flatten()
-        .any(|agent| !agent.trim().is_empty());
+        .any(|agent| !agent.trim().is_empty() && !agent.trim().starts_with('$'));
     requires && !named && !by_operator_word
 }
 
@@ -62,6 +62,14 @@ mod tests {
             ("none", "true", None, None, false, true),
             ("blank call", "true", Some("  "), None, false, true),
             ("blank both", "true", Some(""), Some(""), false, true),
+            (
+                "unexpanded",
+                "true",
+                Some("$PASEO_AGENT_ID"),
+                None,
+                false,
+                true,
+            ),
             ("call", "true", Some("a1"), None, false, false),
             ("boot", "true", None, Some("a1"), false, false),
             (

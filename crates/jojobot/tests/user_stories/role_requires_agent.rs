@@ -38,23 +38,25 @@ async fn a_bot_marked_as_needing_an_agent_has_its_role_claim_refused_when_it_nam
     // ── a fresh boot that names no agent is refused, and nothing is held ────
     // **A boot with no sid is the failure this key is for**: `story.call` carries
     // none, where a running session's call would ride its own.
-    let (bare, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "marge", "brief": true, "claim": "dinners", "resume": "new"}),
-        )
-        .await;
-    let bare = bare.json();
-    let claim = &bare["session"]["claim"];
-    assert_eq!(claim["status"], "refused", "{bare}");
-    assert_eq!(claim["fix_by"], "change", "{bare}");
-    assert!(
-        claim["how_to_proceed"]
-            .as_str()
-            .is_some_and(|way| way.contains("PASEO_AGENT_ID")),
-        "the refusal says which value to send: {bare}"
-    );
-    s.list("role").await.never_says("role:dinners");
+    for agent in [None, Some("$PASEO_AGENT_ID")] {
+        let (bare, _) = story
+            .call(
+                "start_here",
+                json!({"bot": "marge", "brief": true, "claim": "dinners", "resume": "new", "agent": agent}),
+            )
+            .await;
+        let bare = bare.json();
+        let claim = &bare["session"]["claim"];
+        assert_eq!(claim["status"], "refused", "{bare}");
+        assert_eq!(claim["fix_by"], "change", "{bare}");
+        assert!(
+            claim["how_to_proceed"]
+                .as_str()
+                .is_some_and(|way| way.contains("PASEO_AGENT_ID")),
+            "the refusal says which value to send: {bare}"
+        );
+        s.list("role").await.never_says("role:dinners");
+    }
 
     // ── a running session's claim with no agent is refused as well ──────────
     let again = marge
