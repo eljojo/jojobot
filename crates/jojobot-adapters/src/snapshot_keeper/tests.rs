@@ -180,16 +180,18 @@ async fn a_snapshot_the_boot_refuses_is_not_coverage() {
     refused.serialized_length = refused.blob.len() as u64;
     refused.checksum = Sha256::digest(&refused.blob).into();
     log.replace_snapshot(Some(refused));
+    let boot = crate::log_snapshot::boot(&log).await.unwrap();
     assert!(
-        !crate::log_snapshot::boot(&log)
-            .await
-            .unwrap()
-            .report
-            .from_snapshot,
+        !boot.report.from_snapshot,
         "the control: the boot refuses this snapshot"
     );
-
-    let restarted = keeper(&log, SMALL).await;
+    let restarted = SnapshotKeeper::open(
+        Arc::new(log.clone()),
+        SMALL,
+        crate::log_snapshot::credited(&boot.report),
+    )
+    .await
+    .unwrap();
     assert_eq!(restarted.covered(), Position(0));
     assert_eq!(restarted.flush(head, at(2)).await.unwrap(), Some(head));
     assert!(

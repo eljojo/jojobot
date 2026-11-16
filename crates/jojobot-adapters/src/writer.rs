@@ -65,8 +65,8 @@ struct Driver {
     sql: OnceLock<fence::Session>,
     /// The store's event log, one head for every family that appends to it.
     log: OnceLock<crate::dolt_log::DoltLog>,
-    /// The request and app ledgers, opened on the first write to the store.
     boot_migrations: OnceLock<Vec<String>>,
+    /// The request and app ledgers, opened on the first write to the store.
     seam: tokio::sync::OnceCell<Arc<crate::ledger_seam::Seam>>,
     uncertain: Mutex<BTreeSet<&'static str>>,
     publication: publish::Publication,
@@ -175,10 +175,7 @@ impl Writer {
 
     /// Set the migration account before the first job opens the State.
     pub fn set_boot_migrations(&self, applied: &[String]) {
-        self.0
-            .boot_migrations
-            .set(applied.to_vec())
-            .expect("the boot sets migrations once");
+        self.0.boot_migrations.get_or_init(|| applied.to_vec());
     }
 
     pub(crate) fn boot_migrations(&self) -> &[String] {

@@ -144,8 +144,8 @@ pub(crate) struct Seam {
 
 /// **The log as the boot reads it from inside the seam's own open.** The open already runs as a
 /// job of the writer, so it reads through the log handle and not through the writer's queue,
-/// which it would wait on for ever. It only reads: the boot never writes the log.
-struct BootLog<'a>(&'a DoltLog);
+/// which it would wait on for ever. Only snapshot publication writes; the boot never appends events.
+struct BootLog<'a>(&'a DoltLog, &'a sql::Pool);
 
 #[async_trait::async_trait]
 impl jojobot_domain::log::LogStore for BootLog<'_> {
@@ -192,12 +192,22 @@ impl jojobot_domain::log::LogStore for BootLog<'_> {
         &self,
         snapshot: &jojobot_domain::log::ValidatedSnapshot,
     ) -> Result<(), jojobot_domain::log::LogError> {
-        match self.0.store_snapshot(snapshot).await {
+        let mut tx = self
+            .1
+            .writer()
+            .begin()
+            .await
+            .map_err(sql::store_error::<jojobot_domain::log::LogError>)?;
+        match DoltLog::put_snapshot(&mut tx, snapshot).await {
             // A pre-migration reader has no snapshot table yet, as in load_snapshot.
             Err(jojobot_domain::log::LogError::Store(why)) if why.contains("table not found") => {
+                let _ = tx.rollback().await;
                 Ok(())
             }
-            other => other,
+            Err(error) => Err(error),
+            Ok(()) => sql::commit(tx)
+                .await
+                .map_err(sql::store_error::<jojobot_domain::log::LogError>),
         }
     }
 }
@@ -275,7 +285,7 @@ impl Seam {
         let settled = log.settle_on(&mut tx).await;
         let _ = tx.rollback().await;
         settled.map_err(refused)?;
-        let seam = Box::pin(Self::booted(log, writer.boot_migrations())).await?;
+        let seam = Box::pin(Self::booted(log, pool, writer.boot_migrations())).await?;
         seam.catch_up().await?;
         if !seam.lock().seen {
             seam.import(pool).await?;
@@ -287,7 +297,11 @@ impl Seam {
     /// **The seam over the State the boot restored.** The booted State is held by value only in
     /// this function, so a caller that awaits it boxed does not carry the State in its own
     /// future.
-    async fn booted(log: DoltLog, applied: &[String]) -> Result<Arc<Self>, LedgerError> {
+    async fn booted(
+        log: DoltLog,
+        pool: &sql::Pool,
+        applied: &[String],
+    ) -> Result<Arc<Self>, LedgerError> {
         // **The boot reads the log's identity**, which a log being opened for the first time
         // does not hold yet: this makes it, as it is made when the log opens, and it is idempotent.
         log.create_validity().await.map_err(refused)?;
@@ -300,7 +314,7 @@ impl Seam {
             report,
             ..
         } = Box::pin(crate::log_snapshot::boot_after_migrations(
-            &BootLog(&log),
+            &BootLog(&log, pool),
             applied,
         ))
         .await

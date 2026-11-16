@@ -68,6 +68,7 @@ pub async fn serving_kept_after_migrations(
     let unavailable = |e: jojobot_domain::log::LogError| {
         TeachingError::Store(format!("the event log is unavailable: {e}"))
     };
+    writer.set_boot_migrations(applied);
     let log = Arc::new(
         WriterLog::open(pool.clone(), writer.clone())
             .await
@@ -88,8 +89,7 @@ pub async fn serving_kept_after_migrations(
     let was_empty = log.head() == Some(Position::default());
     let marks = import_marks(pool).await?;
     let restored = seam.and_then(|seam| seam.take_teaching());
-    let ledger =
-        LoggedTeachings::open_from_after_migrations(log, &marks, restored, applied).await?;
+    let ledger = LoggedTeachings::open_from(log, &marks, restored).await?;
     if was_empty {
         snapshots.after_import().await;
     }
@@ -200,15 +200,6 @@ impl LoggedTeachings {
         marks: &[Mark],
         restored: Option<(State, Position)>,
     ) -> Result<Self, TeachingError> {
-        Self::open_from_after_migrations(log, marks, restored, &[]).await
-    }
-
-    async fn open_from_after_migrations(
-        log: Arc<dyn LogStore>,
-        marks: &[Mark],
-        restored: Option<(State, Position)>,
-        applied: &[String],
-    ) -> Result<Self, TeachingError> {
         let this = Self {
             writer: Writer::default(),
             log,
@@ -221,7 +212,7 @@ impl LoggedTeachings {
             #[cfg(test)]
             boots_made: Arc::default(),
         };
-        this.fill(marks, restored, applied).await?;
+        this.fill(marks, restored).await?;
         Ok(this)
     }
 
@@ -242,7 +233,6 @@ impl LoggedTeachings {
         &self,
         marks: &[Mark],
         restored: Option<(State, Position)>,
-        applied: &[String],
     ) -> Result<(), TeachingError> {
         let this = self;
         {
@@ -254,10 +244,9 @@ impl LoggedTeachings {
                     #[cfg(test)]
                     this.boots_made
                         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let booted =
-                        crate::log_snapshot::boot_after_migrations(this.log.as_ref(), applied)
-                            .await
-                            .map_err(refused)?;
+                    let booted = crate::log_snapshot::boot(this.log.as_ref())
+                        .await
+                        .map_err(refused)?;
                     (booted.state.teaching, booted.position)
                 }
             };

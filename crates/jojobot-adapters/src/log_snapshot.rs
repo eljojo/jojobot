@@ -401,7 +401,6 @@ async fn replay(
                 && boot.claims_unreadable.is_none()
             {
                 publish(log, validity, &boot, jiff::Timestamp::now()).await?;
-                tracing::info!(covered = boot.position.0, "snapshot taken after replay");
             }
             return Ok(boot);
         }

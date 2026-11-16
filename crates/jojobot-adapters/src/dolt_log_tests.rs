@@ -754,10 +754,15 @@ async fn one_slot_upgrade_boot(newly_created: bool) {
     crate::log_snapshot::take_snapshot(&serving, jiff::Timestamp::UNIX_EPOCH)
         .await
         .unwrap();
+    let expected_head = serving.head().unwrap();
     sqlx::query("UPDATE log_snapshot SET slot = 'snapshot:1', projection_version = 1")
         .execute(&pool)
         .await
         .unwrap();
+    drop(serving);
+    writer.drain().await;
+    drop(writer);
+    let writer = crate::writer::Writer::default();
     {
         if newly_created {
             sqlx::query("DELETE FROM log_snapshot")
@@ -771,11 +776,20 @@ async fn one_slot_upgrade_boot(newly_created: bool) {
             .with_writer(captured.clone())
             .with_max_level(tracing::Level::INFO)
             .finish();
-        let (restored, _keeper) =
-            crate::teaching_log::serving_kept_after_migrations(&pool, writer.clone(), &applied)
+        let (boot_pool, boot_writer, boot_applied) =
+            (pool.clone(), writer.clone(), applied.clone());
+        let (restored, _keeper) = writer
+            .run(async move {
+                crate::teaching_log::serving_kept_after_migrations(
+                    &boot_pool,
+                    boot_writer,
+                    &boot_applied,
+                )
                 .with_subscriber(subscriber)
                 .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
         assert!(
             jojobot_domain::teaching::Teachings::has_contact(
                 &restored,
@@ -792,6 +806,9 @@ async fn one_slot_upgrade_boot(newly_created: bool) {
             "{said}"
         );
         assert!(!said.contains("WARN"), "{said}");
+        let serving = crate::writer_log::WriterLog::open(pool.clone(), writer.clone())
+            .await
+            .unwrap();
         crate::log_snapshot::take_snapshot(&serving, jiff::Timestamp::UNIX_EPOCH)
             .await
             .unwrap();
@@ -805,14 +822,13 @@ async fn one_slot_upgrade_boot(newly_created: bool) {
             .with_subscriber(subscriber)
             .await
             .unwrap();
-        assert_eq!(restored.position, first.range().last);
+        assert_eq!(restored.position, expected_head);
         assert!(
             captured.text().contains("from_snapshot=true"),
             "{}",
             captured.text()
         );
     }
-    drop(serving);
     writer.drain().await;
     drop(writer);
     server.stop().await;

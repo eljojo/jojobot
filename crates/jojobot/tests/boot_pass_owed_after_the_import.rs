@@ -434,3 +434,45 @@ async fn a_forward_made_placeable_is_not_repointed_by_a_boot_after_the_import() 
     );
     drop(scratch);
 }
+
+/// The migration account reaches the seam that an imported store opens before teaching.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_boot_after_the_import_reports_a_new_snapshot_table_as_a_shape_change() {
+    let state = jojobot_adapters::testing::scratch_path("jojobot-snapshot-after-import");
+    let path = state.join("db");
+    std::fs::create_dir_all(&path).unwrap();
+    let _scratch = Scratch(state.clone());
+    let port = free_port();
+    boot(&state, port);
+
+    let mut store = Dolt::start(&path, port).await.unwrap();
+    sqlx::query("DROP TABLE log_snapshot")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM schema_migration WHERE version = '0125_log_snapshot'")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    store.stop().await;
+
+    let lines = boot(&state, port);
+    assert!(
+        lines.iter().any(|line| line.contains("open-ledgers")),
+        "{lines:#?}"
+    );
+    let skips: Vec<_> = lines
+        .iter()
+        .filter(|line| line.contains("reason="))
+        .collect();
+    assert!(
+        skips
+            .iter()
+            .any(|line| line.contains("INFO") && line.contains("fingerprint")),
+        "the migration account reaches the early seam boot: {lines:#?}"
+    );
+    assert!(
+        !skips.iter().any(|line| line.contains("WARN")),
+        "{lines:#?}"
+    );
+}

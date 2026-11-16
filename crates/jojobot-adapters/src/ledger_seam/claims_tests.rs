@@ -408,7 +408,7 @@ async fn an_unknown_own_kind_makes_the_seam_refuse_to_lend_its_claims() {
 /// **No snapshot is taken while a claims member of the log cannot be read.** A State whose claims
 /// stopped at that member would be published as the State of the whole log, and a boot that
 /// restored it would serve claims the log has moved past. The take is refused and nothing is
-/// stored.
+/// stored over the last readable snapshot.
 #[tokio::test]
 async fn no_snapshot_is_taken_while_a_claims_member_is_unreadable() {
     let scratch = Scratch::new("seam-claims-no-snapshot");
@@ -425,6 +425,12 @@ async fn no_snapshot_is_taken_while_a_claims_member_is_unreadable() {
         .unwrap()
         .last()
         .map_or(Position(0), |batch| batch.range().last);
+    let before = log
+        .load_snapshot()
+        .await
+        .unwrap()
+        .expect("the full boot replay publishes");
+    assert_eq!(before.covered_position, head);
     let batch = SealedBatch::seal(
         BatchId("future".into()),
         head,
@@ -440,9 +446,10 @@ async fn no_snapshot_is_taken_while_a_claims_member_is_unreadable() {
         taken.is_err(),
         "a snapshot was taken over a claims member this build cannot read: {taken:?}"
     );
-    assert!(
-        log.load_snapshot().await.unwrap().is_none(),
-        "the refused take left a snapshot behind"
+    assert_eq!(
+        log.load_snapshot().await.unwrap(),
+        Some(before),
+        "the refused take preserves the last readable snapshot"
     );
     drop(log);
     writer.drain().await;
