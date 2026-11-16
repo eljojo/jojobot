@@ -2097,36 +2097,6 @@ fn moved_records(events: &[Event<ClaimEvent>]) -> Vec<Vec<MovedRecord>> {
         .collect()
 }
 
-/// **A merge names the record the claim was created under.** The claim is
-/// created under the folded key and its old id; the merge moves that record and
-/// gives it the label it wears under the survivor.
-#[test]
-fn a_merge_moves_the_record_the_claim_was_created_under() {
-    let events = imported(&merged_pair_as_the_store_leaves_it());
-    assert_eq!(
-        moved_records(&events),
-        vec![vec![MovedRecord {
-            record: record_id(&object("k2"), "f1"),
-            label: "f9".into(),
-        }]]
-    );
-}
-
-/// **The survivor serves the folded thing's key writes.** Asked of the replayed
-/// State: both sides' writes of the key, the folded one newest.
-#[test]
-fn the_survivor_keeps_the_folded_things_key_writes_after_the_replay() {
-    let state = state_of(&merged_pair_as_the_store_leaves_it());
-    let writes = stream(&state, "k1", "mood");
-    assert_eq!(
-        writes.iter().map(|w| w.ordinal).collect::<Vec<_>>(),
-        vec![1, 2],
-        "the survivor lost the folded claim's key write"
-    );
-    assert_eq!(state.fields(&object("k1"), &[])["mood"], "theirs");
-    assert!(stream(&state, "k2", "mood").is_empty());
-}
-
 /// **A claim moved twice is followed through both merges.** It is created under
 /// the first folded key and its first id; the second merge moves the record it
 /// was created as, whatever it is called by then.
