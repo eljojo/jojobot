@@ -840,59 +840,14 @@ async fn the_old_ledger_rows_are_imported_once_and_read_from_the_log() {
     assert_eq!(legacy, 2, "the old table is not written");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
-    let pool = shared_database("requests_race")
-        .await
-        .expect("a database of its own");
-    migrate::run(&pool).await.expect("the schema");
-    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
-        .await
-        .expect("the kinds are seeded");
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let memory = Arc::new(Folded::new(Arc::new(
-        DoltMemory::open(pool.clone()).journaled(),
-    )));
-    let milhouse = thing(memory.as_ref(), "person:milhouse", "Milhouse").await;
-    thing(memory.as_ref(), "bot:sigma", "Sigma").await;
-
-    // Several rounds, so a race that went one way by luck would not pass.
-    for round in 0..6 {
-        let id = format!("race-{round}");
-        let calls = (0..4).map(|n| {
-            let memory = Arc::clone(&memory);
-            let subject = milhouse.clone();
-            let id = id.clone();
-            tokio::spawn(async move {
-                captured(
-                    memory.as_ref(),
-                    request("bot:sigma", &id),
-                    claim_about(&subject, &format!("said it {round} {n}")),
-                )
-                .await
-            })
-        });
-        let mut spent = 0;
-        for call in calls {
-            let (_stored, was_spent) = call.await.expect("the call ran");
-            spent += usize::from(was_spent);
-        }
-        assert_eq!(spent, 1, "round {round}: exactly one call spent the id");
-        assert_eq!(
-            memory.recall(&milhouse).await.expect("recall").len(),
-            round + 1,
-            "round {round}: exactly one claim was stored"
-        );
-    }
-}
-
 /// **The calls that lose a race under one id are told to send the call again.**
 /// Four calls under one id at the same moment: one spends the id and stores its
 /// claim, and each of the others is refused by the store. What a loser is told
 /// is read here, because the same words reach the caller (the dispatch replaces
 /// them with the winner's receipt only when the ledger already holds it). A
 /// loser is told the write collided and to send the same call again, never that
-/// the call itself has to change. The send again then finds the winner's row.
+/// the call itself has to change. The send again then finds the winner's row. Each
+/// round also stores exactly one claim and spends the id exactly once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
     use jojobot_domain::memory::MemoryError;
@@ -930,8 +885,10 @@ async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
                 (told, scope.was_spent())
             })
         });
+        let mut spent_count = 0;
         for call in calls {
             let (told, spent) = call.await.expect("the call ran");
+            spent_count += usize::from(spent);
             match (spent, told) {
                 (true, Ok(_)) => {}
                 (false, Err(MemoryError::Conflict)) => losers += 1,
@@ -942,6 +899,15 @@ async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
                 ),
             }
         }
+        assert_eq!(
+            spent_count, 1,
+            "round {round}: exactly one call spent the id"
+        );
+        assert_eq!(
+            memory.recall(&milhouse).await.expect("recall").len(),
+            round + 1,
+            "round {round}: exactly one claim was stored"
+        );
         let kept = ledger
             .lookup(
                 &EntityId("bot:sigma".into()),
