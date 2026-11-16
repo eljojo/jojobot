@@ -1715,62 +1715,40 @@ fn the_class_of_a_key_follows_its_bag_and_whether_jojobot_computed_it() {
         .map(|classes| classes[key])
         .map_err(|_| ())
     };
-    // A new own field: before the switch and after.
-    assert_eq!(
-        class_of(&[], &["a"], &[], &[], false, "a"),
-        Ok(WriteClass::Own)
-    );
-    assert_eq!(
-        class_of(&[], &["a"], &[], &[], true, "a"),
-        Ok(WriteClass::Stays)
-    );
-    // A setting is `sets` either way; a computed key is `sets` either way.
-    assert_eq!(
-        class_of(&[], &["a"], &["a"], &[], true, "a"),
-        Ok(WriteClass::Sets)
-    );
-    assert_eq!(
-        class_of(&[], &["a"], &[], &["a"], true, "a"),
-        Ok(WriteClass::Sets)
-    );
-    assert_eq!(
-        class_of(&[], &["a"], &[], &["a"], false, "a"),
-        Ok(WriteClass::Sets)
-    );
-    // A key keeps the class it is held under when it is written as a field.
-    for held in [WriteClass::Legacy, WriteClass::Own, WriteClass::Stays] {
+    use WriteClass::{Legacy, Own, Sets, Stays};
+    for (held, setting, computed, stay, expected) in [
+        // A new own field: before the switch and after.
+        (None, false, false, false, Ok(Own)),
+        (None, false, false, true, Ok(Stays)),
+        // A setting is `sets` either way; a computed key is `sets` either way.
+        (None, true, false, true, Ok(Sets)),
+        (None, false, true, true, Ok(Sets)),
+        (None, false, true, false, Ok(Sets)),
+        // A key keeps the class it is held under when it is written as a field.
+        (Some(Legacy), false, false, true, Ok(Legacy)),
+        (Some(Own), false, false, true, Ok(Own)),
+        (Some(Stays), false, false, true, Ok(Stays)),
+        // A computed key over a key that reaches keeps that class; over one that stays
+        // it becomes `sets`, because jojobot's own arithmetic reaches.
+        (Some(Legacy), false, true, true, Ok(Legacy)),
+        (Some(Own), false, true, true, Ok(Own)),
+        (Some(Stays), false, true, true, Ok(Sets)),
+        // An own field named as a setting MOVES to the setting bag, whichever class it
+        // is held under; a setting named as an own field is refused.
+        (Some(Legacy), true, false, true, Ok(Sets)),
+        (Some(Own), true, false, true, Ok(Sets)),
+        (Some(Stays), true, false, true, Ok(Sets)),
+        (Some(Sets), false, false, true, Err(())),
+    ] {
+        let held: Vec<_> = held.map(|class| ("a", class)).into_iter().collect();
+        let sets: &[&str] = if setting { &["a"] } else { &[] };
+        let derived: &[&str] = if computed { &["a"] } else { &[] };
         assert_eq!(
-            class_of(&[("a", held)], &["a"], &[], &[], true, "a"),
-            Ok(held)
+            class_of(&held, &["a"], sets, derived, stay, "a"),
+            expected,
+            "{held:?}, setting={setting}, computed={computed}, stay={stay}"
         );
     }
-    // A computed key over a key that reaches keeps that class; over one that stays
-    // it becomes `sets`, because jojobot's own arithmetic reaches.
-    assert_eq!(
-        class_of(&[("a", WriteClass::Legacy)], &["a"], &[], &["a"], true, "a"),
-        Ok(WriteClass::Legacy)
-    );
-    assert_eq!(
-        class_of(&[("a", WriteClass::Own)], &["a"], &[], &["a"], true, "a"),
-        Ok(WriteClass::Own)
-    );
-    assert_eq!(
-        class_of(&[("a", WriteClass::Stays)], &["a"], &[], &["a"], true, "a"),
-        Ok(WriteClass::Sets)
-    );
-    // An own field named as a setting MOVES to the setting bag, whichever class it
-    // is held under; a setting named as an own field is refused.
-    for held in [WriteClass::Legacy, WriteClass::Own, WriteClass::Stays] {
-        assert_eq!(
-            class_of(&[("a", held)], &["a"], &["a"], &[], true, "a"),
-            Ok(WriteClass::Sets),
-            "{held:?}"
-        );
-    }
-    assert_eq!(
-        class_of(&[("a", WriteClass::Sets)], &["a"], &[], &[], true, "a"),
-        Err(())
-    );
     // Except a key jojobot computes: a caller's edit of it goes on reaching.
     for computed in crate::attention::COMPUTED_KEYS {
         assert_eq!(
