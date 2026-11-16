@@ -9,7 +9,7 @@ use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::{Scratch, free_port, migrated_database, shared_database};
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
@@ -57,6 +57,22 @@ async fn world(name: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory, [Enti
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
+    let (memory, things) = seeded(&pool).await;
+    (scratch, store, pool, memory, things)
+}
+
+/// **A world on the server this process shares**: a database of its own, the
+/// schema, the kinds and three things. The case never stops or restarts the
+/// store, so it needs none of its own.
+async fn shared_world(name: &str) -> (sqlx::MySqlPool, DoltMemory, [EntityId; 3]) {
+    let pool = shared_database(name).await.expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let (memory, things) = seeded(&pool).await;
+    (pool, memory, things)
+}
+
+/// The memory over the pool, with the kinds seeded and the three things added.
+async fn seeded(pool: &sqlx::MySqlPool) -> (DoltMemory, [EntityId; 3]) {
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory)
         .await
@@ -75,7 +91,7 @@ async fn world(name: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory, [Enti
             .written()
             .expect("nothing collides with it");
     }
-    (scratch, store, pool, memory, things)
+    (memory, things)
 }
 
 /// **A list with a loose item among its handles is stored with the handle
@@ -83,8 +99,7 @@ async fn world(name: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory, [Enti
 /// a list of references afterwards moves no row.**
 #[tokio::test]
 async fn a_mixed_list_is_stored_marked_and_a_later_declaration_moves_no_row() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, _]) =
-        world("links-by-mark-write").await;
+    let (pool, memory, [holder, alpha, _]) = shared_world("links-by-mark-write").await;
     let held = memory
         .capture(memory::state(NewFact {
             fields: [
@@ -134,7 +149,6 @@ async fn a_mixed_list_is_stored_marked_and_a_later_declaration_moves_no_row() {
         .map(|fact| fact.address().to_string())
         .collect();
     assert_eq!(pointing, vec![held.address().to_string()]);
-    store.stop().await;
 }
 
 /// **The boot pass marks the two shapes a value had before the mark decided it:
@@ -143,8 +157,7 @@ async fn a_mixed_list_is_stored_marked_and_a_later_declaration_moves_no_row() {
 /// and a second run changes nothing.**
 #[tokio::test]
 async fn the_marking_pass_marks_a_bare_id_and_the_handles_of_a_plain_list() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
-        world("links-by-mark-pass").await;
+    let (pool, memory, [holder, alpha, beta]) = shared_world("links-by-mark-pass").await;
     memory
         .declare_type(
             DeclaredType::new(
@@ -219,7 +232,6 @@ async fn the_marking_pass_marks_a_bare_id_and_the_handles_of_a_plain_list() {
         .await
         .expect("a second run");
     assert!(again.settled && again.lowered == 0, "{again:?}");
-    store.stop().await;
 }
 
 /// **R1: a handle an older pass left as text is not handed to whoever owns the
@@ -229,7 +241,7 @@ async fn the_marking_pass_marks_a_bare_id_and_the_handles_of_a_plain_list() {
 /// listed.
 #[tokio::test]
 async fn an_older_passs_unresolved_handle_is_not_given_to_a_later_owner() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, _]) = world("links-by-mark-r1").await;
+    let (pool, memory, [holder, alpha, _]) = shared_world("links-by-mark-r1").await;
     memory
         .capture(memory::state(NewFact {
             fields: [("owner_of".to_string(), alpha.to_string())]
@@ -270,13 +282,11 @@ async fn an_older_passs_unresolved_handle_is_not_given_to_a_later_owner() {
     );
     assert!(link_rows(&pool).await.is_empty(), "and links nothing");
     assert_eq!(report.left_as_text.len(), 1, "and is listed: {report:?}");
-    store.stop().await;
 }
 
 #[tokio::test]
 async fn link_rule_leftovers_an_unfinished_older_pass_allows_a_known_handle_to_convert() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
-        world("links_by_mark_older_open").await;
+    let (pool, memory, [holder, alpha, beta]) = shared_world("links_by_mark_older_open").await;
     memory
         .capture(memory::state(NewFact {
             fields: [
@@ -330,7 +340,6 @@ async fn link_rule_leftovers_an_unfinished_older_pass_allows_a_known_handle_to_c
     );
     assert_eq!(memory.referring_to(&alpha).await.unwrap().len(), 1);
     assert_eq!(memory.referring_to(&beta).await.unwrap().len(), 1);
-    store.stop().await;
 }
 
 #[tokio::test]
@@ -470,7 +479,7 @@ async fn link_rule_leftovers_a_finished_pass_keeps_mixed_text_through_name_reuse
 /// the write stores the mark and draws the row.
 #[tokio::test]
 async fn a_bare_id_under_a_declared_key_is_marked_at_the_write() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, _]) = world("links-by-mark-r3").await;
+    let (pool, memory, [holder, alpha, _]) = shared_world("links-by-mark-r3").await;
     memory
         .declare_type(
             DeclaredType::new(
@@ -504,15 +513,13 @@ async fn a_bare_id_under_a_declared_key_is_marked_at_the_write() {
         vec![(holder_badge, "friends".into(), 1, alpha_badge)],
         "and draws its row"
     );
-    store.stop().await;
 }
 
 /// **R4: a link set missing one target is repaired, not called settled.** A write
 /// holds two marked targets and the table lost the row of one of them.
 #[tokio::test]
 async fn a_link_set_missing_one_target_is_rebuilt_at_boot() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
-        world("links-by-mark-r4").await;
+    let (pool, memory, [holder, alpha, beta]) = shared_world("links-by-mark-r4").await;
     memory
         .capture(memory::state(NewFact {
             fields: [("labels".to_string(), format!("kitchen, {alpha}, {beta}"))]
@@ -543,7 +550,6 @@ async fn a_link_set_missing_one_target_is_rebuilt_at_boot() {
         .expect("the check runs");
     assert!(report.disagreed && report.linked == 1, "{report:?}");
     assert_eq!(link_rows(&pool).await, before, "the row is back");
-    store.stop().await;
 }
 
 /// **A write that holds a link row and no mark keeps its row after the marking
@@ -552,8 +558,7 @@ async fn a_link_set_missing_one_target_is_rebuilt_at_boot() {
 /// it and leaves the row, and does not read the row as stray.
 #[tokio::test]
 async fn a_link_row_with_no_mark_is_marked_and_kept_after_the_marking_pass() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, _]) =
-        world("links-by-mark-legacy-only").await;
+    let (pool, memory, [holder, alpha, _]) = shared_world("links-by-mark-legacy-only").await;
     memory
         .capture(memory::state(NewFact {
             fields: [("labels".to_string(), format!("kitchen, {alpha}"))]
@@ -591,13 +596,11 @@ async fn a_link_row_with_no_mark_is_marked_and_kept_after_the_marking_pass() {
     );
     assert_eq!(stored(&pool, &holder_badge, "labels").await, marked);
     assert_eq!(link_rows(&pool).await, before, "the row stays");
-    store.stop().await;
 }
 
 #[tokio::test]
 async fn link_rule_leftovers_an_extra_wrong_target_is_removed_while_valid_rows_survive() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
-        world("links_by_mark_extra_target").await;
+    let (pool, memory, [holder, alpha, beta]) = shared_world("links_by_mark_extra_target").await;
     memory
         .capture(memory::state(NewFact {
             fields: [("labels".into(), format!("kitchen, {alpha}, {beta}"))]
@@ -634,13 +637,11 @@ async fn link_rule_leftovers_an_extra_wrong_target_is_removed_while_valid_rows_s
     assert_eq!(memory.referring_to(&alpha).await.unwrap().len(), 1);
     assert_eq!(memory.referring_to(&beta).await.unwrap().len(), 1);
     assert!(memory.migrate_field_links_marked().await.unwrap().settled);
-    store.stop().await;
 }
 
 #[tokio::test]
 async fn link_rule_leftovers_an_unreadable_marker_does_not_remark_old_text() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, _]) =
-        world("links_by_mark_marker_read").await;
+    let (pool, memory, [holder, alpha, _]) = shared_world("links_by_mark_marker_read").await;
     let later = EntityId("thing:contract-moved-third".into());
     memory
         .capture(memory::state(NewFact {
@@ -711,14 +712,12 @@ async fn link_rule_leftovers_an_unreadable_marker_does_not_remark_old_text() {
     assert!(memory.referring_to(&later).await.unwrap().is_empty());
     assert_eq!(memory.referring_to(&alpha).await.unwrap().len(), 1);
     pool.close().await;
-    store.stop().await;
 }
 
 /// A merge's account records the old spelling; it asks for no link or repair.
 #[tokio::test]
 async fn engine_merge_accounts_are_never_lowered_or_reported_as_r1() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
-        world("links_by_mark_merge_account").await;
+    let (pool, memory, [holder, alpha, beta]) = shared_world("links_by_mark_merge_account").await;
     let merged = memory
         .merge(&alpha, &beta, None, date(2026, 8, 2), &holder, None)
         .await
@@ -768,14 +767,12 @@ async fn engine_merge_accounts_are_never_lowered_or_reported_as_r1() {
             .all(|(_, key, _, _)| key != "merged_from")
     );
     pool.close().await;
-    store.stop().await;
 }
 
 /// Older boots marked merge accounts; their rows stay history, not live links.
 #[tokio::test]
 async fn marked_engine_accounts_keep_their_rows_without_linking_or_warning() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
-        world("links_by_mark_old_account").await;
+    let (pool, memory, [holder, alpha, beta]) = shared_world("links_by_mark_old_account").await;
     let merged = memory
         .merge(&alpha, &beta, None, date(2026, 8, 2), &holder, None)
         .await
@@ -851,7 +848,6 @@ async fn marked_engine_accounts_keep_their_rows_without_linking_or_warning() {
     assert_eq!(stored(&pool, &survivor, "merged_from").await, value);
     assert!(memory.migrate_field_links_marked().await.unwrap().settled);
     pool.close().await;
-    store.stop().await;
 }
 
 /// **R2: text that wears no mark is served as written, never resolved into a
@@ -859,7 +855,7 @@ async fn marked_engine_accounts_keep_their_rows_without_linking_or_warning() {
 /// names whoever owns the spelling today if a read resolves it; the read must not.
 #[tokio::test]
 async fn unmarked_handle_text_is_served_as_written_and_follows_no_rename() {
-    let (_scratch, mut store, pool, memory, [holder, alpha, _]) = world("links-by-mark-r2").await;
+    let (pool, memory, [holder, alpha, _]) = shared_world("links-by-mark-r2").await;
     memory
         .capture(memory::state(NewFact {
             fields: [("owner_of".to_string(), alpha.to_string())]
@@ -898,16 +894,14 @@ async fn unmarked_handle_text_is_served_as_written_and_follows_no_rename() {
         Some(alpha.as_str()),
         "text that was never marked is not followed through a rename"
     );
-    store.stop().await;
 }
 
 /// **The shared link cases, on the real store**: the mixed list, the rename, the
 /// edit, the merge and the bare id each decide their links as the fake does.
 #[tokio::test]
 async fn the_link_contract_runs_on_the_real_store() {
-    let (_scratch, mut store, _pool, store_memory, _) = world("links-by-mark-contract").await;
+    let (_pool, store_memory, _) = shared_world("links-by-mark-contract").await;
     memory::run_all_link_at_write(&store_memory).await;
-    store.stop().await;
 }
 
 #[tokio::test]
@@ -1223,8 +1217,7 @@ async fn a_marking_pass_killed_before_its_marker_runs_again_and_changes_nothing(
 /// the store all leave it unlinked, while a mark in a mixed list is linked.
 #[tokio::test]
 async fn the_record_and_the_fold_link_by_the_marks_and_not_by_the_words() {
-    let (_scratch, mut store, pool, store_memory, [holder, alpha, beta]) =
-        world("links-by-mark-readers").await;
+    let (pool, store_memory, [holder, alpha, beta]) = shared_world("links-by-mark-readers").await;
     store_memory
         .capture(memory::state(NewFact {
             fields: [
@@ -1350,5 +1343,4 @@ async fn the_record_and_the_fold_link_by_the_marks_and_not_by_the_words() {
         readers::assert_links(folded.clone(), &holder, &alpha, &beta).await;
         assert_eq!(stored(&pool, &holder_badge, "legacy").await, legacy_raw);
     }
-    store.stop().await;
 }
