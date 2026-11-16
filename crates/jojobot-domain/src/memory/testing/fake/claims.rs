@@ -233,6 +233,14 @@ mod tests {
     use crate::log::claims::{KindId, ObjectBody};
     use crate::memory::Provenance;
 
+    async fn add_thing(fake: &InMemoryMemory, who: &EntityId, name: &str) {
+        fake.add_entity(NewEntity::new(who.clone(), name, "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("written");
+    }
+
     /// **Events applied to the fake are what its State answers.**
     #[test]
     fn events_applied_to_the_fake_are_what_its_state_answers() {
@@ -274,11 +282,7 @@ mod tests {
     async fn a_handle_stands_for_the_key_the_fake_files_its_thing_under() {
         let fake = InMemoryMemory::booted();
         let homer = EntityId("person:homer".into());
-        fake.add_entity(NewEntity::new(homer.clone(), "Homer", "fixture"))
-            .await
-            .expect("add")
-            .written()
-            .expect("written");
+        add_thing(&fake, &homer, "Homer").await;
         let key = fake.storage_key(&homer).expect("the fake files the thing");
         assert_eq!(fake.object_key(&homer), ObjectId(key.as_str().to_string()));
         let unknown = EntityId("person:marge".into());
@@ -292,11 +296,7 @@ mod tests {
     async fn a_claim_written_twice_is_held_by_the_state_as_the_fake_holds_it() {
         let fake = InMemoryMemory::booted();
         let homer = EntityId("person:homer".into());
-        fake.add_entity(NewEntity::new(homer.clone(), "Homer", "fixture"))
-            .await
-            .expect("add")
-            .written()
-            .expect("written");
+        add_thing(&fake, &homer, "Homer").await;
         let mut fact = NewFact::about(homer.clone(), "eats donuts", jiff::civil::date(2026, 9, 1));
         fact.provenance = Provenance::Inference;
         fact.fields = [("mood", "happy"), ("hair", "none")]
@@ -358,11 +358,7 @@ mod tests {
         let homer = EntityId("person:homer".into());
         let marge = EntityId("person:marge".into());
         for (who, name) in [(&homer, "Homer"), (&marge, "Marge")] {
-            fake.add_entity(NewEntity::new(who.clone(), name, "fixture"))
-                .await
-                .expect("add")
-                .written()
-                .expect("written");
+            add_thing(&fake, who, name).await;
         }
         let said =
             |about: EntityId, what: &'static str, kept: &'static [(&'static str, &'static str)]| {
@@ -476,11 +472,7 @@ mod tests {
     async fn a_clear_and_a_retraction_are_held_by_the_state_as_the_fake_holds_them() {
         let fake = InMemoryMemory::booted();
         let homer = EntityId("person:homer".into());
-        fake.add_entity(NewEntity::new(homer.clone(), "Homer", "fixture"))
-            .await
-            .expect("add")
-            .written()
-            .expect("written");
+        add_thing(&fake, &homer, "Homer").await;
         let said = |what: &'static str, mood: &'static str| {
             let (fake, homer) = (&fake, homer.clone());
             async move {
@@ -566,11 +558,7 @@ mod tests {
         let fake = InMemoryMemory::booted();
         let homer = EntityId("person:homer".into());
         let sigma = EntityId("bot:sigma".into());
-        fake.add_entity(NewEntity::new(homer.clone(), "Homer", "fixture"))
-            .await
-            .expect("add")
-            .written()
-            .expect("written");
+        add_thing(&fake, &homer, "Homer").await;
         let mut fact = NewFact::about(homer.clone(), "felt giddy", jiff::civil::date(2026, 9, 1));
         fact.provenance = Provenance::Inference;
         fact.written_by_bot = Some(sigma.clone());
@@ -637,11 +625,7 @@ mod tests {
         let marge = EntityId("person:marge".into());
         let sigma = EntityId("bot:sigma".into());
         for (who, name) in [(&homer, "Homer"), (&marge, "Marge")] {
-            fake.add_entity(NewEntity::new(who.clone(), name, "fixture"))
-                .await
-                .expect("add")
-                .written()
-                .expect("written");
+            add_thing(&fake, who, name).await;
             let mut fact = NewFact::about(
                 who.clone(),
                 "keeps the house",
