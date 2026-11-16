@@ -36,22 +36,12 @@ pub(super) fn refuses_a_kind_misfit(
     };
     let writes = state.key_writes(home);
     let before = memory::folded_fields(&writes, declared);
-    let fields = request
-        .fields
-        .iter()
-        .filter(|(key, _)| {
-            classes
-                .get(key.trim())
-                .is_some_and(|class| memory::reaches_the_thing(*class))
-        })
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
     let id = FactId(request.record.0.clone());
     let after = memory::stood_after_record(
         &writes,
         &memory::NewRecord {
             id: &id,
-            fields: &fields,
+            fields: &request.fields,
             status: request.draft.status,
             provenance: request.draft.provenance,
             standing: request.draft.standing,
@@ -76,7 +66,12 @@ pub(super) fn refuses_a_kind_misfit(
         }
     }
     let mut hung = Vec::new();
-    if memory::done_gate::moves_to_done(&kind, &before, &after) {
+    // Own values still face kind checks, but only a reaching status can finish the item.
+    if classes
+        .get(memory::kinds::STATUS)
+        .is_some_and(|class| memory::reaches_the_thing(*class))
+        && memory::done_gate::moves_to_done(&kind, &before, &after)
+    {
         for object in state.standing_objects() {
             let Some(body) = state.object(object) else {
                 continue;
