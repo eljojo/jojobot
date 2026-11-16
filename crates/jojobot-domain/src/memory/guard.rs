@@ -990,6 +990,22 @@ mod tests {
         }
     }
 
+    fn assert_reason_lifts(
+        minted: &str,
+        reason: &str,
+        ask: impl Fn(Option<&str>, Option<&str>) -> Decision,
+    ) {
+        assert!(
+            matches!(ask(Some(minted), None), Decision::Block(_)),
+            "{reason}"
+        );
+        assert_eq!(
+            ask(Some(minted), Some(reason)),
+            Decision::Proceed,
+            "{reason}"
+        );
+    }
+
     /// **A known short form beside its full name is refused, and lifted by the
     /// token with a reason.** The same short form under another kind, and a short
     /// form beside a different surname, are left alone: each negative sits with
@@ -1010,24 +1026,10 @@ mod tests {
         assert_eq!(candidates[0].handle.as_str(), "person:bartholomew-simpson");
         assert_eq!(candidates[0].reason, MatchReason::Nickname);
 
-        let minted = override_token(&bart, &candidates);
-        assert!(
-            matches!(
-                decide_creating(&bart, &["Bart Simpson"], None, &idx, Some(&minted), None),
-                Decision::Block(_)
-            ),
-            "the token alone does not lift a refusal on the name alone"
-        );
-        assert_eq!(
-            decide_creating(
-                &bart,
-                &["Bart Simpson"],
-                None,
-                &idx,
-                Some(&minted),
-                Some("a cousin of the same first name")
-            ),
-            Decision::Proceed
+        assert_reason_lifts(
+            &override_token(&bart, &candidates),
+            "a cousin of the same first name",
+            |token, reason| decide_creating(&bart, &["Bart Simpson"], None, &idx, token, reason),
         );
 
         for (handle, name, why) in [
@@ -1073,28 +1075,12 @@ mod tests {
             "place:springfield-nuclear-plant"
         );
         assert_eq!(candidates[0].reason, MatchReason::SharedWord);
-        let minted = override_token(&tours, &candidates);
-        assert!(matches!(
-            decide_creating(
-                &tours,
-                &["Nuclear Plant Tours"],
-                None,
-                &idx,
-                Some(&minted),
-                None
-            ),
-            Decision::Block(_)
-        ));
-        assert_eq!(
-            decide_creating(
-                &tours,
-                &["Nuclear Plant Tours"],
-                None,
-                &idx,
-                Some(&minted),
-                Some("a tour company, not the plant")
-            ),
-            Decision::Proceed
+        assert_reason_lifts(
+            &override_token(&tours, &candidates),
+            "a tour company, not the plant",
+            |token, reason| {
+                decide_creating(&tours, &["Nuclear Plant Tours"], None, &idx, token, reason)
+            },
         );
 
         // A stop word is no evidence even where rarity would pass it: "with" is
@@ -1212,24 +1198,10 @@ mod tests {
             ),
             "a token nobody minted lifts nothing"
         );
-        let minted = override_token(&mall, &candidates);
-        assert!(
-            matches!(
-                decide(&mall, &[], &idx, Some(&minted), None),
-                Decision::Block(_)
-            ),
-            "a refusal on the name alone takes a reason beside its token"
-        );
-        assert_eq!(
-            decide(
-                &mall,
-                &[],
-                &idx,
-                Some(&minted),
-                Some("a mall, not the town")
-            ),
-            Decision::Proceed,
-            "the token this refusal minted, with a reason, says the two really are different"
+        assert_reason_lifts(
+            &override_token(&mall, &candidates),
+            "a mall, not the town",
+            |token, reason| decide(&mall, &[], &idx, token, reason),
         );
     }
 
