@@ -131,6 +131,31 @@ struct World {
     run_sids: Vec<String>,
 }
 
+/// Reads a verb part by part, each part at the offset the one before named,
+/// until one names none. Every part is held under the ceiling on the way.
+async fn walk(who: &Session, verb: &str, mut args: Value, most_parts: usize) -> Vec<Value> {
+    let mut bodies = Vec::new();
+    let mut offset = 0u64;
+    loop {
+        args["offset"] = json!(offset);
+        let part = who.call(verb, args.clone()).await;
+        let parts = bodies.len() + 1;
+        assert!(parts < most_parts, "the walk never ends");
+        assert!(
+            part.size() <= ANSWER_CEILING,
+            "part {parts} is {} characters",
+            part.size()
+        );
+        let body = part.json();
+        let next = body["not_shown"]["offset"].as_u64();
+        bodies.push(body);
+        match next {
+            Some(next) => offset = next,
+            None => return bodies,
+        }
+    }
+}
+
 /// **A world too big to write through the served surface**, seeded in the
 /// stores under the server and then served by a second server whose index is
 /// built from them in one pass. What is measured afterwards is still the answer
@@ -514,31 +539,18 @@ async fn the_widest_call_of_each_read_verb_against_the_one_ceiling() {
 async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once() {
     let world = hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0u64;
-    let mut parts = 0;
-    loop {
-        let part = world
-            .otto
-            .call(
-                "search",
-                json!({"query": "pantry", "limit": 1000, "details": true, "offset": offset}),
-            )
-            .await;
-        parts += 1;
-        assert!(parts < 100, "the walk never ends");
-        assert!(
-            part.size() <= ANSWER_CEILING,
-            "part {parts} is {} characters",
-            part.size()
-        );
-        let body = part.json();
+    let bodies = walk(
+        &world.otto,
+        "search",
+        json!({"query": "pantry", "limit": 1000, "details": true}),
+        100,
+    )
+    .await;
+    let parts = bodies.len();
+    for body in &bodies {
         for hit in body["results"].as_array().expect("a list of results") {
             assert_eq!(hit["hit"], "fact", "only facts mention the pantry: {hit}");
             seen.push(hit["address"].as_str().expect("an address").to_string());
-        }
-        match body["not_shown"]["offset"].as_u64() {
-            Some(next) => offset = next,
-            None => break,
         }
     }
     assert!(parts > 2, "the facts took several parts: {parts}");
@@ -897,29 +909,13 @@ async fn a_second_read_names_every_message_the_first_took() {
 async fn a_walk_of_list_entities_returns_each_entity_once_under_the_ceiling() {
     let world = hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0u64;
-    let mut parts = 0;
-    loop {
-        let part = world
-            .otto
-            .call("list_entities", json!({"offset": offset}))
-            .await;
-        parts += 1;
-        assert!(parts < 100, "the walk never ends");
-        assert!(
-            part.size() <= ANSWER_CEILING,
-            "part {parts} is {} characters",
-            part.size()
-        );
-        let body = part.json();
+    let bodies = walk(&world.otto, "list_entities", json!({}), 100).await;
+    let parts = bodies.len();
+    for body in &bodies {
         let listed = body["entities"].as_array().expect("a list of entities");
         assert_eq!(body["count"], listed.len(), "{body}");
         for entity in listed {
             seen.push(entity["id"].as_str().expect("an id").to_string());
-        }
-        match body["not_shown"]["offset"].as_u64() {
-            Some(next) => offset = next,
-            None => break,
         }
     }
     assert!(parts > 1, "the entities took several parts: {parts}");
@@ -974,25 +970,16 @@ async fn an_offset_past_the_last_entity_says_it_is_past_the_end() {
 async fn a_walk_of_list_sent_returns_each_message_once_under_the_ceiling() {
     let world = hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0u64;
-    let mut parts = 0;
+    let bodies = walk(
+        &world.sigma,
+        "list_sent",
+        json!({"include_bodies": true, "limit": 1000}),
+        100,
+    )
+    .await;
+    let parts = bodies.len();
     let mut left_out_by_the_last: Option<u64> = None;
-    loop {
-        let part = world
-            .sigma
-            .call(
-                "list_sent",
-                json!({"include_bodies": true, "limit": 1000, "offset": offset}),
-            )
-            .await;
-        parts += 1;
-        assert!(parts < 100, "the walk never ends");
-        assert!(
-            part.size() <= ANSWER_CEILING,
-            "part {parts}: {}",
-            part.size()
-        );
-        let body = part.json();
+    for body in &bodies {
         let ids: Vec<String> = body["messages"]
             .as_array()
             .expect("a list")
@@ -1008,13 +995,7 @@ async fn a_walk_of_list_sent_returns_each_message_once_under_the_ceiling() {
             );
         }
         seen.extend(ids);
-        match body["not_shown"]["offset"].as_u64() {
-            Some(next) => {
-                left_out_by_the_last = body["not_shown"]["count"].as_u64();
-                offset = next;
-            }
-            None => break,
-        }
+        left_out_by_the_last = body["not_shown"]["count"].as_u64();
     }
     assert!(parts > 1, "the messages took several parts: {parts}");
     let mut walked = seen.clone();
@@ -1040,21 +1021,9 @@ async fn a_walk_of_list_sent_returns_each_message_once_under_the_ceiling() {
 async fn a_walk_of_list_runs_returns_each_run_once_under_the_ceiling() {
     let world = hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0u64;
-    let mut parts = 0;
-    loop {
-        let part = world
-            .otto
-            .call("list_runs", json!({"limit": 1000, "offset": offset}))
-            .await;
-        parts += 1;
-        assert!(parts < 100, "the walk never ends");
-        assert!(
-            part.size() <= ANSWER_CEILING,
-            "part {parts}: {}",
-            part.size()
-        );
-        let body = part.json();
+    let bodies = walk(&world.otto, "list_runs", json!({"limit": 1000}), 100).await;
+    let parts = bodies.len();
+    for body in &bodies {
         let sids: Vec<String> = body["runs"]
             .as_array()
             .expect("a list")
@@ -1063,12 +1032,8 @@ async fn a_walk_of_list_runs_returns_each_run_once_under_the_ceiling() {
             .collect();
         assert!(!sids.is_empty(), "a part carries at least one run");
         seen.extend(sids);
-        match body["not_shown"]["offset"].as_u64() {
-            Some(next) => {
-                assert_eq!(next as usize, seen.len(), "the offset counts runs read");
-                offset = next;
-            }
-            None => break,
+        if let Some(next) = body["not_shown"]["offset"].as_u64() {
+            assert_eq!(next as usize, seen.len(), "the offset counts runs read");
         }
     }
     assert!(parts > 1, "the runs took several parts: {parts}");
@@ -1120,29 +1085,17 @@ async fn a_page_of_long_pantry_notes_stays_under_the_ceiling_and_the_walk_return
     }
 
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0u64;
-    let mut parts = 0;
-    loop {
-        let part = s
-            .call(
-                "search",
-                json!({"query": "pantry", "limit": 1000, "details": true, "offset": offset}),
-            )
-            .await;
-        parts += 1;
-        assert!(parts < 20, "the walk never ends");
-        assert!(
-            part.size() <= ANSWER_CEILING,
-            "part {parts} is {} characters",
-            part.size()
-        );
-        let body = part.json();
+    let bodies = walk(
+        &s,
+        "search",
+        json!({"query": "pantry", "limit": 1000, "details": true}),
+        20,
+    )
+    .await;
+    let parts = bodies.len();
+    for body in &bodies {
         for hit in body["results"].as_array().expect("a list of results") {
             seen.push(hit["address"].as_str().expect("an address").to_string());
-        }
-        match body["not_shown"]["offset"].as_u64() {
-            Some(next) => offset = next,
-            None => break,
         }
     }
     assert_eq!(
@@ -1168,25 +1121,16 @@ async fn a_page_of_long_pantry_notes_stays_under_the_ceiling_and_the_walk_return
 async fn a_subject_past_the_ceiling_is_read_in_parts_that_return_each_fact_once() {
     let world = hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0u64;
-    let mut parts = 0;
+    let bodies = walk(
+        &world.otto,
+        "recall",
+        json!({"subject": world.heavy, "facts": true, "details": true}),
+        100,
+    )
+    .await;
+    let parts = bodies.len();
     let mut left_out_by_the_last: Option<u64> = None;
-    loop {
-        let part = world
-            .otto
-            .call(
-                "recall",
-                json!({"subject": world.heavy, "facts": true, "details": true, "offset": offset}),
-            )
-            .await;
-        parts += 1;
-        assert!(parts < 100, "the walk never ends");
-        assert!(
-            part.size() <= ANSWER_CEILING,
-            "part {parts}: {}",
-            part.size()
-        );
-        let body = part.json();
+    for body in &bodies {
         assert_eq!(body["count"], 1, "one subject is one object: {body}");
         let addresses: Vec<String> = body["objects"][0]["facts"]
             .as_array()
@@ -1204,13 +1148,7 @@ async fn a_subject_past_the_ceiling_is_read_in_parts_that_return_each_fact_once(
             );
         }
         seen.extend(addresses);
-        match body["not_shown"]["offset"].as_u64() {
-            Some(next) => {
-                left_out_by_the_last = body["not_shown"]["count"].as_u64();
-                offset = next;
-            }
-            None => break,
-        }
+        left_out_by_the_last = body["not_shown"]["count"].as_u64();
     }
     assert!(parts > 1, "the facts took several parts: {parts}");
     let mut walked = seen.clone();
@@ -1237,25 +1175,16 @@ async fn a_kind_past_the_ceiling_is_read_in_parts_that_return_each_thing_once() 
     let world = hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
     let mut cut: Vec<String> = Vec::new();
-    let mut offset = 0u64;
-    let mut parts = 0;
+    let bodies = walk(
+        &world.otto,
+        "recall",
+        json!({"kind": "place", "facts": true, "details": true}),
+        100,
+    )
+    .await;
+    let parts = bodies.len();
     let mut left_out_by_the_last: Option<u64> = None;
-    loop {
-        let part = world
-            .otto
-            .call(
-                "recall",
-                json!({"kind": "place", "facts": true, "details": true, "offset": offset}),
-            )
-            .await;
-        parts += 1;
-        assert!(parts < 100, "the walk never ends");
-        assert!(
-            part.size() <= ANSWER_CEILING,
-            "part {parts}: {}",
-            part.size()
-        );
-        let body = part.json();
+    for body in &bodies {
         let objects = body["objects"].as_array().expect("objects");
         assert!(!objects.is_empty(), "a part carries at least one object");
         assert_eq!(body["count"], objects.len(), "{body}");
@@ -1290,13 +1219,7 @@ async fn a_kind_past_the_ceiling_is_read_in_parts_that_return_each_thing_once() 
                 "what was left out is what the rest return"
             );
         }
-        match body["not_shown"]["offset"].as_u64() {
-            Some(next) => {
-                left_out_by_the_last = body["not_shown"]["count"].as_u64();
-                offset = next;
-            }
-            None => break,
-        }
+        left_out_by_the_last = body["not_shown"]["count"].as_u64();
     }
     assert!(parts > 1, "the places took several parts: {parts}");
     let mut walked = seen.clone();
@@ -1326,22 +1249,10 @@ async fn a_kind_past_the_ceiling_is_read_in_parts_that_return_each_thing_once() 
 async fn a_kind_without_facts_past_the_ceiling_is_read_in_parts_too() {
     let world = hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0u64;
-    let mut parts = 0;
+    let bodies = walk(&world.otto, "recall", json!({"kind": "thing"}), 100).await;
+    let parts = bodies.len();
     let mut left_out_by_the_last: Option<u64> = None;
-    loop {
-        let part = world
-            .otto
-            .call("recall", json!({"kind": "thing", "offset": offset}))
-            .await;
-        parts += 1;
-        assert!(parts < 100, "the walk never ends");
-        assert!(
-            part.size() <= ANSWER_CEILING,
-            "part {parts}: {}",
-            part.size()
-        );
-        let body = part.json();
+    for body in &bodies {
         let objects = body["objects"].as_array().expect("objects");
         assert!(!objects.is_empty(), "a part carries at least one object");
         if let Some(promised) = left_out_by_the_last {
@@ -1356,13 +1267,7 @@ async fn a_kind_without_facts_past_the_ceiling_is_read_in_parts_too() {
                 .iter()
                 .map(|o| o["id"].as_str().expect("an id").to_string()),
         );
-        match body["not_shown"]["offset"].as_u64() {
-            Some(next) => {
-                left_out_by_the_last = body["not_shown"]["count"].as_u64();
-                offset = next;
-            }
-            None => break,
-        }
+        left_out_by_the_last = body["not_shown"]["count"].as_u64();
     }
     assert!(parts > 1, "the things took several parts: {parts}");
     let mut walked = seen.clone();
@@ -1390,24 +1295,15 @@ async fn a_kind_without_facts_past_the_ceiling_is_read_in_parts_too() {
 async fn a_kind_of_places_of_different_ages_says_each_ones_age_under_the_ceiling() {
     let world = aged_hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0u64;
-    let mut parts = 0;
-    loop {
-        let part = world
-            .otto
-            .call(
-                "recall",
-                json!({"kind": "place", "facts": true, "details": true, "offset": offset}),
-            )
-            .await;
-        parts += 1;
-        assert!(parts < 100, "the walk never ends");
-        assert!(
-            part.size() <= ANSWER_CEILING,
-            "part {parts}: {}",
-            part.size()
-        );
-        let body = part.json();
+    let bodies = walk(
+        &world.otto,
+        "recall",
+        json!({"kind": "place", "facts": true, "details": true}),
+        100,
+    )
+    .await;
+    let parts = bodies.len();
+    for body in &bodies {
         for object in body["objects"].as_array().expect("objects") {
             assert_eq!(object["as_of"], OCTOBER, "{object}");
             assert_eq!(
@@ -1416,10 +1312,6 @@ async fn a_kind_of_places_of_different_ages_says_each_ones_age_under_the_ceiling
                 "only the size is older than the place: {object}"
             );
             seen.push(object["id"].as_str().expect("an id").to_string());
-        }
-        match body["not_shown"]["offset"].as_u64() {
-            Some(next) => offset = next,
-            None => break,
         }
     }
     assert!(parts > 1, "the places took several parts: {parts}");
