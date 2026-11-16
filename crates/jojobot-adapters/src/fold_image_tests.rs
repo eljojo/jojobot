@@ -49,10 +49,7 @@ const SWITCHED: &[&str] = &[
 /// is the battery disagreeing with itself and says nothing about the image.
 #[tokio::test]
 async fn the_battery_agrees_with_a_fold_that_serves_nothing_from_memory() {
-    let store = Arc::new(InMemoryMemory::booted());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
+    let (store, counted, folded) = a_loaded_fold().await;
     let probe = Probe {
         folded: &folded,
         direct: &*store,
@@ -68,10 +65,7 @@ async fn the_battery_agrees_with_a_fold_that_serves_nothing_from_memory() {
 /// as the store does, after every kind of write.**
 #[tokio::test]
 async fn switched_reads_answer_from_memory_exactly_as_the_store_does() {
-    let store = Arc::new(InMemoryMemory::booted());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
+    let (store, counted, folded) = a_loaded_fold().await;
     let probe = Probe {
         folded: &folded,
         direct: &*store,
@@ -95,10 +89,7 @@ async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
     use jojobot_domain::memory::Memory;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 
-    let store = Arc::new(InMemoryMemory::booted());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
+    let (store, counted, folded) = a_loaded_fold().await;
     thing_holding(&folded, "thing:delta", "rank", "3").await;
 
     let ranked = DeclaredType::new(
@@ -142,6 +133,16 @@ async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
     );
 }
 
+/// **A fold over a booted, empty store, loaded**, with the counter between them that says what
+/// each call reached the store for.
+async fn a_loaded_fold() -> (Arc<InMemoryMemory>, Arc<Counted>, Folded) {
+    let store = Arc::new(InMemoryMemory::booted());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    (store, counted, folded)
+}
+
 /// **A claim that sets one key on a thing, written through the fold.**
 async fn thing_holding(folded: &Folded, handle: &str, key: &str, value: &str) {
     use jojobot_domain::memory::testing::contract::state;
@@ -181,10 +182,7 @@ async fn declaring_a_new_type_reads_the_store_only_for_the_declaration() {
     use jojobot_domain::memory::Memory;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 
-    let store = Arc::new(InMemoryMemory::booted());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
+    let (store, counted, folded) = a_loaded_fold().await;
     thing_holding(&folded, "thing:delta", "weight", "3").await;
 
     // Takes the shape of a type with a list of references and a narrowed key,
@@ -254,10 +252,7 @@ async fn declaring_what_changes_how_a_held_key_reads_no_thing_again() {
         ),
     ];
     for (name, first, second) in rows {
-        let store = Arc::new(InMemoryMemory::booted());
-        let counted = Arc::new(Counted::new(store.clone()));
-        let folded = Folded::new(counted.clone());
-        folded.rebuild().await.expect("the fold loads");
+        let (store, counted, folded) = a_loaded_fold().await;
         thing_holding(&folded, "thing:delta", "weight", "3").await;
         if let Some(first) = first {
             folded
@@ -294,10 +289,7 @@ async fn the_declared_types_are_shared_by_every_read_of_an_image() {
     use jojobot_domain::memory::Memory;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 
-    let store = Arc::new(InMemoryMemory::booted());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
+    let (_, counted, folded) = a_loaded_fold().await;
 
     counted.reset();
     let first = folded.declared_types_shared().await.expect("types read");
@@ -339,10 +331,7 @@ async fn the_declared_types_are_shared_by_every_read_of_an_image() {
 /// worked out from the folded thing's own claim are all read again.
 #[tokio::test]
 async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_store_answers() {
-    let store = Arc::new(InMemoryMemory::booted());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
+    let (store, counted, folded) = a_loaded_fold().await;
     let probe = Probe {
         folded: &folded,
         direct: &*store,
@@ -460,10 +449,7 @@ fn spelled(n: usize) -> String {
 async fn a_scan_listing_many_declined_things_reads_the_store_once() {
     use jojobot_domain::memory::{EntityId, Memory, NewEntity};
 
-    let store = Arc::new(InMemoryMemory::booted());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
+    let (_, counted, folded) = a_loaded_fold().await;
     let handle = |kind: &str, n: usize| EntityId(format!("{kind}:{}", spelled(n)));
     let (survivor, merged) = (handle("project", 1), handle("project", 2));
     for parent in [&survivor, &merged] {
@@ -529,10 +515,7 @@ async fn a_scan_listing_many_declined_things_reads_the_store_once() {
 async fn a_scan_listing_a_few_declined_things_reads_only_those_things() {
     use jojobot_domain::memory::{EntityId, Memory, NewEntity};
 
-    let store = Arc::new(InMemoryMemory::booted());
-    let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone());
-    folded.rebuild().await.expect("the fold loads");
+    let (_, counted, folded) = a_loaded_fold().await;
     let handle = |kind: &str, n: usize| EntityId(format!("{kind}:{}", spelled(n)));
     for n in 100..140 {
         let plain = handle("project", n);
