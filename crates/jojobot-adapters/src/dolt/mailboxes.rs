@@ -1493,7 +1493,7 @@ mod tests {
     use super::*;
     use crate::dolt::tests::free_port;
     use crate::dolt::{Dolt, migrate};
-    use crate::testing::Scratch;
+    use crate::testing::{Scratch, shared_database};
     use jojobot_domain::mailbox::NewMessage;
 
     /// Every well-formed owner resolves. The owner question has its own case in
@@ -1994,19 +1994,17 @@ mod tests {
     /// holds for a row a different process wrote.
     #[tokio::test]
     async fn a_drawn_id_a_message_already_wears_is_drawn_again() {
-        let scratch = Scratch::new("drawn-ids");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("drawn-ids")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
         // The rest of a boot: without it this process cannot read a handle,
         // which is what a caller meets rather than a state a suite hides.
-        migrate::seed_kinds(store.pool())
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
         let mail = DoltMailboxes::drawing(
-            store.pool().clone(),
+            pool.clone(),
             Arc::new(AnyOwner),
             rigged(&["aaaaaa", "aaaaaa", "aaaaaa", "bbbbbb"]),
         );
@@ -2060,8 +2058,6 @@ mod tests {
                 && bodies.contains(&("bbbbbb", "the one that had to draw again")),
             "both messages stand, each with its own body: {bodies:?}"
         );
-
-        store.stop().await;
     }
 
     /// **`posted_by_session` round-trips through the real store** — the
@@ -2188,19 +2184,17 @@ mod tests {
             }
         }
 
-        let scratch = Scratch::new("owner-index-down");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("owner-index-down")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
         // The rest of a boot: without it this process cannot read a handle,
         // which is what a caller meets rather than a state a suite hides.
-        migrate::seed_kinds(store.pool())
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
 
-        let down = DoltMailboxes::open(store.pool().clone(), Arc::new(Down));
+        let down = DoltMailboxes::open(pool.clone(), Arc::new(Down));
         let outcome = down
             .create_mailbox(
                 &MailboxName("inbox".into()),
@@ -2220,7 +2214,7 @@ mod tests {
         // **The positive it rests on.** The same call, the same owner, against
         // an index that answers — otherwise this passes on a store that
         // refuses every creation for any reason at all.
-        let up = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
+        let up = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
         let opened = up
             .create_mailbox(
                 &MailboxName("inbox".into()),
@@ -2232,8 +2226,6 @@ mod tests {
             .written()
             .expect("a reachable index opens the box");
         assert_eq!(opened.name.as_str(), "inbox");
-
-        store.stop().await;
     }
 
     /// **A card jojobot cannot read is invisible to every verb that acts, and
@@ -2352,17 +2344,15 @@ mod tests {
     async fn migrate_mentions_rewrites_a_handle_stored_before_resolution_existed() {
         use jojobot_domain::memory::{Memory, NewEntity};
 
-        let scratch = Scratch::new("migrate-mentions-mailbox");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("migrate-mentions-mailbox")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
 
-        let memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        let memory = crate::dolt::memory::DoltMemory::open(pool.clone());
         memory
             .add_entity(NewEntity::new(
                 EntityId("thing:contract-migrate-mentions-was".to_string()),
@@ -2379,7 +2369,7 @@ mod tests {
             .await
             .expect("list_entities should succeed");
 
-        let mail = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
+        let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
         mail.create_mailbox(
             &MailboxName("inbox".into()),
             &EntityId("bot:gamma".into()),
@@ -2467,25 +2457,21 @@ mod tests {
             .await
             .expect("a second run should succeed");
         assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");
-
-        store.stop().await;
     }
 
     #[tokio::test]
     async fn migrate_sender_column_rewrites_a_handle_stored_before_resolution_existed() {
         use jojobot_domain::memory::{Memory, NewEntity};
 
-        let scratch = Scratch::new("migrate-sender-column-mailbox");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("migrate-sender-column-mailbox")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
 
-        let memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        let memory = crate::dolt::memory::DoltMemory::open(pool.clone());
         memory
             .add_entity(NewEntity::new(
                 EntityId("bot:contract-migrate-sender-column-gamma".to_string()),
@@ -2498,7 +2484,7 @@ mod tests {
             .expect("the guard must not block a fresh handle");
         memory.badge_the_unbadged().await.expect("badges are drawn");
 
-        let mail = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
+        let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
         mail.create_mailbox(
             &MailboxName("inbox".into()),
             &EntityId("bot:gamma".into()),
@@ -2570,7 +2556,7 @@ mod tests {
 
         let stored: (String,) = sqlx::query_as("SELECT sender FROM message WHERE id = ?")
             .bind(posted.id.as_str())
-            .fetch_one(store.pool())
+            .fetch_one(&pool)
             .await
             .expect("the row is there");
         let sigma = known
@@ -2588,8 +2574,6 @@ mod tests {
             .await
             .expect("a second run should succeed");
         assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");
-
-        store.stop().await;
     }
 
     /// **A post to a person's box writes its push in the same transaction**, a
