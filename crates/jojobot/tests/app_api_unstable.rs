@@ -1060,6 +1060,9 @@ async fn unstable_a_creation_that_sets_nothing_is_refused_and_one_that_sets_a_ke
         refused.to_string().contains("sets"),
         "the refusal names what to send: {refused}"
     );
+    // `change`, because sending a key the grant allows lands the same call; `person`
+    // would tell a caller that routes on the word to wait on an operator.
+    assert_eq!(refused["refused"]["fix_by"], "change", "{refused}");
     // **The entity itself is read**, because a creation with no first claim reads
     // as empty claims whether the thing was made or not.
     assert!(
@@ -1082,6 +1085,7 @@ async fn unstable_a_creation_that_sets_nothing_is_refused_and_one_that_sets_a_ke
     )
     .await;
     assert_eq!(status, 200, "{view}");
+    assert!(view["refused"].is_null(), "{view}");
     let claims = served
         .memory
         .recall(&EntityId("role:kappa".into()))
@@ -1094,38 +1098,6 @@ async fn unstable_a_creation_that_sets_nothing_is_refused_and_one_that_sets_a_ke
             .is_some_and(|s| s.app == "springfield-maker")),
         "the thing carries the app's mark: {claims:?}"
     );
-}
-
-/// **A creation that sets nothing is a refusal the app fixes itself.** It carries
-/// `fix_by: change`, because sending a key the grant allows lands the same call,
-/// and `person` would tell a caller that routes on the word to wait on an operator.
-/// Paired: the same creation with a granted key lands, so the word is not on every
-/// creation.
-#[tokio::test]
-async fn unstable_a_creation_that_sets_nothing_is_marked_fix_by_change() {
-    let (app, token) = creator();
-    let served = serve(vec![app], Registry::shipped()).await;
-
-    let (status, refused) = call(
-        &served,
-        &token,
-        "add_entity",
-        json!({"kind": "role", "handle": "lambda", "name": "Lambda", "source": "the maker"}),
-    )
-    .await;
-    assert_eq!(status, 409, "{refused}");
-    assert_eq!(refused["refused"]["fix_by"], "change", "{refused}");
-
-    let (status, landed) = call(
-        &served,
-        &token,
-        "add_entity",
-        json!({"kind": "role", "handle": "lambda", "name": "Lambda", "source": "the maker",
-               "sets": {"watch_state": "ok"}}),
-    )
-    .await;
-    assert_eq!(status, 200, "{landed}");
-    assert!(landed["refused"].is_null(), "{landed}");
 }
 
 /// **A caller's mistake is a 422 that says what was wrong, never a 503 that asks
