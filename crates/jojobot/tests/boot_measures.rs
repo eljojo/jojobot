@@ -1979,8 +1979,8 @@ async fn a_boot_with_an_invalidated_snapshot_replays_the_log() {
 }
 
 /// **A server killed after writing boots from the snapshot it had.** The first
-/// process is stopped orderly over a store with a tail, so a stop snapshot covers
-/// it; a second boots, is killed with no stop, and a third boots from the same
+/// process replays a store with a tail and stops orderly, leaving a snapshot;
+/// a second boots, is killed with no stop, and a third boots from the same
 /// snapshot with the tail it had.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_boot_after_a_crash_loads_the_snapshot_the_stop_left() {
@@ -1988,14 +1988,22 @@ async fn a_boot_after_a_crash_loads_the_snapshot_the_stop_left() {
     let size = prepare(&state, Plan::None, EVENTS).await;
     let mut first = spawn(state);
     first.first_answer();
-    let (state, seen) = first.stopped();
-    // The tick can publish it just before the stop does (the tail is past the
-    // cadence); either way the log holds a snapshot once the process has exited.
+    let (state, _) = first.stopped();
+    // Replay publishes a snapshot and the keeper credits it. Read the stored
+    // coverage: a redundant keeper publication is not needed to leave a snapshot.
+    let mut store = Dolt::start(&state.0.join("db"), free_port())
+        .await
+        .expect("the stopped store opens");
+    let covered: u64 =
+        sqlx::query_scalar("SELECT covered_position FROM log_snapshot WHERE slot = 'snapshot'")
+            .fetch_one(store.pool())
+            .await
+            .expect("the first process left a snapshot");
     assert!(
-        seen.iter().any(|line| line.contains("snapshot taken")),
-        "the first process took no snapshot. What it said:\n{}",
-        seen.join("\n")
+        covered >= size.events,
+        "the snapshot covers the prepared log"
     );
+    store.stop().await;
     let mut second = spawn(state);
     second.first_answer();
     assert!(second.log_boot().contains("from_snapshot=true"));

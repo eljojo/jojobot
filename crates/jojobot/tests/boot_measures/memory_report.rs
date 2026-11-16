@@ -1473,20 +1473,20 @@ async fn record_snapshot_table_proof(state: &Scratch, at_import: &[u8]) {
         .expect("the store starts again and collects");
     // **The snapshot is read back after the collection**: a store that lost it would come out
     // smaller, which the bound below passes, so what the collection kept is read, not assumed.
-    let reread = super::WriterLog::open(again.pool().clone(), super::Writer::default())
-        .await
-        .expect("the log opens after the collection")
-        .load_snapshot()
-        .await
-        .expect("the snapshot reads after the collection")
-        .expect("the collection lost the snapshot");
+    // These payloads contain only claims, not the whole projection a serving boot
+    // decodes. Opening a writer here would replay and replace them before the read.
+    let (checksum, body): (Vec<u8>, Vec<u8>) =
+        sqlx::query_as("SELECT checksum, body FROM log_snapshot WHERE slot = 'snapshot'")
+            .fetch_one(again.pool())
+            .await
+            .expect("the collection kept the snapshot");
     again.stop().await;
     assert_eq!(
-        reread.checksum,
-        <[u8; 32]>::from(Sha256::digest(&after_the_day)),
+        checksum,
+        Sha256::digest(&after_the_day).to_vec(),
         "the collection changed the snapshot it kept"
     );
-    body_kept_whole(&reread.blob, &after_the_day).unwrap_or_else(|said| panic!("{said}"));
+    body_kept_whole(&body, &after_the_day).unwrap_or_else(|said| panic!("{said}"));
     let collected = store_bytes(&path).0;
     let grown = i128::from(collected) - i128::from(started);
     record(&format!(
