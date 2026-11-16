@@ -57,6 +57,8 @@ impl Boot {
 pub struct BootReport {
     pub from_snapshot: bool,
     pub restored_at: u64,
+    /// The position this boot published from its replayed State, or zero.
+    pub published_at: u64,
     /// The bytes of the snapshot the boot read, and the time its State took to decode.
     pub snapshot_bytes: u64,
     pub decode_ms: u64,
@@ -183,11 +185,12 @@ fn skipped(skip: Skip, nothing_to_replay: bool) {
 }
 
 /// **The position a boot's snapshot covers for the keeper**, or zero when the boot
-/// did not restore from one. A snapshot the boot refuses, for whatever reason, is
-/// no coverage: the boot replayed the log, so the keeper must publish a snapshot
-/// the next boot can use.
+/// neither restored nor published one. A refused snapshot earns no coverage; a
+/// successful publication from this boot's replayed State does.
 pub(crate) fn credited(report: &BootReport) -> Position {
-    if report.from_snapshot {
+    if report.published_at != 0 {
+        Position(report.published_at)
+    } else if report.from_snapshot {
         Position(report.restored_at)
     } else {
         Position(0)
@@ -270,6 +273,7 @@ async fn restored(log: &dyn LogStore, validity: &Validity) -> Result<Result<Boot
         report: BootReport {
             from_snapshot: true,
             restored_at: snapshot.covered_position.0,
+            published_at: 0,
             snapshot_bytes: snapshot.blob.len() as u64,
             decode_ms: decoding.elapsed().as_millis() as u64,
             tail_batches: 0,
@@ -399,9 +403,13 @@ async fn replay(
                 && !from_snapshot
                 && boot.position != Position(0)
                 && boot.claims_unreadable.is_none()
-                && let Err(error) = publish(log, validity, &boot, jiff::Timestamp::now()).await
             {
-                tracing::warn!(%error, "no snapshot after replay; the boot uses the replayed State");
+                match publish(log, validity, &boot, jiff::Timestamp::now()).await {
+                    Ok(position) => boot.report.published_at = position.0,
+                    Err(error) => {
+                        tracing::warn!(%error, "no snapshot after replay; the boot uses the replayed State")
+                    }
+                }
             }
             return Ok(boot);
         }

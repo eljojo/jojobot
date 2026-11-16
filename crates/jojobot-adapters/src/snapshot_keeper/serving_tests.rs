@@ -59,13 +59,11 @@ async fn an_import_is_snapshotted_and_a_quiet_second_boot_is_not() {
     server.stop().await;
 }
 
-/// **A stored snapshot the boot refuses is no coverage, so the stop of that boot
-/// replaces it.** The snapshot is this build's by fingerprint, but its body no
-/// longer matches its stored length, so the boot replays the log. The keeper starts at
-/// zero, the shutdown snapshot covers the head with no new write, and the boot
-/// after it restores from that one.
+/// **A boot replaces a refused snapshot from its replayed State.** Its keeper
+/// credits that publication, so a quiet shutdown leaves it alone. The
+/// next boot restores the replacement.
 #[tokio::test]
-async fn a_refused_stored_snapshot_is_replaced_by_the_stop_of_the_boot_that_refused_it() {
+async fn a_refused_stored_snapshot_is_replaced_by_boot_and_credited_to_its_keeper() {
     let scratch = Scratch::new("serving-refused-snapshot");
     let mut server = start_unhurried(&scratch.0, free_port()).await.unwrap();
     let pool = migrated_database(&server, "alpha").await.unwrap();
@@ -96,25 +94,34 @@ async fn a_refused_stored_snapshot_is_replaced_by_the_stop_of_the_boot_that_refu
     let (teachings, snapshots) = crate::teaching_log::serving_kept(&pool, writer.clone())
         .await
         .unwrap();
+    let replayed = DoltLog::unread(pool.clone())
+        .load_snapshot()
+        .await
+        .unwrap()
+        .expect("the boot published its replay");
+    assert_ne!(
+        replayed.blob, garbage,
+        "the boot replaced the refused snapshot"
+    );
+    assert_eq!(replayed.covered_position, head);
     assert_eq!(
         snapshots.covered(),
-        Position(0),
-        "the boot refused the stored snapshot, so it covers nothing"
+        head,
+        "the keeper credits the boot publication"
     );
     snapshots.shutdown().await;
-    drop((teachings, snapshots));
-    writer.drain().await;
-    drop(writer);
     let stored = DoltLog::unread(pool.clone())
         .load_snapshot()
         .await
         .unwrap()
-        .expect("a snapshot is stored");
-    assert_ne!(
-        stored.blob, garbage,
-        "the stop replaced the refused snapshot"
+        .expect("the boot snapshot remains stored");
+    assert_eq!(
+        stored, replayed,
+        "a quiet keeper publishes no second snapshot"
     );
-    assert_eq!(stored.covered_position, head);
+    drop((teachings, snapshots));
+    writer.drain().await;
+    drop(writer);
 
     let writer = Writer::default();
     let (teachings, snapshots) = crate::teaching_log::serving_kept(&pool, writer.clone())

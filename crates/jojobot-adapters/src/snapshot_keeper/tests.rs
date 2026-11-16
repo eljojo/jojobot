@@ -153,8 +153,8 @@ async fn a_foreign_snapshot_does_not_suppress_this_builds_own() {
     log.store_snapshot(&foreign).await.unwrap();
 
     let restarted = keeper(&log, SMALL).await;
-    assert_eq!(restarted.covered(), Position(0));
-    assert_eq!(restarted.flush(head, at(2)).await.unwrap(), Some(head));
+    assert_eq!(restarted.covered(), head);
+    assert_eq!(restarted.flush(head, at(2)).await.unwrap(), None);
     assert_eq!(
         log.load_snapshot()
             .await
@@ -165,12 +165,11 @@ async fn a_foreign_snapshot_does_not_suppress_this_builds_own() {
     );
 }
 
-/// **A snapshot the boot refuses covers nothing.** It is this build's by
-/// fingerprint but its blob does not read, so the boot replays the whole log. The
-/// keeper then holds no coverage, publishes a snapshot of the head with no new
-/// write, and the next boot restores from it instead of replaying again.
+/// **A refused snapshot earns no coverage, but its boot replacement does.** The
+/// blob does not read, so boot replays and publishes the State it holds. The keeper
+/// credits that publication and the next boot restores it.
 #[tokio::test]
-async fn a_snapshot_the_boot_refuses_is_not_coverage() {
+async fn a_snapshot_the_boot_replaces_is_coverage() {
     use sha2::{Digest, Sha256};
     let log = InMemoryLog::default();
     let head = append(&log, "alpha", 2).await;
@@ -192,8 +191,8 @@ async fn a_snapshot_the_boot_refuses_is_not_coverage() {
     )
     .await
     .unwrap();
-    assert_eq!(restarted.covered(), Position(0));
-    assert_eq!(restarted.flush(head, at(2)).await.unwrap(), Some(head));
+    assert_eq!(restarted.covered(), head);
+    assert_eq!(restarted.flush(head, at(2)).await.unwrap(), None);
     assert!(
         crate::log_snapshot::boot(&log)
             .await
