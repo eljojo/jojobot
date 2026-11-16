@@ -59,6 +59,36 @@ pub(crate) struct Note {
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
+        "a-role-claim-keeps-the-runs-boot-agent",
+        include_str!("../release-notes/deploy-9.3.3.1/a-role-claim-keeps-the-runs-boot-agent.md"),
+    ),
+    (
+        "a-live-run-can-report-compaction-with-its-agent",
+        include_str!(
+            "../release-notes/deploy-9.3.3.1/a-live-run-can-report-compaction-with-its-agent.md"
+        ),
+    ),
+    (
+        "snapshots-follow-event-count-and-shape-changes-log-info",
+        include_str!(
+            "../release-notes/deploy-9.3.3.1/snapshots-follow-event-count-and-shape-changes-log-info.md"
+        ),
+    ),
+    (
+        "shadow-settings-are-ignored",
+        include_str!("../release-notes/deploy-9.3.3.1/shadow-settings-are-ignored.md"),
+    ),
+    (
+        "shadow-comparison-metrics-are-gone",
+        include_str!("../release-notes/deploy-9.3.3.1/shadow-comparison-metrics-are-gone.md"),
+    ),
+    (
+        "sql-deletion-does-not-change-the-served-log",
+        include_str!(
+            "../release-notes/deploy-9.3.3.1/sql-deletion-does-not-change-the-served-log.md"
+        ),
+    ),
+    (
         "a-bot-can-be-marked-to-claim-its-role-only-with-an-agent",
         include_str!(
             "../release-notes/deploy-9.3.3.1/a-bot-can-be-marked-to-claim-its-role-only-with-an-agent.md"

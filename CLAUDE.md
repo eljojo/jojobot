@@ -17,12 +17,12 @@ sessions that boot *from jojobot* instead of from files.
 
 **One server instance, the only writer — so every read comes from memory.**
 jojobot runs as exactly one process, and every write passes through it. That
-is why the whole fold is held in memory and every read is answered from it
-alone; each write updates the store and the fold in the same step, so the
-fold is always current. **Once the fold is filled, no read goes to the
-store**; the exceptions are named in the code: before the first fill, or
-after a refresh that failed, a read falls through to the store, slower and
-still correct. ⚠️ A second writer of
+is why the claims State is held in memory and answers memory reads; each
+write updates the store and the State in the same step. The fold keeps the
+declared kinds beside that State, with no second copy of memory. **Once the
+fold is enabled, reads use the State**; before its first rebuild or after a
+failed refresh disables it, reads fall through to the store, slower and still
+correct. ⚠️ A second writer of
 any kind — another worker, a restore, a migration tool, a person running SQL
 — makes the memory copy silently wrong. (Decision log 292.)
 
@@ -244,8 +244,8 @@ A session here starts at jojobot, not at these files. The whole protocol:
   surface stops or what shape a line takes — a size limit, the answer ceiling,
   a boot budget — carries no beat a person follows: it lives in a `contract_*`
   file beside the stories, headed as a contract, and does not count as a story.
-  **A story's server starts the way the binary does** — the memory image is
-  filled on every start through the same wiring call boot makes, and the
+  **A story's server starts the way the binary does** — the claims State is
+  restored or replayed on every start through the same wiring call boot makes, and the
   startup passes (the handle registry, the keys of runs that have not written,
   the prune of their spent notes, the default identity, the instance record and
   the shipped types) are one function, `run_startup_passes`, that the binary and
