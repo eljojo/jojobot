@@ -5,7 +5,6 @@ pub mod app_api;
 pub mod auth;
 pub mod background;
 pub mod config;
-mod features;
 pub mod logging;
 pub mod metrics;
 pub mod push;

@@ -231,9 +231,6 @@ async fn run() -> anyhow::Result<()> {
         booted.mailboxes.clone(),
         booted.clock,
     );
-    if let Some(metrics) = &metrics {
-        metrics.watch_shadow(booted.shadow.clone());
-    }
     // **The claims State this process serves from**: the ledgers of the shared writer,
     // which is where the writes land, else the store's own when it lends one (a fake).
     let claims = booted

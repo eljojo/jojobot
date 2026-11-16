@@ -331,13 +331,6 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
     }
 
     assert!(has(&all, "jojobot_build", &[]), "{text}");
-    // Teaching no longer runs a shadow, so it contributes no comparison series.
-    for count in ["jojobot_shadow_comparisons", "jojobot_shadow_disagreements"] {
-        assert!(
-            !has(&all, count, &[("family", "teachings")]),
-            "{count}: {text}"
-        );
-    }
     assert!(
         has(
             &all,

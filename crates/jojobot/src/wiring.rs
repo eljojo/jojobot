@@ -199,9 +199,7 @@ pub async fn assemble_memory_with(
     supplied: Provisions,
     clock: Clock,
 ) -> anyhow::Result<(Arc<Folded>, Arc<IndexedMemory>)> {
-    // The boot registry chooses which families compare image and store reads;
-    // the image's answer is served throughout the shadow.
-    let folded = Arc::new(crate::features::at_boot(resolved).await?);
+    let folded = Arc::new(Folded::new(resolved));
     // **What the build supplies is laid over the fold**, the one place
     // shipped-ness lives. It sits UNDER the index on purpose: the index is a
     // reader, and a reader that saw something no other reader sees would be a
@@ -392,9 +390,6 @@ pub struct Booted {
     pub clock: Clock,
     /// **The one writer**, which subscribers read the State's changes from.
     pub writer: jojobot_adapters::writer::Writer,
-    /// The shadow the serving rails report their comparisons to, which the
-    /// metrics listener reports.
-    pub shadow: Arc<jojobot_adapters::fold::shadow::Shadow>,
     /// **The snapshots of the event log**: the caller runs their loop while it
     /// serves and ends it before the store stops, which takes the last snapshot.
     pub snapshots: Arc<jojobot_adapters::snapshot_keeper::ServingSnapshots>,
@@ -1262,7 +1257,6 @@ pub async fn boot_store_observed(
         )),
         clock,
         writer: folded.writer(),
-        shadow: folded.shadow(),
         snapshots,
     })
 }

@@ -175,11 +175,6 @@ struct Kind {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-struct Shadowed {
-    family: &'static str,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct SnapshotSkip {
     reason: &'static str,
 }
@@ -234,10 +229,6 @@ pub struct Metrics {
     things: Family<Kind, Gauge>,
     snapshot_skips: Family<SnapshotSkip, Gauge>,
     read_ok: Family<Read, Gauge>,
-    shadow_comparisons: Family<Shadowed, Gauge>,
-    shadow_disagreements: Family<Shadowed, Gauge>,
-    /// The shadow whose counts a scrape reports, set once the store is wired.
-    shadow: std::sync::OnceLock<Arc<jojobot_adapters::fold::shadow::Shadow>>,
     /// The claims State a scrape counts the payload of, set once the store is wired. A
     /// served store lends none of its own, so the process says where its State is.
     claims: std::sync::OnceLock<Arc<dyn jojobot_domain::log::claims::ClaimsLender>>,
@@ -377,18 +368,6 @@ impl Metrics {
             "1 when the store read a scrape makes for its gauges answered in time, else 0",
             read_ok.clone(),
         );
-        let shadow_comparisons = Family::<Shadowed, Gauge>::default();
-        registry.register(
-            "jojobot_shadow_comparisons",
-            "Reads of a shadowed projection family that were answered both ways and compared, since boot",
-            shadow_comparisons.clone(),
-        );
-        let shadow_disagreements = Family::<Shadowed, Gauge>::default();
-        registry.register(
-            "jojobot_shadow_disagreements",
-            "Of those comparisons, reads whose two answers differed, since boot",
-            shadow_disagreements.clone(),
-        );
         registry.register(
             "jojobot_build",
             "The build this process runs",
@@ -422,9 +401,6 @@ impl Metrics {
             things,
             snapshot_skips,
             read_ok,
-            shadow_comparisons,
-            shadow_disagreements,
-            shadow: std::sync::OnceLock::new(),
             claims: std::sync::OnceLock::new(),
             scraping: tokio::sync::Mutex::new(None),
             refresh_every: REFRESH_EVERY,
@@ -469,12 +445,6 @@ impl Metrics {
     /// the store is wired; a second call changes nothing.
     pub fn watch_claims(&self, lender: Arc<dyn jojobot_domain::log::claims::ClaimsLender>) {
         let _ = self.claims.set(lender);
-    }
-
-    /// **Report this shadow's counts on every scrape**, per family. Set once,
-    /// when the store is wired; a second call changes nothing.
-    pub fn watch_shadow(&self, shadow: Arc<jojobot_adapters::fold::shadow::Shadow>) {
-        let _ = self.shadow.set(shadow);
     }
 
     fn http(&self, route: String, status: StatusCode, elapsed: Duration) {
@@ -541,21 +511,6 @@ impl Metrics {
             self.resident_to_payload.set(over(self.payload_bytes.get()));
             self.resident_per_record
                 .set(over(self.payload_records.get()));
-        }
-        // **The shadow's counts are in memory**, so they are read on every scrape
-        // and not on the store's interval.
-        if let Some(shadow) = self.shadow.get() {
-            for counted in shadow.counts() {
-                let family = Shadowed {
-                    family: counted.family.name(),
-                };
-                self.shadow_comparisons
-                    .get_or_create(&family)
-                    .set(i64::try_from(counted.reads).unwrap_or(i64::MAX));
-                self.shadow_disagreements
-                    .get_or_create(&family)
-                    .set(i64::try_from(counted.disagreements).unwrap_or(i64::MAX));
-            }
         }
         let mut text = String::new();
         // Writing into a String cannot fail.
@@ -903,97 +858,6 @@ mod tests {
         assert_eq!(box_label(&held("bot:assistant")), "assistant");
         assert_eq!(box_label(&held("bot:milhouse")), OTHER);
         assert_eq!(box_label(&held("person:milhouse")), PERSON_BOX);
-    }
-
-    /// **A shadow's counts are on the scrape, per family, and rise with use.** A
-    /// compared read moves the comparison count; a read whose two answers
-    /// differ moves the disagreement count as well.
-    #[tokio::test]
-    async fn a_shadows_counts_are_on_the_scrape() {
-        let shadow = Arc::new(
-            jojobot_adapters::fold::shadow::Shadow::named("referring_to")
-                .expect("referring_to is a family"),
-        );
-        let metrics = Metrics::new().refreshing_every(Duration::ZERO);
-        metrics.watch_shadow(shadow.clone());
-        let ports = Ports {
-            memory: Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
-            sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
-            mailboxes: Arc::new(
-                jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
-            ),
-        };
-        let value = |text: &str, name: &str| -> Option<String> {
-            text.lines()
-                .find(|line| line.starts_with(&format!("{name}{{family=\"referring_to\"}}")))
-                .and_then(|line| line.rsplit(' ').next())
-                .map(str::to_string)
-        };
-
-        let before = metrics.scrape(&ports).await;
-        assert_eq!(
-            value(&before, "jojobot_shadow_comparisons").as_deref(),
-            Some("0"),
-            "{before}"
-        );
-        assert_eq!(
-            value(&before, "jojobot_shadow_disagreements").as_deref(),
-            Some("0"),
-            "{before}"
-        );
-
-        shadow.compared_referring_to(
-            &jojobot_domain::memory::EntityId("person:homer".into()),
-            &[],
-            &[],
-        );
-        let agreed = metrics.scrape(&ports).await;
-        assert_eq!(
-            value(&agreed, "jojobot_shadow_comparisons").as_deref(),
-            Some("1"),
-            "{agreed}"
-        );
-        assert_eq!(
-            value(&agreed, "jojobot_shadow_disagreements").as_deref(),
-            Some("0"),
-            "{agreed}"
-        );
-
-        let subject = jojobot_domain::memory::EntityId("person:marge".into());
-        ports
-            .memory
-            .add_entity(jojobot_domain::memory::NewEntity::new(
-                subject.clone(),
-                "Marge",
-                "fixture",
-            ))
-            .await
-            .unwrap()
-            .written()
-            .unwrap();
-        let fact = ports
-            .memory
-            .capture(jojobot_domain::memory::NewFact::about(
-                subject.clone(),
-                "alpha",
-                jiff::civil::date(2026, 1, 1),
-            ))
-            .await
-            .unwrap()
-            .written()
-            .unwrap();
-        shadow.compared_referring_to(&subject, &[], &[fact]);
-        let differed = metrics.scrape(&ports).await;
-        assert_eq!(
-            value(&differed, "jojobot_shadow_comparisons").as_deref(),
-            Some("2"),
-            "{differed}"
-        );
-        assert_eq!(
-            value(&differed, "jojobot_shadow_disagreements").as_deref(),
-            Some("1"),
-            "{differed}"
-        );
     }
 
     /// **The scrape says what the process holds against what the State must hold.**
