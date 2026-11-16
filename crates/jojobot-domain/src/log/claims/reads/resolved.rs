@@ -43,6 +43,19 @@ impl State {
             .unwrap_or_default()
     }
 
+    /// **The handle the object a spelling names wore itself**, folded or not: a
+    /// spelling it answers to, one it gave up, or a number under a collection. A
+    /// spelling it gave up is **not** followed to a survivor, so a claim asked for by
+    /// the handle of a thing merged away is found where the merge moves claims from.
+    /// `None` for a spelling nothing answers to.
+    pub fn own_handle_named(&self, spelling: &EntityId) -> Option<EntityId> {
+        self.addresses
+            .get(&spelling.0)
+            .or_else(|| self.retired_addresses.get(&spelling.0))
+            .and_then(|object| self.own_handle_of(object))
+            .or_else(|| self.resolved_entity(spelling).map(|found| found.id))
+    }
+
     /// **The miss a read of a spelling nothing answers to gets**, as the store
     /// gives it: the handle asked, with what it nearly was. A numbered handle
     /// whose collection numbers its members offers the numbers the collection

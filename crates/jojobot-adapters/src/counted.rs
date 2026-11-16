@@ -651,6 +651,9 @@ impl Memory for Counted {
     }
     async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
         self.hit("declared_kinds");
+        if self.unreachable.load(Ordering::SeqCst) {
+            return Err(MemoryError::Store("the store is unreachable".into()));
+        }
         self.inner.declared_kinds().await
     }
 }

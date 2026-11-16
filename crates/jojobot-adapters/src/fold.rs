@@ -1,26 +1,19 @@
 //! [`Folded`] — everything the memory verbs read, held in RAM above the store
 //! (decision log 292).
 //!
-//! jojobot is one server instance and the only writer, so it holds the whole
-//! store in memory and answers a read from there. [`Folded`] wraps a
-//! [`Memory`] and, once [`rebuild`](Folded::rebuild) has run, serves the reads
-//! named below from an [`Image`](image::Image) filled by the store's own reads:
-//! the listing and the rename history, the declared types and kinds, and for
-//! every thing its records, fields, ages and claim histories. Every write goes
-//! to the store first and then re-reads what it touched into the image under
-//! the same writer task, so a caller who writes and reads sees the write.
+//! jojobot is one server instance and the only writer, so the claims State holds the
+//! whole store and every read is answered from it. [`Folded`] wraps a [`Memory`]
+//! and, once [`rebuild`](Folded::rebuild) has run, serves the reads from that State:
+//! the listing and the rename history, the merge events, the declared types and
+//! kinds, and for every thing its records, fields, ages and claim histories. The
+//! fold holds no second copy of any of them. Every write goes to the store first and
+//! the State holds it in the same step, so a caller who writes and reads sees the
+//! write.
 //!
-//! **The image is filled from the store's answers, never from arithmetic of its
-//! own.** `Memory::fields` folds a thing's field writes down to one value per
-//! key — the newest write wins, an older one stands back up when the write that
-//! beat it is retracted — and the fold is correct wherever it runs. A held copy
-//! of that answer is the answer; a second copy of the fold would be one more
-//! thing to disagree with the first.
+//! Before the first `rebuild`, and after a refresh that failed, the fold is not
+//! filled and every read goes to the store underneath: slower and still correct.
 //!
-//! Before the first `rebuild`, and after a refresh that failed, no image is
-//! held and every read goes to the store underneath: slower and still correct.
-//!
-//! ⚠️ **This is only correct with exactly one writer in the process.** The image
+//! ⚠️ **This is only correct with exactly one writer in the process.** The State
 //! is filled from writes THIS `Folded` observed; a row changed by anything else
 //! — another worker, a restored backup, a migration tool, a person running SQL
 //! by hand — leaves it silently wrong, and nothing here would notice. jojobot
@@ -29,7 +22,6 @@
 //! this assumption breaks first.
 
 pub mod claims_view;
-mod image;
 pub mod mail;
 pub mod sessions;
 mod uncertain;
@@ -42,7 +34,6 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 use jiff::civil::Date;
 
-use image::Image;
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FieldAges, FieldBacking, FieldWrite, FormerHandle, Guarded, Landed, Memory,
@@ -51,7 +42,7 @@ use jojobot_domain::memory::{
     types::{self, DeclaredType},
 };
 
-/// A [`Memory`] wrapped in a RAM image of everything its reads answer.
+/// A [`Memory`] whose reads the claims State answers.
 ///
 /// Every write verb forwards to the store underneath, then brings the image up
 /// to date. Once the image is filled, every read that reads stored rows is
@@ -63,9 +54,10 @@ use jojobot_domain::memory::{
 pub struct Folded {
     writer: crate::writer::Writer,
     inner: Arc<dyn Memory>,
-    /// The image, once a [`rebuild`](Folded::rebuild) has filled it; `None`
-    /// sends every read to the store.
-    image: Arc<RwLock<Option<Image>>>,
+    /// **Set once a [`rebuild`](Folded::rebuild) has filled the fold**, and dropped by a
+    /// refresh that failed; `None` sends every read to the store. The fold holds no copy
+    /// of what the claims State answers: this is the mark that the State is the answer.
+    filled: Arc<RwLock<Option<Filled>>>,
     /// Set by the first `rebuild`, whether or not its fill succeeded. A fill that
     /// failed, or a refresh that failed, leaves no image, and this is what tells
     /// the next write to fill it again.
@@ -105,6 +97,9 @@ impl HeldKinds {
     }
 }
 
+/// The mark that the fold is filled: the claims State answers its reads.
+struct Filled;
+
 /// **Why a refresh got no answer from the claims State.**
 enum Unseen {
     /// The fold holds no State: the store beneath keeps none and the writer holds no
@@ -124,7 +119,7 @@ impl Folded {
         Folded {
             writer: crate::writer::Writer::default(),
             inner,
-            image: Arc::new(RwLock::new(None)),
+            filled: Arc::new(RwLock::new(None)),
             wanted: Arc::new(AtomicBool::new(false)),
             kinds: Arc::new(RwLock::new(None)),
             before_the_import: Arc::new(AtomicBool::new(false)),
@@ -200,8 +195,9 @@ impl Folded {
         self.writer.clone()
     }
 
-    /// Fill the image from a full read of the store — the boot path. Returns
-    /// how many things were held.
+    /// Fill the fold — the boot path: read the kinds the store declares and mark the
+    /// fold filled. Returns how many things the claims State lists, or none while it
+    /// holds no State.
     pub async fn rebuild(&self) -> Result<usize, MemoryError> {
         let this = self.clone();
         self.writer
@@ -212,7 +208,7 @@ impl Folded {
                     ));
                 }
                 // **Wanted from the first attempt, whether or not it succeeds**: a fill that
-                // failed leaves no image, and the next write fills it again.
+                // failed leaves the fold unfilled, and the next write fills it again.
                 this.wanted.store(true, Ordering::SeqCst);
                 this.fill().await
             })
@@ -220,21 +216,18 @@ impl Folded {
     }
 
     /// The read behind [`rebuild`](Folded::rebuild), for a caller that already
-    /// runs in the writer task. A failure leaves no image rather than a half one.
+    /// runs in the writer task. A failure leaves the fold unfilled.
     async fn fill(&self) -> Result<usize, MemoryError> {
-        let filled = crate::writer::sql::reading(Box::pin(async {
-            let image = Image::load(&*self.inner).await?;
-            let kinds = self.inner.declared_kinds().await?;
-            Ok::<_, MemoryError>((image, kinds))
-        }))
-        .await;
+        let filled = crate::writer::sql::reading(Box::pin(self.inner.declared_kinds())).await;
         match filled {
-            Ok((image, kinds)) => {
-                let held = image.len();
+            Ok(kinds) => {
+                let held = self
+                    .claims(|state| state.stored_listing().len())
+                    .unwrap_or(0);
                 *self.kinds.write().expect("kinds lock") = Some(HeldKinds::of(kinds));
                 {
-                    let mut slot = self.image.write().expect("fold lock");
-                    *slot = Some(image);
+                    let mut slot = self.filled.write().expect("fold lock");
+                    *slot = Some(Filled);
                     self.generation.fetch_add(1, Ordering::SeqCst);
                 }
                 self.publish_things(Vec::new(), true);
@@ -242,7 +235,7 @@ impl Folded {
             }
             Err(e) => {
                 if !self.writer.rail_uncertain("memory") {
-                    let mut slot = self.image.write().expect("fold lock");
+                    let mut slot = self.filled.write().expect("fold lock");
                     *slot = None;
                     self.generation.fetch_add(1, Ordering::SeqCst);
                 }
@@ -286,10 +279,9 @@ impl Folded {
         }
     }
 
-    /// Answer from the image when one is held; `None` sends the read to the
-    /// store.
-    fn held<T>(&self, read: impl FnOnce(&Image) -> T) -> Option<T> {
-        self.image.read().expect("fold lock").as_ref().map(read)
+    /// Answer when the fold is filled; `None` sends the read to the store.
+    fn held<T>(&self, read: impl FnOnce(&Filled) -> T) -> Option<T> {
+        self.filled.read().expect("fold lock").as_ref().map(read)
     }
 
     /// Bring the image up to date with a write that touched only `handle`:
@@ -341,70 +333,24 @@ impl Folded {
         if self.held(|_| ()).is_none() {
             return self.fill().await.map(|_| ());
         }
-        // **The listing after an entity write is built from the claims State this
-        // write has just changed**, and a claim write changes nothing the image
-        // holds. A State that cannot be had fails the refresh
-        // ([`Folded::without_state`]). Two things are read from the store, each a
-        // named decline and not a missing State:
-        // - a thing a merge touched: TEMPORARY(9.3.4), owner card
-        //   `q-934-merge-version-row-in-state`, the merge's own row, which the
-        //   store lists as a version of the folded handle;
-        // - a role: its lease renewals are heartbeats kept off the log, so the State
-        //   does not hold what a read of it serves: TEMPORARY(9.3.4), owner card
-        //   `q-934-role-lease-read-from-heartbeat-home`.
-        // **A record the build supplies is no decline**: the State holds it under its
-        // supply identity and the layer over the fold lays the shipped half on top.
-        let from_the_store = self.before_the_import.load(Ordering::SeqCst);
-        if !from_the_store && !relist && self.is_supplied_only(handle) {
+        // **Nothing is read again**: the claims State holds the write, and the listing, the
+        // rename history and a thing's document are read from it when a read asks. What a
+        // refresh checks is that the State can still be had: one that cannot fails the
+        // refresh ([`Folded::without_state`]) and leaves the fold unfilled, so every read
+        // goes to the store. **A record the build supplies is no decline**: the State holds it
+        // under its supply identity and the layer over the fold lays the shipped half on top.
+        let before_the_import = self.before_the_import.load(Ordering::SeqCst);
+        if !before_the_import
+            && (relist || !self.is_supplied_only(handle))
+            && let Err(unseen) = self.claims(|_| ())
+        {
+            let mut slot = self.filled.write().expect("fold lock");
+            *slot = None;
             self.generation.fetch_add(1, Ordering::SeqCst);
-            return Ok(());
+            return Err(Self::without_state(unseen));
         }
-        let stated = if from_the_store {
-            Ok(None)
-        } else {
-            self.claims(|state| {
-                let object = state.resolve(&handle.0)?;
-                if state.was_merged(object) || state.holds_a_lease(object) {
-                    return None;
-                }
-                Some(relist.then(|| state.stored_listing()))
-            })
-        };
-        let read = async {
-            match stated {
-                Err(unseen) => Err(Self::without_state(unseen)),
-                Ok(Some(entities)) => Ok(entities),
-                Ok(None) if relist => Ok(Some(self.inner.list_entities(None).await?)),
-                Ok(None) => Ok(None),
-            }
-        }
-        .await;
-        match read {
-            Ok(entities) => {
-                if let Some(image) = self.image.write().expect("fold lock").as_mut() {
-                    if let Some(entities) = entities {
-                        image.install(entities);
-                    }
-                    self.generation.fetch_add(1, Ordering::SeqCst);
-                }
-                Ok(())
-            }
-            Err(e) => {
-                let mut slot = self.image.write().expect("fold lock");
-                *slot = None;
-                self.generation.fetch_add(1, Ordering::SeqCst);
-                Err(e)
-            }
-        }
-    }
-
-    /// Bring the image up to date with a write that may have touched any thing:
-    /// a rename, a merge, a declaration. The whole image is read again.
-    async fn reload(&self) -> Result<(), MemoryError> {
-        if !self.wanted.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-        self.fill().await.map(|_| ())
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
 
     /// Keep the last published image until an uncertain write's rail has been
@@ -422,6 +368,54 @@ impl Folded {
                 .publish(crate::writer::publish::Change::Began(began));
         }
         crate::writer::recovery::guarded(&self.writer, "memory", write, || self.fill()).await
+    }
+
+    /// **Where an address went when its thing was merged away**, followed through a
+    /// survivor merged later, from the claims State: the thing a spelling names, folded
+    /// or not, and the merge events. `None` when the fold is not filled or holds no State;
+    /// `Some(Ok(None))` when no event moved the address.
+    fn moved_by_state(
+        &self,
+        address: &FactAddress,
+    ) -> Option<Result<Option<FactAddress>, jojobot_domain::memory::claim_walk::MergeLoop>> {
+        use jojobot_domain::memory::claim_walk::{MergeLoop, follow_claim, moves_in};
+        self.held(|_| ())?;
+        self.claims(|state| {
+            let Some(home) = state.own_handle_named(&address.home) else {
+                return Ok(None);
+            };
+            let events = state.merge_events(None);
+            let moved =
+                follow_claim::<_, MergeLoop>(home, address.local.clone(), moves_in(&events))?;
+            Ok(moved.map(|(survivor, now)| FactAddress::new(survivor, now)))
+        })
+        .ok()
+    }
+
+    /// **A rename or a merge moves a handle, and nothing is read again**: the claims
+    /// State holds the write. The index is told the things the write names and the things
+    /// that point at them, worked out from the State's records.
+    async fn followed(&self, named: [&EntityId; 2]) -> Result<(), MemoryError> {
+        if !self.wanted.load(Ordering::SeqCst) {
+            self.publish_things(Vec::new(), true);
+            return Ok(());
+        }
+        if self.held(|_| ()).is_none() {
+            return self.fill().await.map(|_| ());
+        }
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        let mut touched: Vec<EntityId> = named.iter().map(|id| (*id).clone()).collect();
+        for id in named {
+            if let Ok(holders) = self.claims(|state| state.holders_of(id)) {
+                for holder in holders {
+                    if !touched.contains(&holder) {
+                        touched.push(holder);
+                    }
+                }
+            }
+        }
+        self.publish_things(touched, true);
+        Ok(())
     }
 
     /// A write that has no [`Landed`] to carry its own answer, whose image could
@@ -560,7 +554,8 @@ impl Folded {
     }
 
     fn readable(&self) -> Result<(), MemoryError> {
-        if self.writer.rail_uncertain("memory") && self.image.read().expect("fold lock").is_none() {
+        if self.writer.rail_uncertain("memory") && self.filled.read().expect("fold lock").is_none()
+        {
             self.unheld()?;
         }
         Ok(())
@@ -713,23 +708,35 @@ impl Memory for Folded {
 
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.list(kind)) {
-            Some(listing) => Ok(listing),
-            None => self.inner.list_entities(kind).await,
+        if self.held(|_| ()).is_some() {
+            match self.claims(|state| state.stored_listing()) {
+                Ok(listing) => {
+                    return Ok(listing
+                        .into_iter()
+                        .filter(|entity| kind.is_none_or(|kind| entity.kind == kind))
+                        .collect());
+                }
+                Err(_) => self.unheld()?,
+            }
         }
+        self.inner.list_entities(kind).await
     }
 
     async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
         self.readable()?;
-        let (Some(mut former), Some(listing)) = (
-            self.held(Image::former),
-            self.held(|image| image.list(None)),
-        ) else {
+        if self.held(|_| ()).is_none() {
             return self.inner.former_handles().await;
-        };
-        // **The handles the held numbers make are derived from the State at read
-        // time and stored nowhere**, so a number that moves takes its handle with it.
+        }
+        // **The rename history and the handles the held numbers make are read from the
+        // State when a read asks and stored nowhere**, so a number that moves takes its
+        // handle with it.
         let derived = self.claims(|state| {
+            let mut former: Vec<FormerHandle> = state
+                .former_handles()
+                .into_iter()
+                .filter(|f| jojobot_domain::memory::numbered::numbered_handle(&f.former).is_none())
+                .collect();
+            let listing = state.stored_listing();
             let declared = state.declared_types_shared();
             let fields: std::collections::BTreeMap<_, _> = listing
                 .iter()
@@ -738,19 +745,18 @@ impl Memory for Folded {
                     Some((entity.id.clone(), state.fields(object, &declared)))
                 })
                 .collect();
-            if !fields
+            if fields
                 .values()
                 .any(|held| held.contains_key(jojobot_domain::memory::numbered::NUMBERS_BY))
             {
-                return Vec::new();
+                former.extend(jojobot_domain::memory::numbered::derived_formers(
+                    &listing, &fields,
+                ));
             }
-            jojobot_domain::memory::numbered::derived_formers(&listing, &fields)
+            former
         });
         match derived {
-            Ok(derived) => {
-                former.extend(derived);
-                Ok(former)
-            }
+            Ok(former) => Ok(former),
             Err(_) => {
                 self.unheld()?;
                 self.inner.former_handles().await
@@ -783,7 +789,7 @@ impl Memory for Folded {
     /// The handle a thing answers to, the parent of each thing under it, and every
     /// record, field and mention that names it are all served under the handle it
     /// wears now, so every document that spells the old handle is read again, and
-    /// no other (see [`image::patch`]).
+    /// no other.
     async fn rename_entity(
         &self,
         from: &EntityId,
@@ -822,12 +828,8 @@ impl Memory for Folded {
                 .rename_entity(from, to, parent, date, resemblance, session)
                 .await?;
             if let Guarded::Written(entity) = &renamed {
-                let patch = image::patch::Change::Renamed {
-                    from,
-                    to: &entity.id,
-                };
-                let followed = self.patched_or_reloaded(patch).await;
-                // **An image that could not follow still tells the index which
+                let followed = self.followed([from, &entity.id]).await;
+                // **A fold that could not follow still tells the index which
                 // things the rename touched**, so it re-reads them itself.
                 if followed.is_err() {
                     self.publish_things(vec![from.clone(), entity.id.clone()], true);
@@ -974,7 +976,7 @@ impl Memory for Folded {
         address: &FactAddress,
     ) -> Result<Option<FactAddress>, MemoryError> {
         self.readable()?;
-        match self.held(|image| image.moved(address)) {
+        match self.moved_by_state(address) {
             Some(answer) => Ok(answer?),
             None => self.inner.moved_address(address).await,
         }
@@ -1316,7 +1318,7 @@ impl Memory for Folded {
     /// thing's claims are served from the survivor (see [`Memory::merge`]), and
     /// every record that named the folded thing now reads as naming the survivor,
     /// so the two ends and every holder in between are read again, and no other
-    /// document (see [`image::patch`]).
+    /// document.
     async fn merge(
         &self,
         folded: &EntityId,
@@ -1351,11 +1353,10 @@ impl Memory for Folded {
                 .inner
                 .merge(folded, survivor, reason, date, caller, session)
                 .await?;
-            let patch = image::patch::Change::Merged { folded, survivor };
-            match self.patched_or_reloaded(patch).await {
+            match self.followed([folded, survivor]).await {
                 Ok(()) => Ok(done),
                 Err(source) => {
-                    // The index re-reads both things itself when the image could
+                    // The index re-reads both things itself when the fold could
                     // not follow the merge.
                     self.publish_things(vec![folded.clone(), survivor.clone()], true);
                     Err(fold_behind(Landed::Merge(Box::new(done)), source))
@@ -1394,16 +1395,13 @@ impl Memory for Folded {
                 .merge_with_claim(folded, survivor, reason, date, caller, claim)
                 .await?
             {
-                Guarded::Written((done, fact)) => {
-                    let patch = image::patch::Change::Merged { folded, survivor };
-                    match self.patched_or_reloaded(patch).await {
-                        Ok(()) => Ok(Guarded::Written((done, fact))),
-                        Err(source) => {
-                            self.publish_things(vec![folded.clone(), survivor.clone()], true);
-                            Err(fold_behind(Landed::Merge(Box::new(done)), source))
-                        }
+                Guarded::Written((done, fact)) => match self.followed([folded, survivor]).await {
+                    Ok(()) => Ok(Guarded::Written((done, fact))),
+                    Err(source) => {
+                        self.publish_things(vec![folded.clone(), survivor.clone()], true);
+                        Err(fold_behind(Landed::Merge(Box::new(done)), source))
                     }
-                }
+                },
                 blocked => Ok(blocked),
             }
         }))
@@ -1443,7 +1441,17 @@ impl Memory for Folded {
         // lists such a thing is refused whole while the rail is uncertain**, since the
         // one read for it may not cross the rail (pinned by
         // `a_scan_listing_a_declined_thing_is_refused_whole_while_the_rail_is_uncertain`).
-        let Some(listed) = self.held(|image| image.list(None)) else {
+        let listed = match self.held(|_| ()) {
+            Some(()) => match self.claims(|state| state.stored_listing()) {
+                Ok(listed) => Some(listed),
+                Err(_) => {
+                    self.unheld()?;
+                    None
+                }
+            },
+            None => None,
+        };
+        let Some(listed) = listed else {
             return self.inner.scan().await;
         };
         // **Most things declined: one read of the store for the lot.** Before the
@@ -1579,7 +1587,7 @@ impl Memory for Folded {
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
         self.readable()?;
         let held = {
-            let slot = self.image.read().expect("fold lock");
+            let slot = self.filled.read().expect("fold lock");
             slot.as_ref()
                 .map(|_| self.generation.load(Ordering::SeqCst) as i64)
         };
@@ -1634,7 +1642,7 @@ impl Memory for Folded {
         self.readable()?;
         // An address on a thing merged away is moved first, when the merge kept
         // an event.
-        match self.held(|image| image.moved(source)) {
+        match self.moved_by_state(source) {
             Some(Err(looped)) => return Err(looped.into()),
             Some(Ok(Some(moved))) => {
                 return self.built_on_here(&moved).await;
@@ -1893,6 +1901,8 @@ mod landed_tests;
 mod refresh_from_state_tests;
 #[cfg(test)]
 mod stalled_read;
+#[cfg(test)]
+mod state_lists_tests;
 #[cfg(test)]
 mod supplied_over_the_fold_tests;
 #[cfg(test)]
