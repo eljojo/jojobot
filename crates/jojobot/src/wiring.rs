@@ -406,14 +406,14 @@ pub async fn fill_memory(folded: &Folded, indexed: &IndexedMemory) {
     fill_search(indexed).await;
 }
 
-/// **The fold's fill**: one full read of the store's lists and merge events.
+/// **The fold's fill**: the read of the kinds the store declares.
 async fn fill_fold(folded: &Folded) {
     let filling = std::time::Instant::now();
     match folded.rebuild().await {
         Ok(things) => tracing::info!(
             things,
             elapsed_ms = filling.elapsed().as_millis() as u64,
-            "fold: everything the memory verbs read is held in memory, from a full read"
+            "fold: the claims State answers every memory read"
         ),
         Err(e) => tracing::warn!(
             error = %e,

@@ -95,6 +95,9 @@ async fn a_rename_and_a_merge_reach_the_next_listing_with_no_read_of_the_stores_
 /// followed to where the claim is now.** The thing is renamed and then merged into
 /// another, and the claim is asked for by the first handle it wore: the rename
 /// history finds the thing, and the merge events find where its claims went.
+///
+/// This case guards the State read that replaced the image's. It also passes on the
+/// image, so it is not a red-first case.
 #[tokio::test]
 async fn an_address_under_a_former_handle_follows_the_thing_through_a_merge() {
     let (folded, _) = folded_over_a_counted_fake().await;

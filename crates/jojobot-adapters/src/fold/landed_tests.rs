@@ -224,7 +224,7 @@ async fn a_write_that_lands_and_a_refresh_that_fails_answers_landed_not_failed()
     };
     assert_eq!(fact.content, "captured while the fold could not refresh");
     assert!(
-        folded.held(|_| ()).is_none(),
+        folded.held().is_none(),
         "nothing was installed from the State it could not trust: the image is dropped"
     );
 

@@ -26,7 +26,7 @@ async fn folded_over_a_counted_fake() -> (Folded, Arc<Counted>, Arc<InMemoryMemo
 /// apart, because the store holds what the fresh fold holds.
 fn assert_held(folded: &Folded, case: &str) {
     assert!(
-        folded.held(|_| ()).is_some(),
+        folded.held().is_some(),
         "{case}: the refresh dropped the image, and the reads went to the store"
     );
 }

@@ -191,3 +191,48 @@ async fn a_holder_query_with_nothing_declined_is_served_from_the_state_while_the
     assert!(held.is_empty(), "{held:?}");
     assert_eq!(counted.calls(), 0, "the query crossed the rail");
 }
+
+/// A State that lends nothing, as the seam does while it is behind the log.
+struct UntrustedState;
+
+impl jojobot_domain::log::claims::ClaimsLender for UntrustedState {
+    fn lend(&self, _read: &mut dyn FnMut(&jojobot_domain::log::claims::State)) -> bool {
+        false
+    }
+}
+
+struct WithoutAState(Arc<InMemoryMemory>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for WithoutAState {
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        Some(Arc::new(UntrustedState))
+    }
+}
+
+/// **Where an address went is never read across an uncertain rail.** The State lends
+/// nothing, so the fold would fall back to the store, which may hold a merge the
+/// State does not: the read is refused and asks the store nothing.
+#[tokio::test]
+async fn an_address_the_state_cannot_follow_is_refused_while_the_rail_is_uncertain() {
+    let counted = Arc::new(Counted::new(Arc::new(WithoutAState(Arc::new(
+        InMemoryMemory::booted(),
+    )))));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold fills");
+    folded.writer().mark_uncertain("memory");
+    counted.reset();
+
+    let asked = FactAddress::new(EntityId::person("person:alpha"), FactId("f1".into()));
+    let refused = folded.moved_address(&asked).await;
+    assert!(
+        matches!(&refused, Err(MemoryError::Store(why)) if why.contains("uncertain")),
+        "the address read went on: {refused:?}"
+    );
+    assert_eq!(
+        counted.calls(),
+        0,
+        "the read crossed the rail: {:?}",
+        counted.seen()
+    );
+}
