@@ -1053,20 +1053,23 @@ fn a_guarded_key_is_written_only_by_whom_its_declaration_licenses() {
 
 /// **The keys jojobot writes itself are refused on the verb**, whoever asks, and
 /// are the engine's own to write.
+/// **A key the verb computed is its own to write**: the due moment of a check-in
+/// and the stamp of a defrag ride the call as derived keys, and the guard on the
+/// keys jojobot writes judges what a caller sent, never what the verb worked out.
 #[test]
-fn a_key_jojobot_writes_itself_is_refused_on_the_verb_and_not_on_the_engine() {
+fn server_written_keys_are_reserved_except_for_engine_or_derived_writes() {
     let (state, declared) = world();
-    for key in [
-        "due_on",
-        " due_on ",
-        "defragged_at",
-        "review_mark",
-        "settings_record",
-        "engine_record",
-        "release_notes_told",
-        "archive_reason",
+    for (key, computed) in [
+        ("due_on", true),
+        (" due_on ", false),
+        ("defragged_at", true),
+        ("review_mark", true),
+        ("settings_record", false),
+        ("engine_record", false),
+        ("release_notes_told", false),
+        ("archive_reason", false),
     ] {
-        let sent = CaptureRequest {
+        let mut sent = CaptureRequest {
             fields: BTreeMap::from([(key.to_string(), "v".to_string())]),
             ..request("alpha")
         };
@@ -1077,38 +1080,15 @@ fn a_key_jojobot_writes_itself_is_refused_on_the_verb_and_not_on_the_engine() {
             }),
             "{key}"
         );
-        let engine = CaptureRequest {
-            route: Route::Engine,
-            ..sent
-        };
-        assert!(prepare(&state, &declared, &engine).is_ok(), "{key}");
-    }
-}
-
-/// **A key the verb computed is its own to write**: the due moment of a check-in
-/// and the stamp of a defrag ride the call as derived keys, and the guard on the
-/// keys jojobot writes judges what a caller sent, never what the verb worked out.
-#[test]
-fn a_key_the_verb_computed_is_not_refused_as_server_written() {
-    let (state, declared) = world();
-    for key in ["due_on", "defragged_at", "review_mark"] {
-        let computed = CaptureRequest {
-            fields: BTreeMap::from([(key.to_string(), "v".to_string())]),
-            derived: BTreeSet::from([key.to_string()]),
-            ..request("alpha")
-        };
-        assert!(prepare(&state, &declared, &computed).is_ok(), "{key}");
-        let sent = CaptureRequest {
-            derived: BTreeSet::new(),
-            ..computed
-        };
-        assert_eq!(
-            prepare(&state, &declared, &sent),
-            Err(Refusal::ServerWritten {
-                key: key.to_string()
-            }),
-            "{key}"
-        );
+        if computed {
+            let derived = CaptureRequest {
+                derived: BTreeSet::from([key.to_string()]),
+                ..sent.clone()
+            };
+            assert!(prepare(&state, &declared, &derived).is_ok(), "{key}");
+        }
+        sent.route = Route::Engine;
+        assert!(prepare(&state, &declared, &sent).is_ok(), "{key}");
     }
 }
 
