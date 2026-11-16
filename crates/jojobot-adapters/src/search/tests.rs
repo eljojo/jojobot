@@ -7915,40 +7915,71 @@ async fn a_persons_box_renamed_between_the_scan_and_the_listing_is_not_indexed()
     );
 }
 
-/// **A message removed from the store stops being served, with no write to
-/// prompt it.** Rule 60 puts true removal outside jojobot, so nothing calls
-/// a refresh and the read path is the only place that can notice.
+/// **A message that leaves the board stops being served, with no write to prompt it, however
+/// it left.** Rule 60 puts true removal outside jojobot, so nothing calls a refresh and the read
+/// path is the only place that can notice. A card that has become unreadable, or that a person
+/// quarantined on purpose, is the same absence: neither has machinery of its own in the index,
+/// because a board read leaves both out and each arrives as a message the scan no longer carries.
 #[tokio::test]
-async fn a_message_removed_from_the_store_stops_being_served() {
-    let (inner, _mail, port) = a_board_of_two().await;
-    for present in ["kiln", "damper"] {
+async fn a_message_that_leaves_the_board_stops_being_served() {
+    #[derive(Debug)]
+    enum Left {
+        RemovedFromTheStore,
+        DamagedBeyondReading,
+        QuarantinedOnPurpose,
+    }
+    for left in [
+        Left::RemovedFromTheStore,
+        Left::DamagedBeyondReading,
+        Left::QuarantinedOnPurpose,
+    ] {
+        let (inner, mail, port) = a_board_of_two().await;
+        for present in ["kiln", "damper"] {
+            assert_eq!(
+                port.search(&asking_for_mail(present))
+                    .await
+                    .expect("search ok")
+                    .len(),
+                1,
+                "{left:?}: {present:?} is served while both messages are on the board"
+            );
+        }
+
+        match left {
+            Left::RemovedFromTheStore => inner.lose(&MessageId("1".into())),
+            Left::DamagedBeyondReading => inner.quarantine_by_damage(
+                &MailboxName("pm".into()),
+                &MessageId("1".into()),
+                "the card cannot be read",
+            ),
+            Left::QuarantinedOnPurpose => drop(
+                mail.quarantine(
+                    &MessageId("1".into()),
+                    &MailboxName("pm".into()),
+                    "pm decided to quarantine it",
+                    jojobot_domain::mailbox::Acting::unnamed(jiff::Timestamp::now()),
+                )
+                .await
+                .expect("quarantine ok"),
+            ),
+        }
+
+        assert!(
+            port.search(&asking_for_mail("kiln"))
+                .await
+                .expect("search ok")
+                .is_empty(),
+            "{left:?}: the message left the board, so search must stop serving it"
+        );
         assert_eq!(
-            port.search(&asking_for_mail(present))
+            port.search(&asking_for_mail("damper"))
                 .await
                 .expect("search ok")
                 .len(),
             1,
-            "{present:?} is served while both messages are on the board"
+            "{left:?}: the one still on the board is still served"
         );
     }
-
-    inner.lose(&MessageId("1".into()));
-
-    assert!(
-        port.search(&asking_for_mail("kiln"))
-            .await
-            .expect("search ok")
-            .is_empty(),
-        "the message left the board, so search must stop serving it"
-    );
-    assert_eq!(
-        port.search(&asking_for_mail("damper"))
-            .await
-            .expect("search ok")
-            .len(),
-        1,
-        "…and the one still on the board is still served"
-    );
 }
 
 /// **A message the index learned from a verb leaves it like any other.**
@@ -7987,69 +8018,6 @@ async fn a_message_indexed_by_a_verb_stops_being_served_when_it_leaves_the_board
         1,
         "…and the message posted beside it is still served, so both really \
              reached the index"
-    );
-}
-
-/// **A card that has become unreadable is the same absence**, and it costs
-/// no machinery of its own: a board read leaves a quarantined card out, so
-/// it arrives at the index as a message the scan no longer carries.
-#[tokio::test]
-async fn a_quarantined_card_stops_being_served_too() {
-    let (inner, _mail, port) = a_board_of_two().await;
-
-    inner.quarantine_by_damage(
-        &MailboxName("pm".into()),
-        &MessageId("1".into()),
-        "the card cannot be read",
-    );
-
-    assert!(
-        port.search(&asking_for_mail("kiln"))
-            .await
-            .expect("search ok")
-            .is_empty(),
-        "jojobot cannot read it, so search must not go on serving its content"
-    );
-    assert_eq!(
-        port.search(&asking_for_mail("damper"))
-            .await
-            .expect("search ok")
-            .len(),
-        1,
-        "…and the readable one beside it is untouched"
-    );
-}
-
-/// **A card quarantined ON PURPOSE is the same absence as one damaged by
-/// storage.** Neither has machinery of its own in the index: both arrive as
-/// a message the board read no longer carries.
-#[tokio::test]
-async fn a_deliberately_quarantined_card_stops_being_served_too() {
-    let (_inner, mail, port) = a_board_of_two().await;
-
-    mail.quarantine(
-        &MessageId("1".into()),
-        &MailboxName("pm".into()),
-        "pm decided to quarantine it",
-        jojobot_domain::mailbox::Acting::unnamed(jiff::Timestamp::now()),
-    )
-    .await
-    .expect("quarantine ok");
-
-    assert!(
-        port.search(&asking_for_mail("kiln"))
-            .await
-            .expect("search ok")
-            .is_empty(),
-        "quarantined on purpose is still unreadable, so search must not serve it"
-    );
-    assert_eq!(
-        port.search(&asking_for_mail("damper"))
-            .await
-            .expect("search ok")
-            .len(),
-        1,
-        "…and the readable one beside it is untouched"
     );
 }
 
