@@ -135,7 +135,7 @@ fn readiness_and_blockers_cover_finished_waiting_and_missing_work() {
     let waiting_only = bag(&[("waiting_on", "person:milhouse")]);
     let now_phi = bag(&[("status", "now"), ("depends_on", "work:phi")]);
     let waits_on = || Blocker::WaitingOn("person:milhouse".into());
-    for (world, fields, archived, expected) in [
+    for (row, (world, fields, archived, expected)) in [
         (&finished, &both_done, false, vec![]),
         (
             &unfinished,
@@ -209,13 +209,20 @@ fn readiness_and_blockers_cover_finished_waiting_and_missing_work() {
         (&consistent, &waiting_only, false, vec![waits_on()]),
         (&consistent, &done, false, vec![Blocker::Finished]),
         (&consistent, &now_phi, false, vec![]),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let subject = Subject {
             archived,
             ..item(fields)
         };
-        assert_eq!(is_ready(&subject, world), expected.is_empty(), "{fields:?}");
-        assert_eq!(blocked_by(&subject, world), expected, "{fields:?}");
+        assert_eq!(
+            is_ready(&subject, world),
+            expected.is_empty(),
+            "{row}: {fields:?}"
+        );
+        assert_eq!(blocked_by(&subject, world), expected, "{row}: {fields:?}");
     }
 }
 
