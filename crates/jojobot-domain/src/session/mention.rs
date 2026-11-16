@@ -720,6 +720,22 @@ mod tests {
             .unwrap_or_else(|| panic!("the guard must not block a fresh handle {id}"));
     }
 
+    async fn rename(memory: &dyn Memory, was: &EntityId, now: &EntityId) {
+        memory
+            .rename_entity(
+                was,
+                now,
+                None,
+                date(2026, 6, 2),
+                crate::memory::Override::none(),
+                None,
+            )
+            .await
+            .expect("rename_entity should succeed")
+            .written()
+            .expect("the guard must not block the rename");
+    }
+
     fn new_session(bot: crate::memory::EntityId, sid: &str, focus: String) -> NewSession {
         NewSession {
             bot,
@@ -793,19 +809,7 @@ mod tests {
             .expect("amend_beat should succeed");
         assert_eq!(beat_amended.text, format!("captured twice: @{was}"));
 
-        memory
-            .rename_entity(
-                &was,
-                &now,
-                None,
-                date(2026, 6, 2),
-                crate::memory::Override::none(),
-                None,
-            )
-            .await
-            .expect("rename_entity should succeed")
-            .written()
-            .expect("the guard must not block the rename");
+        rename(memory.as_ref(), &was, &now).await;
 
         let read_back = sessions
             .read_session(&session.id)
@@ -859,19 +863,7 @@ mod tests {
             .await
             .expect("begin should succeed");
 
-        memory
-            .rename_entity(
-                &was,
-                &now,
-                None,
-                date(2026, 6, 2),
-                crate::memory::Override::none(),
-                None,
-            )
-            .await
-            .expect("rename_entity should succeed")
-            .written()
-            .expect("the guard must not block the rename");
+        rename(memory.as_ref(), &was, &now).await;
 
         let after = sessions
             .begin(new_session(now.clone(), "sd04", "after the rename".into()))
@@ -938,19 +930,7 @@ mod tests {
             new_session(bot.clone(), sid, "a run".into())
         };
         let before = sessions.begin(begin(&was, "sd05")).await.expect("begin");
-        memory
-            .rename_entity(
-                &was,
-                &now,
-                None,
-                date(2026, 6, 2),
-                crate::memory::Override::none(),
-                None,
-            )
-            .await
-            .expect("rename_entity should succeed")
-            .written()
-            .expect("the guard must not block the rename");
+        rename(memory.as_ref(), &was, &now).await;
         sessions.begin(begin(&now, "sd06")).await.expect("begin");
 
         let counts = sessions.run_counts().await.expect("count ok");

@@ -493,6 +493,22 @@ mod tests {
             .unwrap_or_else(|| panic!("the guard must not block a fresh handle {id}"));
     }
 
+    async fn rename(memory: &dyn Memory, was: &EntityId, now: &EntityId) {
+        memory
+            .rename_entity(
+                was,
+                now,
+                None,
+                date(2026, 6, 2),
+                crate::memory::Override::none(),
+                None,
+            )
+            .await
+            .expect("rename_entity should succeed")
+            .written()
+            .expect("the guard must not block the rename");
+    }
+
     async fn fixture(
         memory: Arc<dyn Memory>,
         name: &str,
@@ -552,19 +568,7 @@ mod tests {
             .await
             .expect("mark_processed should succeed");
 
-        memory
-            .rename_entity(
-                &was,
-                &now,
-                None,
-                date(2026, 6, 2),
-                crate::memory::Override::none(),
-                None,
-            )
-            .await
-            .expect("rename_entity should succeed")
-            .written()
-            .expect("the guard must not block the rename");
+        rename(memory.as_ref(), &was, &now).await;
 
         let delivered = mailboxes
             .read_message(&posted.id, crate::mailbox::Acting::anyone_anytime())
@@ -630,19 +634,7 @@ mod tests {
             .expect("the guard must not block posting");
         assert_eq!(posted.sender, was.to_string());
 
-        memory
-            .rename_entity(
-                &was,
-                &now,
-                None,
-                date(2026, 6, 2),
-                crate::memory::Override::none(),
-                None,
-            )
-            .await
-            .expect("rename_entity should succeed")
-            .written()
-            .expect("the guard must not block the rename");
+        rename(memory.as_ref(), &was, &now).await;
 
         let delivered = mailboxes
             .read_message(&posted.id, crate::mailbox::Acting::anyone_anytime())
