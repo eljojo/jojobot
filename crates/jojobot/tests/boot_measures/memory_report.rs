@@ -160,7 +160,7 @@ impl Projection {
 /// report here, because the case asserts every projection was seen.
 const ENDINGS: [(&str, Projection); 9] = [
     (
-        "fold: everything the memory verbs read is held in memory",
+        "fold: the claims State answers every memory read",
         Projection::MemoryImage,
     ),
     (
@@ -1651,8 +1651,8 @@ RssShmem:\t       0 kB\nVmData:\t 2900000 kB\nThreads:\t24\n";
     /// them (crates/jojobot/src/wiring.rs), behind the prefix the log writes.
     const LINES: [(&str, Option<Projection>); 11] = [
         (
-            "2026-11-10T20:00:01.100Z  INFO jojobot::wiring: fold: everything the memory verbs \
-             read is held in memory, from a full read things=3208 elapsed_ms=900",
+            "2026-11-10T20:00:01.100Z  INFO jojobot::wiring: fold: the claims State answers every \
+             memory read things=3208 elapsed_ms=900",
             Some(Projection::MemoryImage),
         ),
         (
