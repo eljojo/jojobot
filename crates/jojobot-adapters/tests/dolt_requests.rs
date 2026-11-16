@@ -2155,52 +2155,6 @@ async fn an_unknown_kind_of_the_ledgers_own_family_stops_the_first_write() {
     assert_eq!(behind, 0, "nothing was appended behind the unknown member");
 }
 
-/// **A restart recognises the ids spent by mail, memory and session writes from
-/// the log alone.** The second writer replays the log; the old tables hold no
-/// row of these writes, and the repeat of each is found.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_restart_recognises_spent_ids_from_the_log_alone() {
-    let pool = shared_database("requests_restart")
-        .await
-        .expect("a database of its own");
-    migrate::run(&pool).await.expect("the schema");
-    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
-        .await
-        .expect("the kinds are seeded");
-    let first = request("bot:sigma", "r1");
-    {
-        jojobot_adapters::testing::import_claims_now(&pool).await;
-        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
-        let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
-        thing(&memory, "bot:sigma", "Sigma").await;
-        assert_eq!(
-            captured(
-                &memory,
-                first.clone(),
-                claim_about(&milhouse, "wears glasses")
-            )
-            .await,
-            (true, true)
-        );
-    }
-    let legacy: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_receipt")
-        .fetch_one(&pool)
-        .await
-        .expect("readable");
-    assert_eq!(legacy, 0, "the write left no row in the old table");
-
-    // A new writer is a new process: it holds nothing and replays the log.
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
-    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
-    let held = ledger
-        .lookup(&first.bot, &first.id)
-        .await
-        .expect("the ledger is readable")
-        .expect("the id is spent after a restart");
-    assert_eq!(held.digest, first.digest);
-    assert!(held.landed.contains("person:milhouse#"), "{}", held.landed);
-}
-
 /// **A restart recognises the ids a memory write, a mail write and a session
 /// write each spent, from the log alone, and a resend of each stores nothing.**
 /// The first process writes through the three rails under three ids; the second
@@ -2334,6 +2288,13 @@ async fn a_restart_recognises_the_ids_of_a_memory_a_mail_and_a_session_write() {
             .unwrap_or_else(|| panic!("{id} is spent after a restart"));
         assert_eq!(held.digest, expected.digest, "{id}");
         assert_eq!(held.verb, verb, "{id}");
+        if verb == "capture" {
+            assert!(
+                held.landed.contains("person:milhouse#"),
+                "{id}: {}",
+                held.landed
+            );
+        }
     }
     assert!(
         ledger
