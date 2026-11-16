@@ -13,9 +13,8 @@ use crate::memory::{
 
 /// The refusal a capture meets from its subject's kind, if it meets one.
 ///
-/// The open entries a list hung on the thing holds are not read: a state of
-/// claims does not yet answer which entries of a list stand open, so a write
-/// that finishes a thing is judged on its other rules alone.
+/// A transition to done gathers the live lists hung on the subject and hands
+/// their entries to the same gate every status write uses.
 pub(super) fn refuses_a_kind_misfit(
     state: &State,
     declared: &[DeclaredType],
@@ -65,5 +64,34 @@ pub(super) fn refuses_a_kind_misfit(
             }
         }
     }
-    memory::guard_fit_resolved(&kind, &before, &after, &governs, &resolved, &[]).err()
+    let mut hung = Vec::new();
+    if memory::done_gate::moves_to_done(&kind, &before, &after) {
+        for object in state.standing_objects() {
+            let Some(body) = state.object(object) else {
+                continue;
+            };
+            if body.kind.0 != "list"
+                || body.archived
+                || body
+                    .parent
+                    .as_ref()
+                    .is_none_or(|parent| state.survivor(parent) != home)
+            {
+                continue;
+            }
+            let fields = state.fields_served(object, declared);
+            let facts: Vec<_> = state
+                .records_homed_on(object)
+                .into_iter()
+                .filter_map(|record| state.fact(record))
+                .collect();
+            hung.push((fields, facts));
+        }
+    }
+    let lists: Vec<_> = hung
+        .iter()
+        .map(|(fields, facts)| memory::done_gate::HungList { fields, facts })
+        .collect();
+    let open = memory::done_gate::open_entries_of(&lists);
+    memory::guard_fit_resolved(&kind, &before, &after, &governs, &resolved, &open).err()
 }

@@ -199,3 +199,72 @@ async fn calls_racing_on_one_attempt_land_one_event() {
         );
     }
 }
+
+mod capture_done_gate {
+    //! The checklist contract through the capture job used by the served verb.
+
+    use std::sync::Arc;
+
+    use jojobot_adapters::dolt::memory::DoltMemory;
+    use jojobot_adapters::fold::Folded;
+    use jojobot_adapters::testing::{booted, shared_database};
+    use jojobot_domain::actor::Actor;
+    use jojobot_domain::log::claims::job::{CaptureJob, within};
+    use jojobot_domain::log::claims::{ClaimSize, Door, Measures};
+    use jojobot_domain::memory::testing::{InMemoryMemory, contract};
+
+    fn job() -> CaptureJob {
+        CaptureJob {
+            door: Arc::new(|_, _, _| {
+                Ok(Door {
+                    actor: Actor::Operator,
+                    owned_keys: Default::default(),
+                    owner_revoked: false,
+                    measures: Measures::default(),
+                    runs: Default::default(),
+                    run: None,
+                    aged_before: None,
+                })
+            }),
+            measure: Arc::new(|_, _, _| Measures {
+                claim: Some(ClaimSize {
+                    size: 1,
+                    room: 100,
+                    row: None,
+                }),
+                ..Measures::default()
+            }),
+            boot_floor: Arc::new(|_, _| Box::pin(async { None })),
+            run_bots: Arc::new(|_| Box::pin(async { Default::default() })),
+        }
+    }
+
+    #[tokio::test]
+    async fn capture_done_gate_in_memory() {
+        let memory = InMemoryMemory::booted();
+        within(
+            job(),
+            contract::done_open_entries::done_is_refused_while_a_checklist_has_an_open_entry(
+                &memory,
+            ),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn capture_done_gate_on_dolt() {
+        let pool = shared_database("capturedonegate").await.expect("database");
+        booted(&pool).await;
+        jojobot_adapters::testing::import_claims_now(&pool).await;
+        let memory = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
+        memory.rebuild().await.expect("the image fills");
+        within(
+            job(),
+            contract::done_open_entries::done_is_refused_while_a_checklist_has_an_open_entry(
+                &memory,
+            ),
+        )
+        .await;
+        memory.writer().drain().await;
+    }
+}
