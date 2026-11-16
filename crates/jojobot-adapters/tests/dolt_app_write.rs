@@ -205,6 +205,7 @@ mod capture_done_gate {
 
     use std::sync::Arc;
 
+    use jiff::civil::date;
     use jojobot_adapters::dolt::memory::DoltMemory;
     use jojobot_adapters::fold::Folded;
     use jojobot_adapters::testing::{booted, shared_database};
@@ -212,6 +213,7 @@ mod capture_done_gate {
     use jojobot_domain::log::claims::job::{CaptureJob, within};
     use jojobot_domain::log::claims::{ClaimSize, Door, Measures};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
+    use jojobot_domain::memory::{EntityId, Memory, MemoryError, NewFact, document};
 
     fn job() -> CaptureJob {
         CaptureJob {
@@ -258,12 +260,53 @@ mod capture_done_gate {
         jojobot_adapters::testing::import_claims_now(&pool).await;
         let memory = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
         memory.rebuild().await.expect("the image fills");
-        within(
-            job(),
+        within(job(), async {
             contract::done_open_entries::done_is_refused_while_a_checklist_has_an_open_entry(
                 &memory,
-            ),
-        )
+            )
+            .await;
+            let work = EntityId("work:contract-done-gate".into());
+            let list = EntityId("list:contract-done-gate-steps".into());
+            let open = memory
+                .capture(NewFact {
+                    fields: [(document::ORDER.into(), "o".into())].into(),
+                    ..NewFact::about(list, "another step", date(2026, 11, 2))
+                })
+                .await
+                .expect("the entry lands")
+                .written()
+                .expect("the entry is admitted");
+            let status = NewFact {
+                fields: [("status".into(), "done".into())].into(),
+                ..NewFact::about(work.clone(), "a claim status", date(2026, 11, 2))
+            };
+            memory
+                .capture(contract::state(NewFact {
+                    fields: [("status".into(), "now".into())].into(),
+                    ..status.clone()
+                }))
+                .await
+                .expect("leaving done is allowed")
+                .written()
+                .expect("the status is admitted");
+            let own = memory
+                .capture(status.clone())
+                .await
+                .expect("an own status does not finish the work")
+                .written()
+                .expect("the claim is admitted");
+            assert_eq!(own.fields["status"], "done");
+            assert!(own.sets.is_empty());
+            assert_eq!(memory.fields(&work).await.expect("reads")["status"], "now");
+            let refused = memory
+                .capture(contract::state(status))
+                .await
+                .expect_err("setting done is refused with an open entry");
+            let MemoryError::InvalidFact(message) = refused else {
+                panic!("expected the done gate, got {refused:?}");
+            };
+            assert!(message.contains(&open.address().to_string()), "{message}");
+        })
         .await;
         memory.writer().drain().await;
     }

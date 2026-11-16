@@ -523,7 +523,7 @@ pub fn prepare(
     }
     // The result is held to the subject's kind, after the ceiling as the store
     // reads it.
-    if let Some(refused) = kind::refuses_a_kind_misfit(state, declared, &home, request) {
+    if let Some(refused) = kind::refuses_a_kind_misfit(state, declared, &home, request, &classes) {
         return Err(Refusal::BreaksKind(refused));
     }
 

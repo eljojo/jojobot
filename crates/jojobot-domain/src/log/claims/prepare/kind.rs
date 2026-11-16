@@ -20,6 +20,7 @@ pub(super) fn refuses_a_kind_misfit(
     declared: &[DeclaredType],
     home: &ObjectId,
     request: &CaptureRequest,
+    classes: &BTreeMap<String, memory::WriteClass>,
 ) -> Option<MemoryError> {
     let kind = state.object(home)?.kind.0.clone();
     let keys = memory::kinds::keys_of(&kind);
@@ -35,12 +36,22 @@ pub(super) fn refuses_a_kind_misfit(
     };
     let writes = state.key_writes(home);
     let before = memory::folded_fields(&writes, declared);
+    let fields = request
+        .fields
+        .iter()
+        .filter(|(key, _)| {
+            classes
+                .get(key.trim())
+                .is_some_and(|class| memory::reaches_the_thing(*class))
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
     let id = FactId(request.record.0.clone());
     let after = memory::stood_after_record(
         &writes,
         &memory::NewRecord {
             id: &id,
-            fields: &request.fields,
+            fields: &fields,
             status: request.draft.status,
             provenance: request.draft.provenance,
             standing: request.draft.standing,

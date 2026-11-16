@@ -193,6 +193,7 @@ pub const ORDINARY: &[&str] = &[
     // type that holds several of a value, which read as handles now that `list`
     // is a kind.
     "list:checklist",
+    "list:contract-done-gate-steps",
     "list:contract-done-survivor",
     "list:contract-edge-steps",
     "list:contract-merged-away",
@@ -877,6 +878,7 @@ pub const ORDINARY: &[&str] = &[
     "work:contract-deploy-9",
     "work:contract-deploy-9-3",
     "work:contract-deploy-9-3-6",
+    "work:contract-done-gate",
     "work:contract-q-2317",
     "work:contract-q-2318",
     "work:contract-relabel-other",
