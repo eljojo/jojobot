@@ -2003,7 +2003,7 @@ mod tests {
     use super::*;
     use crate::dolt::tests::{free_port, marks};
     use crate::dolt::{Dolt, migrate};
-    use crate::testing::Scratch;
+    use crate::testing::{Scratch, shared_database};
 
     /// A draw that hands back a fixed sequence, so what the store does with a
     /// candidate it cannot use is watchable.
@@ -2036,19 +2036,17 @@ mod tests {
     /// another bot's run already wears.
     #[tokio::test]
     async fn a_drawn_id_something_already_wears_is_drawn_again() {
-        let scratch = Scratch::new("drawn-session-ids");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("drawn-session-ids")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
         // The rest of a boot: without it this process cannot read a handle,
         // which is what a caller meets rather than a state a suite hides.
-        migrate::seed_kinds(store.pool())
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
         let sessions = DoltSessions::drawing(
-            store.pool().clone(),
+            pool.clone(),
             rigged(&[
                 // the first run takes it
                 "aaaaaa", // the second run is handed the same one, twice, then a free one
@@ -2130,8 +2128,6 @@ mod tests {
             ],
             "both entries stand, in order, each with its own text"
         );
-
-        store.stop().await;
     }
 
     /// **A drawn entry id is free within its run, not across the store.** The
@@ -2141,19 +2137,17 @@ mod tests {
     /// widened to the whole table.
     #[tokio::test]
     async fn an_entry_id_only_has_to_be_free_inside_its_own_run() {
-        let scratch = Scratch::new("entry-id-scope");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("entry-id-scope")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
         // The rest of a boot: without it this process cannot read a handle,
         // which is what a caller meets rather than a state a suite hides.
-        migrate::seed_kinds(store.pool())
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
         let sessions = DoltSessions::drawing(
-            store.pool().clone(),
+            pool.clone(),
             rigged(&["aaaaaa", "bbbbbb", "eeeeee", "eeeeee"]),
         );
         let begin = async |slug: &str, sid: &str, at: &str| {
@@ -2193,8 +2187,6 @@ mod tests {
             ("eeeeee", "eeeeee"),
             "two runs may each hold an entry of the same id, and neither redraws"
         );
-
-        store.stop().await;
     }
 
     /// Put a session row on the board that jojobot cannot read, the way a hand
@@ -2368,16 +2360,14 @@ mod tests {
     /// resolves to changes.
     #[tokio::test]
     async fn a_sids_shape_is_checked_on_write_and_filtered_on_read() {
-        let scratch = Scratch::new("checked-sid-shape");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("checked-sid-shape")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
-        let sessions = DoltSessions::open(store.pool().clone());
+        let sessions = DoltSessions::open(pool.clone());
 
         // Uppercase is outside `SID_ALPHABET`, so this fails the shape check
         // on length-correct input — the fixture must actually be unreadable
@@ -2419,7 +2409,7 @@ mod tests {
         .bind(bad)
         .bind("2026-01-01T00:00:00Z")
         .bind(SessionState::Active.as_token())
-        .execute(store.pool())
+        .execute(&pool)
         .await
         .expect("the board takes the row");
 
@@ -2485,8 +2475,6 @@ mod tests {
             .find(|s| s.id == good.id)
             .expect("the good row is listed");
         assert_eq!(good_summary.sid, Some(Sid("gd01".into())));
-
-        store.stop().await;
     }
 
     /// **A stored `served_reset` that is not a whole number is no compaction.**
@@ -2529,20 +2517,18 @@ mod tests {
     /// global — which is why neither says the run did the work.
     #[tokio::test]
     async fn both_ends_of_a_run_are_marked_in_the_store() {
-        let scratch = Scratch::new("session-boundaries");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("session-boundaries")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
         // The rest of a boot: without it this process cannot read a handle,
         // which is what a caller meets rather than a state a suite hides.
-        migrate::seed_kinds(store.pool())
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
-        let sessions = DoltSessions::open(store.pool().clone());
+        let sessions = DoltSessions::open(pool.clone());
 
-        let before = marks(store.pool()).await;
+        let before = marks(&pool).await;
         let run = sessions
             .begin(NewSession {
                 timezone: None,
@@ -2557,7 +2543,7 @@ mod tests {
             .await
             .expect("begin ok");
 
-        let opened = marks(store.pool()).await;
+        let opened = marks(&pool).await;
         assert_eq!(
             opened.len(),
             before.len() + 1,
@@ -2575,7 +2561,7 @@ mod tests {
             .await
             .expect("close ok");
 
-        let ended = marks(store.pool()).await;
+        let ended = marks(&pool).await;
         assert_eq!(
             ended.len(),
             opened.len() + 1,
@@ -2587,8 +2573,6 @@ mod tests {
                 .any(|m| m.contains(run.id.as_str()) && m.contains("ended")),
             "the far end names the run and how it ended: {ended:?}"
         );
-
-        store.stop().await;
     }
 
     /// **A boundary that cannot be marked does not take the run down with it.**
@@ -2676,17 +2660,15 @@ mod tests {
     async fn migrate_mentions_rewrites_a_handle_stored_before_resolution_existed() {
         use jojobot_domain::memory::{Memory, NewEntity};
 
-        let scratch = Scratch::new("migrate-mentions-sessions");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("migrate-mentions-sessions")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
 
-        let memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        let memory = crate::dolt::memory::DoltMemory::open(pool.clone());
         memory
             .add_entity(NewEntity::new(
                 EntityId("thing:contract-migrate-mentions-was".to_string()),
@@ -2703,7 +2685,7 @@ mod tests {
             .await
             .expect("list_entities should succeed");
 
-        let sessions = DoltSessions::open(store.pool().clone());
+        let sessions = DoltSessions::open(pool.clone());
         let session = sessions
             .begin(NewSession {
                 bot: EntityId("bot:gamma".to_string()),
@@ -2759,8 +2741,6 @@ mod tests {
             .await
             .expect("a second run should succeed");
         assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");
-
-        store.stop().await;
     }
 
     /// 🚨 **The `bot` column's own migration** — a row `begin`s with a plain
@@ -2772,17 +2752,15 @@ mod tests {
     async fn migrate_bot_column_rewrites_a_handle_stored_before_resolution_existed() {
         use jojobot_domain::memory::{Memory, NewEntity};
 
-        let scratch = Scratch::new("migrate-bot-column-sessions");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("migrate-bot-column-sessions")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
 
-        let memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        let memory = crate::dolt::memory::DoltMemory::open(pool.clone());
         memory
             .add_entity(NewEntity::new(
                 EntityId("bot:contract-migrate-bot-column-gamma".to_string()),
@@ -2795,7 +2773,7 @@ mod tests {
             .expect("the guard must not block a fresh handle");
         memory.badge_the_unbadged().await.expect("badges are drawn");
 
-        let sessions = DoltSessions::open(store.pool().clone());
+        let sessions = DoltSessions::open(pool.clone());
         let session = sessions
             .begin(NewSession {
                 bot: EntityId("bot:contract-migrate-bot-column-gamma".to_string()),
@@ -2855,7 +2833,7 @@ mod tests {
 
         let stored: (String,) = sqlx::query_as("SELECT bot FROM session WHERE id = ?")
             .bind(session.id.as_str())
-            .fetch_one(store.pool())
+            .fetch_one(&pool)
             .await
             .expect("the row is there");
         let sigma = known
@@ -2873,8 +2851,6 @@ mod tests {
             .await
             .expect("a second run should succeed");
         assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");
-
-        store.stop().await;
     }
 
     /// **`add_served` against the real store — the migration's own column,
@@ -2885,17 +2861,15 @@ mod tests {
     /// the fake.
     #[tokio::test]
     async fn add_served_totals_across_writes_and_survives_a_close() {
-        let scratch = Scratch::new("session-served-chars");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("session-served-chars")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
 
-        let sessions = DoltSessions::open(store.pool().clone());
+        let sessions = DoltSessions::open(pool.clone());
         let handed = sessions
             .begin(NewSession {
                 bot: EntityId("bot:milhouse".to_string()),
@@ -2983,8 +2957,6 @@ mod tests {
             .expect("add_served ok");
         let regrown = sessions.read_session(&handed.id).await.expect("read ok");
         assert_eq!(regrown.served_chars, 7, "counting resumes from the restart");
-
-        store.stop().await;
     }
 
     /// 🚨 **`add_served` needs to know the row is there, never its
@@ -2997,16 +2969,14 @@ mod tests {
     /// `served_chars` is not a word anything is ever searched for.
     #[tokio::test]
     async fn add_served_neither_parses_the_chronology_nor_signals_the_search_index() {
-        let scratch = Scratch::new("session-served-chars-cost");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("session-served-chars-cost")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
-        let sessions = DoltSessions::open(store.pool().clone());
+        let sessions = DoltSessions::open(pool.clone());
 
         let busy = sessions
             .begin(NewSession {
@@ -3069,8 +3039,6 @@ mod tests {
             read_back.served_chars, 120,
             "the accounting itself must still run: {read_back:?}"
         );
-
-        store.stop().await;
     }
 
     /// **A served total is added to a row that is there, in one statement.**
@@ -3080,16 +3048,14 @@ mod tests {
     /// wears is still refused. Each is paired with the total the write left.
     #[tokio::test]
     async fn add_served_adds_to_the_row_without_asking_first_whether_it_is_there() {
-        let scratch = Scratch::new("session-served-chars-one-statement");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("session-served-chars-one-statement")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
-        let sessions = DoltSessions::open(store.pool().clone());
+        let sessions = DoltSessions::open(pool.clone());
         let run = sessions
             .begin(NewSession {
                 timezone: None,
@@ -3163,8 +3129,6 @@ mod tests {
             150,
             "a refused total moved nothing"
         );
-
-        store.stop().await;
     }
 
     /// 🚨 **The pair that proves `summaries_of` answers the same numbers
@@ -3252,16 +3216,14 @@ mod tests {
 
     #[tokio::test]
     async fn summaries_of_answers_sessions_ofs_own_numbers_without_the_full_read() {
-        let scratch = Scratch::new("session-summaries");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("session-summaries")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
-        let sessions = DoltSessions::open(store.pool().clone());
+        let sessions = DoltSessions::open(pool.clone());
 
         let busy = sessions
             .begin(NewSession {
@@ -3359,8 +3321,6 @@ mod tests {
             before + 2,
             "sessions_of must read both sessions in full, which is the cost this exists to avoid"
         );
-
-        store.stop().await;
     }
 
     /// **`entries_read` scales with what a run has recorded; `full_reads`
@@ -3372,16 +3332,14 @@ mod tests {
     /// accounting-write defect turns on.
     #[tokio::test]
     async fn entries_read_scales_with_a_runs_own_chronology_not_with_the_call_count() {
-        let scratch = Scratch::new("session-entries-read");
-        let path = scratch.0.clone();
-        let mut store = Dolt::start(&path, free_port())
+        let pool = shared_database("session-entries-read")
             .await
-            .expect("the store comes up");
-        migrate::run(store.pool()).await.expect("the schema");
-        migrate::seed_kinds(store.pool())
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        migrate::seed_kinds(&pool)
             .await
             .expect("the kinds are seeded");
-        let sessions = DoltSessions::open(store.pool().clone());
+        let sessions = DoltSessions::open(pool.clone());
 
         let busy = sessions
             .begin(NewSession {
@@ -3438,7 +3396,5 @@ mod tests {
             "one full read of a three-beat run must add exactly its three rows, not a flat \
              per-call cost"
         );
-
-        store.stop().await;
     }
 }
