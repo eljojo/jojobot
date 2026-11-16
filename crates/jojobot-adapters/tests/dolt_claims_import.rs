@@ -9,10 +9,9 @@ use std::sync::Arc;
 use jiff::{Timestamp, civil::date};
 use jojobot_adapters::claims_import::{ClaimsImportError, Imported, import_claims_once};
 use jojobot_adapters::claims_log::codec;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_adapters::writer::Writer;
 use jojobot_domain::log::Event;
 use jojobot_domain::log::claims::import::import;
@@ -46,19 +45,13 @@ async fn say(memory: &DoltMemory, about: &EntityId, what: &str) {
 }
 
 /// A migrated store of this case's own, with the shipped kinds.
-async fn store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool) {
-    let scratch = Scratch::new(label);
-    let server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, label)
-        .await
-        .expect("a database of its own");
+async fn store(label: &str) -> sqlx::MySqlPool {
+    let pool = shared_database(label).await.expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    (scratch, server, pool)
+    pool
 }
 
 /// Every claims event the log holds, in order, as stored.
@@ -133,7 +126,7 @@ fn at() -> Timestamp {
 /// handles, and a second call reads nothing and appends nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_appends_what_the_rows_mean_once() {
-    let (_scratch, mut server, pool) = store("claims-import-once").await;
+    let pool = store("claims-import-once").await;
     let memory = DoltMemory::open(pool.clone());
     let homer = thing(&memory, "person:homer", "Homer").await;
     let bart = thing(&memory, "person:bart", "Bart").await;
@@ -191,8 +184,6 @@ async fn claims_import_appends_what_the_rows_mean_once() {
         events + 1,
         "a second call appends nothing"
     );
-
-    server.stop().await;
 }
 
 /// **A row the reader will not place stops the import with nothing appended.** An
@@ -200,7 +191,7 @@ async fn claims_import_appends_what_the_rows_mean_once() {
 /// names it and writes no event, and the next start meets the same rows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_refuses_a_row_the_reader_will_not_place() {
-    let (_scratch, mut server, pool) = store("claims-import-finding").await;
+    let pool = store("claims-import-finding").await;
     let memory = DoltMemory::open(pool.clone());
     thing(&memory, "person:homer", "Homer").await;
     thing(&memory, "person:marge", "Marge").await;
@@ -218,8 +209,6 @@ async fn claims_import_refuses_a_row_the_reader_will_not_place() {
     assert_eq!(*count, 1, "{rows}");
     assert!(rows.contains("person:moe"), "{rows}");
     assert!(logged(&pool).await.is_empty(), "nothing was appended");
-
-    server.stop().await;
 }
 
 /// **A merge the store holds no number for imports as a redirect.** A merge made
@@ -228,7 +217,7 @@ async fn claims_import_refuses_a_row_the_reader_will_not_place() {
 /// survivor, as it did, and the merge count does not move.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_reads_a_merge_with_no_event_as_a_redirect() {
-    let (_scratch, mut server, pool) = store("claims-import-redirect").await;
+    let pool = store("claims-import-redirect").await;
     let memory = DoltMemory::open(pool.clone());
     let homer = thing(&memory, "person:homer", "Homer").await;
     let bart = thing(&memory, "person:bart", "Bart").await;
@@ -268,8 +257,6 @@ async fn claims_import_reads_a_merge_with_no_event_as_a_redirect() {
             .all(|event| !matches!(event.payload, ClaimEvent::ObjectsMerged { .. })),
         "no merge event row, so no numbered merge"
     );
-
-    server.stop().await;
 }
 
 /// **A gap in the merge numbers is kept as the store holds it** (rule 677). A
@@ -280,7 +267,7 @@ async fn claims_import_reads_a_merge_with_no_event_as_a_redirect() {
 /// highest, and the import names the empty number.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_keeps_a_gap_in_the_merge_numbers() {
-    let (_scratch, mut server, pool) = store("claims-import-gap").await;
+    let pool = store("claims-import-gap").await;
     let memory = DoltMemory::open(pool.clone());
     let homer = thing(&memory, "person:homer", "Homer").await;
     let bart = thing(&memory, "person:bart", "Bart").await;
@@ -322,8 +309,6 @@ async fn claims_import_keeps_a_gap_in_the_merge_numbers() {
         highest as u64,
         "the State keeps the store's highest merge number"
     );
-
-    server.stop().await;
 }
 
 /// A record the build supplies, as the boot hands it to the import.
@@ -382,7 +367,7 @@ fn supplied_views(handles: &[&str]) -> Provisions {
 /// handle, and files the claim there.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_files_a_claim_under_a_supplied_record_at_its_supply_identity() {
-    let (_scratch, mut server, pool) = store("claims-import-supplied-home").await;
+    let pool = store("claims-import-supplied-home").await;
     let supplied = supplied_view("view:loops");
     let memory = DoltMemory::open(pool.clone()).knowing(supplied.clone());
     let loops = EntityId("view:loops".to_string());
@@ -416,8 +401,6 @@ async fn claims_import_files_a_claim_under_a_supplied_record_at_its_supply_ident
         )),
         "the claim is filed under the supply identity, not under the handle: {held:?}"
     );
-
-    server.stop().await;
 }
 
 /// **A folded thing's claim keeps serving from the survivor after the import.**
@@ -428,7 +411,7 @@ async fn claims_import_files_a_claim_under_a_supplied_record_at_its_supply_ident
 /// the key the folded thing's claim wrote.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_keeps_a_folded_things_claim_under_the_survivor() {
-    let (_scratch, mut server, pool) = store("claims-import-merged-claim").await;
+    let pool = store("claims-import-merged-claim").await;
     let memory = DoltMemory::open(pool.clone());
     let bart = thing(&memory, "person:bart", "Bart").await;
     let lisa = thing(&memory, "person:lisa", "Lisa").await;
@@ -491,8 +474,6 @@ async fn claims_import_keeps_a_folded_things_claim_under_the_survivor() {
         Some("saxophone"),
         "the survivor lost the folded thing's key write"
     );
-
-    server.stop().await;
 }
 
 /// **A claim that cites a folded thing's claim points at a record that exists.**
@@ -502,7 +483,7 @@ async fn claims_import_keeps_a_folded_things_claim_under_the_survivor() {
 /// citation was created as, or the replayed state holds a pointer to nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_points_a_citation_at_the_record_a_merged_claim_was_created_as() {
-    let (_scratch, mut server, pool) = store("claims-import-merged-citation").await;
+    let pool = store("claims-import-merged-citation").await;
     let memory = DoltMemory::open(pool.clone());
     let bart = thing(&memory, "person:bart", "Bart").await;
     let lisa = thing(&memory, "person:lisa", "Lisa").await;
@@ -559,8 +540,6 @@ async fn claims_import_points_a_citation_at_the_record_a_merged_claim_was_create
         state.record(&cited).is_some(),
         "the citation names a record nothing created: {cited:?}"
     );
-
-    server.stop().await;
 }
 
 /// **Claims under a name no build supplied are skipped and named** (the import
@@ -571,7 +550,7 @@ async fn claims_import_points_a_citation_at_the_record_a_merged_claim_was_create
 /// its claim count; a thing beside it imports as usual.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_skips_and_names_the_claims_under_a_name_nothing_supplies() {
-    let (_scratch, mut server, pool) = store("claims-import-unsupplied-home").await;
+    let pool = store("claims-import-unsupplied-home").await;
     let supplied = supplied_view("view:loops");
     let memory = DoltMemory::open(pool.clone()).knowing(supplied);
     let loops = EntityId("view:loops".to_string());
@@ -606,8 +585,6 @@ async fn claims_import_skips_and_names_the_claims_under_a_name_nothing_supplies(
         )),
         "the claims of a placed thing imported: {held:?}"
     );
-
-    server.stop().await;
 }
 
 /// **An edge and a reference that name a supplied record import at its supply
@@ -615,7 +592,7 @@ async fn claims_import_skips_and_names_the_claims_under_a_name_nothing_supplies(
 /// carries on the supplied record the build gives it, or the import refuses.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_places_an_edge_and_a_reference_on_a_supplied_record() {
-    let (_scratch, mut server, pool) = store("claims-import-supplied-edge").await;
+    let pool = store("claims-import-supplied-edge").await;
     let supplied = supplied_view("view:loops");
     let memory = DoltMemory::open(pool.clone()).knowing(supplied.clone());
     let bart = thing(&memory, "person:bart", "Bart").await;
@@ -655,8 +632,6 @@ async fn claims_import_places_an_edge_and_a_reference_on_a_supplied_record() {
         "the edge names the supply identity: {body:?}"
     );
     assert_eq!(body.refs, vec![supply], "the reference names it too");
-
-    server.stop().await;
 }
 
 /// **A stored row at a supplied handle keeps the binding** (rule 508). The handle
@@ -664,7 +639,7 @@ async fn claims_import_places_an_edge_and_a_reference_on_a_supplied_record() {
 /// takes the name from it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_leaves_a_stored_rows_handle_bound_to_the_stored_row() {
-    let (_scratch, mut server, pool) = store("claims-import-supplied-collision").await;
+    let pool = store("claims-import-supplied-collision").await;
     let memory = DoltMemory::open(pool.clone());
     thing(&memory, "view:loops", "A stored loops").await;
 
@@ -688,8 +663,6 @@ async fn claims_import_leaves_a_stored_rows_handle_bound_to_the_stored_row() {
         .collect();
     assert_eq!(bound.len(), 1, "the handle is bound once: {bound:?}");
     assert_ne!(bound[0], supply, "the stored row keeps the handle");
-
-    server.stop().await;
 }
 
 /// **A retired handle carries the day the rename was made.** The rename writes
@@ -697,7 +670,7 @@ async fn claims_import_leaves_a_stored_rows_handle_bound_to_the_stored_row() {
 /// store and puts it on the retirement, so a replay serves the same day.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_carries_the_day_of_a_rename_on_the_retirement() {
-    let (_scratch, mut server, pool) = store("claims-import-retired-day").await;
+    let pool = store("claims-import-retired-day").await;
     let memory = DoltMemory::open(pool.clone());
     let before = thing(&memory, "person:sigma", "Sigma").await;
     let after = EntityId("person:omega".to_string());
@@ -734,8 +707,6 @@ async fn claims_import_carries_the_day_of_a_rename_on_the_retirement() {
         vec![date(2026, 9, 4)],
         "the retirement carries the day"
     );
-
-    server.stop().await;
 }
 
 /// **A handle the build stopped supplying is adopted by the import, and the
@@ -745,7 +716,7 @@ async fn claims_import_carries_the_day_of_a_rename_on_the_retirement() {
 /// under the adopted identity, which the handle resolves to.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_adopts_a_handle_the_build_stopped_supplying() {
-    let (_scratch, mut server, pool) = store("claims-import-adopt").await;
+    let pool = store("claims-import-adopt").await;
     let supplied = supplied_view("view:loops");
     let memory = DoltMemory::open(pool.clone()).knowing(supplied.clone());
     let loops = EntityId("view:loops".to_string());
@@ -777,8 +748,6 @@ async fn claims_import_adopts_a_handle_the_build_stopped_supplying() {
         1,
         "the claim sits on the adopted object"
     );
-
-    server.stop().await;
 }
 
 /// **A later boot binds only what the supply list added, and an unchanged list
@@ -788,7 +757,7 @@ async fn claims_import_adopts_a_handle_the_build_stopped_supplying() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
     use jojobot_adapters::claims_import::reconcile_supply_list_once;
-    let (_scratch, mut server, pool) = store("claims-reconcile").await;
+    let pool = store("claims-reconcile").await;
     let first = supplied_views(&["view:loops"]);
     import_claims_once(&Writer::default(), &pool, &first, at())
         .await
@@ -839,8 +808,6 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
             "view:board"
         ))
     );
-
-    server.stop().await;
 }
 
 /// **An import over an empty store still appends one member**, the event that says
@@ -849,7 +816,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
 /// before the import is done. A second call finds the log holding it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_over_an_empty_store_appends_the_event_that_ends_it() {
-    let (_scratch, mut server, pool) = store("claims-import-empty").await;
+    let pool = store("claims-import-empty").await;
     let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
         .await
         .expect("an empty store imports");
@@ -881,8 +848,6 @@ async fn claims_import_over_an_empty_store_appends_the_event_that_ends_it() {
             .expect("a second call"),
         Imported::AlreadyDone
     ));
-
-    server.stop().await;
 }
 
 /// **Only an absent home is skipped; a handle two things once wore is refused by
@@ -892,7 +857,7 @@ async fn claims_import_over_an_empty_store_appends_the_event_that_ends_it() {
 /// nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_refuses_a_claim_filed_under_a_handle_two_things_once_wore() {
-    let (_scratch, mut server, pool) = store("claims-import-ambiguous-home").await;
+    let pool = store("claims-import-ambiguous-home").await;
     let memory = DoltMemory::open(pool.clone());
     thing(&memory, "person:homer", "Homer").await;
     thing(&memory, "person:marge", "Marge").await;
@@ -942,8 +907,6 @@ async fn claims_import_refuses_a_claim_filed_under_a_handle_two_things_once_wore
     };
     assert!(rows.contains("more than one thing"), "{rows}");
     assert!(logged(&pool).await.is_empty(), "nothing was appended");
-
-    server.stop().await;
 }
 
 /// **A pointer that names nothing the store holds is imported as written and
@@ -953,7 +916,7 @@ async fn claims_import_refuses_a_claim_filed_under_a_handle_two_things_once_wore
 /// its pointer as stored, and the report names all three.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_carries_a_pointer_at_a_name_nothing_holds_as_written() {
-    let (_scratch, mut server, pool) = store("claims-import-dangling-pointer").await;
+    let pool = store("claims-import-dangling-pointer").await;
     let memory = DoltMemory::open(pool.clone());
     let marge = thing(&memory, "person:marge", "Marge").await;
     let bart = thing(&memory, "person:bart", "Bart").await;
@@ -1080,15 +1043,13 @@ async fn claims_import_carries_a_pointer_at_a_name_nothing_holds_as_written() {
         from_the_store,
         "the State serves the lineage the store serves"
     );
-
-    server.stop().await;
 }
 
 /// **A pointer at a name two things once wore still stops the import**, because
 /// the import never guesses which: the pair of the case above.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_still_refuses_a_pointer_at_a_name_two_things_wore() {
-    let (_scratch, mut server, pool) = store("claims-import-ambiguous-pointer").await;
+    let pool = store("claims-import-ambiguous-pointer").await;
     let memory = DoltMemory::open(pool.clone());
     let marge = thing(&memory, "person:marge", "Marge").await;
     let homer = thing(&memory, "person:homer", "Homer").await;
@@ -1133,8 +1094,6 @@ async fn claims_import_still_refuses_a_pointer_at_a_name_two_things_wore() {
     };
     assert!(rows.contains("more than one thing"), "{rows}");
     assert!(logged(&pool).await.is_empty(), "nothing was appended");
-
-    server.stop().await;
 }
 
 /// **A renamed record keeps its identity through a real store, and two records
@@ -1145,7 +1104,7 @@ async fn claims_import_still_refuses_a_pointer_at_a_name_two_things_wore() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_handle() {
     use jojobot_adapters::claims_import::reconcile_supply_list_once;
-    let (_scratch, mut server, pool) = store("claims-reconcile-rename").await;
+    let pool = store("claims-reconcile-rename").await;
     import_claims_once(
         &Writer::default(),
         &pool,
@@ -1216,8 +1175,6 @@ async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_
         matches!(&refused, ClaimsImportError::Unmappable(why) if why.contains("first supplied under")),
         "{refused:?}"
     );
-
-    server.stop().await;
 }
 
 /// **A current name answers before a former one.** A build supplies `view:loops`
@@ -1227,7 +1184,7 @@ async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_
 /// lands on the supply identity, not on the thing that wore the handle before.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_places_a_current_supplied_name_before_a_former_one() {
-    let (_scratch, mut server, pool) = store("claims-import-current-before-former").await;
+    let pool = store("claims-import-current-before-former").await;
     let supplied = supplied_view("view:loops");
     let memory = DoltMemory::open(pool.clone()).knowing(supplied.clone());
     thing(&memory, "person:homer", "Homer").await;
@@ -1261,8 +1218,6 @@ async fn claims_import_places_a_current_supplied_name_before_a_former_one() {
         1,
         "the claim sits on the record the build supplies now: {held:?}"
     );
-
-    server.stop().await;
 }
 
 /// **A handle one thing left twice has one owner.** A thing wore `person:milhouse`,
@@ -1272,7 +1227,7 @@ async fn claims_import_places_a_current_supplied_name_before_a_former_one() {
 /// two different things stays refused (the case above).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_places_a_handle_one_thing_left_twice_on_that_thing() {
-    let (_scratch, mut server, pool) = store("claims-import-left-twice").await;
+    let pool = store("claims-import-left-twice").await;
     let memory = DoltMemory::open(pool.clone());
     thing(&memory, "person:homer", "Homer").await;
     let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = 'person:homer'")
@@ -1323,8 +1278,6 @@ async fn claims_import_places_a_handle_one_thing_left_twice_on_that_thing() {
         1,
         "the claim sits on the one thing that wore the handle"
     );
-
-    server.stop().await;
 }
 
 /// **A release that changes a shipped kind reaches the State.** The import does
@@ -1337,7 +1290,7 @@ async fn claims_import_places_a_handle_one_thing_left_twice_on_that_thing() {
 async fn claims_reconcile_declares_a_shipped_kind_the_build_changed() {
     use jojobot_adapters::claims_import::reconcile_supply_list_once;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
-    let (_scratch, mut server, pool) = store("claims-reconcile-kinds").await;
+    let pool = store("claims-reconcile-kinds").await;
     import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
         .await
         .expect("the import runs");
@@ -1410,8 +1363,6 @@ async fn claims_reconcile_declares_a_shipped_kind_the_build_changed() {
         0,
         "the build's list appends nothing again"
     );
-
-    server.stop().await;
 }
 
 /// **The import holds the declaration the store serves, rule included.** A caller
@@ -1422,7 +1373,7 @@ async fn claims_reconcile_declares_a_shipped_kind_the_build_changed() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_holds_a_declared_type_as_the_store_serves_it() {
     use jojobot_domain::memory::types::{Field, ValueType};
-    let (_scratch, mut server, pool) = store("claims-import-declared-type").await;
+    let pool = store("claims-import-declared-type").await;
     let memory = DoltMemory::open(pool.clone());
     for name in ["sketch", "doodle"] {
         let mut declared = jojobot_domain::memory::types::DeclaredType::new(
@@ -1469,8 +1420,6 @@ async fn claims_import_holds_a_declared_type_as_the_store_serves_it() {
             .any(|declared| declared.name == "sketch" && declared.must.is_some()),
         "the case holds a rule to lose"
     );
-
-    server.stop().await;
 }
 
 /// **A thing whose row was removed by hand is skipped whatever rows it left.** The
@@ -1479,7 +1428,7 @@ async fn claims_import_holds_a_declared_type_as_the_store_serves_it() {
 /// entity writes with no claim row at all. The import must finish, name the home,
 /// and import the thing beside it.
 async fn a_hand_removed_thing_is_skipped(label: &str, removed_beside: &[&str]) {
-    let (_scratch, mut server, pool) = store(label).await;
+    let pool = store(label).await;
     let memory = DoltMemory::open(pool.clone());
     let marge = thing(&memory, "person:marge", "Marge").await;
     let mut mood = NewFact::about(marge.clone(), "is calm", date(2026, 9, 1));
@@ -1525,8 +1474,6 @@ async fn a_hand_removed_thing_is_skipped(label: &str, removed_beside: &[&str]) {
         )),
         "the claims of the thing beside it imported: {held:?}"
     );
-
-    server.stop().await;
 }
 
 /// The removed thing still has its claim rows and its entity writes.
@@ -1548,7 +1495,7 @@ async fn claims_import_skips_a_hand_removed_thing_that_left_only_key_writes() {
 /// rows that name the home.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_skips_a_home_that_only_key_writes_name() {
-    let (_scratch, mut server, pool) = store("claims-import-key-writes-only").await;
+    let pool = store("claims-import-key-writes-only").await;
     let memory = DoltMemory::open(pool.clone()).knowing(supplied_view("view:loops"));
     let loops = EntityId("view:loops".to_string());
     let mut mood = NewFact::about(loops.clone(), "is read", date(2026, 9, 1));
@@ -1582,8 +1529,6 @@ async fn claims_import_skips_a_home_that_only_key_writes_name() {
         vec![("view:loops".to_string(), 0)],
         "the home is named with no claim left"
     );
-
-    server.stop().await;
 }
 
 /// **Each table that files rows under a home can be the only one that names it.**
@@ -1606,7 +1551,7 @@ async fn claims_import_skips_a_home_that_one_table_alone_names() {
             ["fact", "fact_write", "field_write"].as_slice(),
         ),
     ] {
-        let (_scratch, mut server, pool) = store(&format!("claims-import-only-{kept}")).await;
+        let pool = store(&format!("claims-import-only-{kept}")).await;
         let memory = DoltMemory::open(pool.clone()).knowing(supplied_view("view:loops"));
         let loops = EntityId("view:loops".to_string());
         let mut mood = NewFact::about(loops.clone(), "is read", date(2026, 9, 1));
@@ -1661,8 +1606,6 @@ async fn claims_import_skips_a_home_that_one_table_alone_names() {
             vec![("view:loops".to_string(), 0)],
             "{kept} alone names the home"
         );
-
-        server.stop().await;
     }
 }
 
@@ -1672,7 +1615,7 @@ async fn claims_import_skips_a_home_that_one_table_alone_names() {
 /// instead of dropping it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_still_refuses_a_link_row_on_a_live_home_with_no_key_write() {
-    let (_scratch, mut server, pool) = store("claims-import-orphan-link-live").await;
+    let pool = store("claims-import-orphan-link-live").await;
     let memory = DoltMemory::open(pool.clone());
     thing(&memory, "person:homer", "Homer").await;
     sqlx::query(
@@ -1692,8 +1635,6 @@ async fn claims_import_still_refuses_a_link_row_on_a_live_home_with_no_key_write
     };
     assert!(rows.contains("no field_write row"), "{rows}");
     assert!(logged(&pool).await.is_empty(), "nothing was appended");
-
-    server.stop().await;
 }
 
 /// **A served declaration whose keys differ from the newest account is imported,
@@ -1703,7 +1644,7 @@ async fn claims_import_still_refuses_a_link_row_on_a_live_home_with_no_key_write
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_holds_the_keys_the_store_serves_over_an_older_account() {
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
-    let (_scratch, mut server, pool) = store("claims-import-older-account").await;
+    let pool = store("claims-import-older-account").await;
     let memory = DoltMemory::open(pool.clone());
     for keys in [&["mood"][..], &["mood", "hat"][..]] {
         memory
@@ -1746,8 +1687,6 @@ async fn claims_import_holds_the_keys_the_store_serves_over_an_older_account() {
         Some(wanted),
         "the State answers sketch as the store does"
     );
-
-    server.stop().await;
 }
 
 /// **A kind a later build stops shipping is taken back, and only that kind.** An
@@ -1761,7 +1700,7 @@ async fn claims_reconcile_withdraws_a_shipped_kind_the_build_stopped_shipping() 
     use jojobot_adapters::claims_import::reconcile_supply_list_once;
     use jojobot_domain::log::ObjectId;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
-    let (_scratch, mut server, pool) = store("claims-reconcile-removed-kind").await;
+    let pool = store("claims-reconcile-removed-kind").await;
     let memory = DoltMemory::open(pool.clone());
     thing(&memory, "person:homer", "Homer").await;
     memory
@@ -1818,8 +1757,6 @@ async fn claims_reconcile_withdraws_a_shipped_kind_the_build_stopped_shipping() 
         "a caller's declaration is never the build's to take back"
     );
     assert_eq!(run(now).await, 0, "a second run appends nothing");
-
-    server.stop().await;
 }
 
 /// **A name the build ships is not withdrawn because the list compared leaves it
@@ -1831,7 +1768,7 @@ async fn claims_reconcile_keeps_a_shipped_name_the_compared_list_leaves_out() {
     use jojobot_adapters::claims_import::reconcile_supply_list_once;
     use jojobot_domain::log::ObjectId;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
-    let (_scratch, mut server, pool) = store("claims-reconcile-ships-apart").await;
+    let pool = store("claims-reconcile-ships-apart").await;
     import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
         .await
         .expect("the import runs");
@@ -1866,8 +1803,6 @@ async fn claims_reconcile_keeps_a_shipped_name_the_compared_list_leaves_out() {
         1,
         "a name the build does not ship goes"
     );
-
-    server.stop().await;
 }
 
 /// **A reference and a mark at a name nothing holds are imported as written and
@@ -1877,7 +1812,7 @@ async fn claims_reconcile_keeps_a_shipped_name_the_compared_list_leaves_out() {
 /// the claim and the report names both.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_carries_a_reference_and_a_mark_at_names_nothing_holds() {
-    let (_scratch, mut server, pool) = store("claims-import-dangling-ref-mark").await;
+    let pool = store("claims-import-dangling-ref-mark").await;
     let memory = DoltMemory::open(pool.clone());
     let marge = thing(&memory, "person:marge", "Marge").await;
     let homer = thing(&memory, "person:homer", "Homer").await;
@@ -1941,7 +1876,6 @@ async fn claims_import_carries_a_reference_and_a_mark_at_names_nothing_holds() {
         [("refs", "person:ralph"), ("stands_for", "person:moe")],
         "the report names the reference and the mark"
     );
-    server.stop().await;
 }
 
 /// **A thing that holds one claim, with two key writes no claim row holds.** The
@@ -1996,7 +1930,7 @@ async fn homer_with_two_orphan_writes(
 /// write and one is on a key without, and both are named.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
-    let (_scratch, mut server, pool) = store("claims-import-orphan-write").await;
+    let pool = store("claims-import-orphan-write").await;
     let memory = DoltMemory::open(pool.clone());
     let (homer, badge) = homer_with_two_orphan_writes(&memory, &pool).await;
 
@@ -2060,7 +1994,6 @@ async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
         !served_by_the_store.contains_key("hair") && !served_by_the_state.contains_key("hair"),
         "an orphan on a key no held write names serves nothing, in either"
     );
-    server.stop().await;
 }
 
 /// **Over a key write with no claim, the store and the State agree on the history
@@ -2076,7 +2009,7 @@ async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_agrees_with_the_stores_history_and_differs_on_its_ages_over_a_key_write_with_no_claim()
  {
-    let (_scratch, mut server, pool) = store("claims-import-orphan-history").await;
+    let pool = store("claims-import-orphan-history").await;
     let memory = DoltMemory::open(pool.clone());
     let (homer, badge) = homer_with_two_orphan_writes(&memory, &pool).await;
     import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
@@ -2160,7 +2093,6 @@ async fn claims_import_agrees_with_the_stores_history_and_differs_on_its_ages_ov
             .all(|moment| *moment < ahead),
         "no key is held since the orphan's moment"
     );
-    server.stop().await;
 }
 
 /// **A write of a claim a merge physically moved is imported on the claim row the
@@ -2171,7 +2103,7 @@ async fn claims_import_agrees_with_the_stores_history_and_differs_on_its_ages_ov
 /// is the stored one and the claim rows sit where the old build put them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_places_a_write_of_a_claim_a_merge_moved_on_the_row_it_was_moved_to() {
-    let (_scratch, mut server, pool) = store("claims-import-legacy-moved").await;
+    let pool = store("claims-import-legacy-moved").await;
     let memory = DoltMemory::open(pool.clone());
     let bart = thing(&memory, "person:bart", "Bart").await;
     let lisa = thing(&memory, "person:lisa", "Lisa").await;
@@ -2261,7 +2193,6 @@ async fn claims_import_places_a_write_of_a_claim_a_merge_moved_on_the_row_it_was
         Some("saxophone"),
         "the write reached the survivor through the claim row the merge moved it to"
     );
-    server.stop().await;
 }
 
 /// **A relist after an unrelated write keeps the operator's name on a record the
@@ -2288,7 +2219,7 @@ async fn a_relist_after_an_unrelated_write_keeps_the_operators_name_on_a_supplie
     use jojobot_domain::memory::mention::Mentioning;
     use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
 
-    let (_scratch, mut server, pool) = store("claims-import-relist-supplied-name").await;
+    let pool = store("claims-import-relist-supplied-name").await;
     let supplied = supplied_view("view:loops");
     let view = EntityId("view:loops".to_string());
     {
@@ -2386,5 +2317,4 @@ async fn a_relist_after_an_unrelated_write_keeps_the_operators_name_on_a_supplie
         wanted,
         "the relist after the unrelated write kept the operator's name and aliases"
     );
-    server.stop().await;
 }

@@ -4,31 +4,23 @@
 //! once, leave what it cannot place, and change nothing on a second boot.
 
 use jiff::civil::date;
+use jojobot_adapters::dolt::Migrated;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::storage_check::DoltStorageCheck;
-use jojobot_adapters::dolt::{Dolt, Migrated};
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 
 use jojobot_domain::memory::{EntityId, Guarded, Memory, NewEntity, NewFact};
 use jojobot_domain::storage_check::{StorageCheck, StorageClass};
 
-async fn a_store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
-    let dir = jojobot_adapters::testing::scratch_path(label);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let scratch = Scratch(dir.clone());
-    let server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, label)
-        .await
-        .expect("a database of its own");
+async fn a_store(label: &str) -> (sqlx::MySqlPool, DoltMemory) {
+    let pool = shared_database(label).await.expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory)
         .await
         .expect("the kinds are seeded");
-    (scratch, server, pool, memory)
+    (pool, memory)
 }
 
 async fn thing(memory: &DoltMemory, handle: &str, name: &str) -> EntityId {
@@ -101,7 +93,7 @@ async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
 /// calling the class tolerated, and the second boot writes nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_merge_made_before_merge_events_existed_gets_its_event_once() {
-    let (_scratch, _server, pool, memory) = a_store("repair-old-merge").await;
+    let (pool, memory) = a_store("repair-old-merge").await;
     thing(&memory, "bot:sigma", "Sigma").await;
     let mut folded_keys = Vec::new();
     for (kept, kept_name, gone, gone_name) in [
@@ -225,7 +217,7 @@ async fn a_merge_made_before_merge_events_existed_gets_its_event_once() {
 /// repaired event.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_old_merge_under_a_later_one_gets_its_event_with_the_middle_thing_as_survivor() {
-    let (_scratch, _server, pool, memory) = a_store("repair-old-merge-chain").await;
+    let (pool, memory) = a_store("repair-old-merge-chain").await;
     thing(&memory, "bot:sigma", "Sigma").await;
     let old = thing(&memory, "person:skinner", "Skinner").await;
     let middle = thing(&memory, "person:krusty", "Krusty").await;

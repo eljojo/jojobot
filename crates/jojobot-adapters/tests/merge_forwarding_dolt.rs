@@ -6,10 +6,9 @@
 //! store.
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::{
     EntityId, EntityKind, FactAddress, FactPatch, Memory, MemoryError, NewEntity, NewFact,
@@ -17,25 +16,15 @@ use jojobot_domain::memory::{
 };
 use sqlx::MySqlPool;
 
-use jojobot_adapters::testing::Scratch;
-
-/// A store of its own: the server, its pool and the memory over it.
-async fn store_of(name: &str) -> (Scratch, Dolt, MySqlPool, DoltMemory) {
-    let dir = jojobot_adapters::testing::scratch_path(&format!("jojobot-{name}"));
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let scratch = Scratch(dir.clone());
-    let server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, name)
-        .await
-        .expect("a database of its own");
+/// A database of its own on the shared store: its pool and the memory over it.
+async fn store_of(name: &str) -> (MySqlPool, DoltMemory) {
+    let pool = shared_database(name).await.expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory)
         .await
         .expect("the kinds are seeded");
-    (scratch, server, pool, memory)
+    (pool, memory)
 }
 
 async fn thing(
@@ -109,7 +98,7 @@ async fn forget_the_events_of(pool: &MySqlPool, folded: &str) {
 /// number and the refusal of a taken one are the questions that tell.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_children_of_a_fold_without_an_event_are_served_under_its_survivor() {
-    let (_scratch, mut server, pool, memory) = store_of("forwarded-children").await;
+    let (pool, memory) = store_of("forwarded-children").await;
 
     // The merge made before events were kept.
     let old_survivor = thing(&memory, "person:krusty", "Krusty", None).await;
@@ -178,7 +167,6 @@ async fn the_children_of_a_fold_without_an_event_are_served_under_its_survivor()
         matches!(&taken, Err(MemoryError::NumberTaken { holder, .. }) if holder == "person:bart"),
         "a number held under a folded parent stays held: {taken:?}"
     );
-    server.stop().await;
 }
 
 /// A view the build supplies: no row, so a write on it is filed under its text.
@@ -220,7 +208,7 @@ async fn rename(memory: &dyn Memory, from: &EntityId, to: &str) -> EntityId {
 /// handle nothing answers to. Paired with a thing that was never adopted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_adoption_moves_the_references_and_marks_a_write_kept_onto_the_badge() {
-    let (_scratch, mut server, pool, _memory) = store_of("adopted-references").await;
+    let (pool, _memory) = store_of("adopted-references").await;
     let retired = EntityId("view:contract-retired".into());
     let writer = DoltMemory::open(pool.clone())
         .knowing(Provisions::new(vec![supplied_view(&retired, "Retired")]));
@@ -320,5 +308,4 @@ async fn an_adoption_moves_the_references_and_marks_a_write_kept_onto_the_badge(
             "the write's marks serve the handle the thing wears now"
         );
     }
-    server.stop().await;
 }

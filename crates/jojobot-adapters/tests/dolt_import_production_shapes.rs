@@ -9,10 +9,9 @@
 
 use jiff::{Timestamp, civil::date};
 use jojobot_adapters::claims_import::{Imported, import_claims_once};
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, claims_events, free_port, migrated_database};
+use jojobot_adapters::testing::{claims_events, shared_database};
 use jojobot_adapters::writer::Writer;
 use jojobot_domain::log::claims::State;
 use jojobot_domain::memory::owned::Provisions;
@@ -21,19 +20,13 @@ use jojobot_domain::memory::{
 };
 
 /// A migrated store of this case's own, with the shipped kinds.
-async fn a_store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool) {
-    let scratch = Scratch::new(label);
-    let server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, label)
-        .await
-        .expect("a database of its own");
+async fn a_store(label: &str) -> sqlx::MySqlPool {
+    let pool = shared_database(label).await.expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    (scratch, server, pool)
+    pool
 }
 
 async fn thing(memory: &DoltMemory, handle: &str, name: &str) -> EntityId {
@@ -71,7 +64,7 @@ const CLAIMS_MOVED_BY_THE_MERGES: [usize; 10] = [1, 1, 1, 5, 1, 0, 2, 1, 2, 2];
 /// unexplained.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_takes_ten_merges_of_the_shape_production_holds() {
-    let (_scratch, mut server, pool) = a_store("claims-import-production-merges").await;
+    let pool = a_store("claims-import-production-merges").await;
     let memory = DoltMemory::open(pool.clone());
     let me = thing(&memory, "bot:sigma", "Sigma").await;
     let survivors = [
@@ -212,7 +205,6 @@ async fn claims_import_takes_ten_merges_of_the_shape_production_holds() {
             "{handle} resolves to the survivor its merge named"
         );
     }
-    server.stop().await;
 }
 
 /// The badge the store keeps an entity under; every write table is keyed by it.
@@ -249,7 +241,7 @@ async fn say_with_key(memory: &DoltMemory, about: &EntityId, what: &str, key: &s
 /// rows served.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_takes_entities_that_have_no_entity_write_row() {
-    let (_scratch, mut server, pool) = a_store("claims-import-no-entity-write").await;
+    let pool = a_store("claims-import-no-entity-write").await;
     let memory = DoltMemory::open(pool.clone());
     let kept = "person:lenny";
     let all = ["person:homer", "person:marge", "person:bart", kept];
@@ -374,7 +366,6 @@ async fn claims_import_takes_entities_that_have_no_entity_write_row() {
             "{handle}: the baseline holds a moment only when a write row gave one"
         );
     }
-    server.stop().await;
 }
 
 /// **The claims import takes a claim older than the table that records its key
@@ -388,7 +379,7 @@ async fn claims_import_takes_entities_that_have_no_entity_write_row() {
 /// claim and key the old rows served.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_takes_a_claim_older_than_its_key_writes_and_one_with_no_first_time() {
-    let (_scratch, mut server, pool) = a_store("claims-import-old-claims").await;
+    let pool = a_store("claims-import-old-claims").await;
     let memory = DoltMemory::open(pool.clone());
     let homer = thing(&memory, "person:homer", "Homer").await;
     let badge = badge_of(&pool, "person:homer").await;
@@ -532,7 +523,6 @@ async fn claims_import_takes_a_claim_older_than_its_key_writes_and_one_with_no_f
         ],
         "the import serves each claim, the undated ones included"
     );
-    server.stop().await;
 }
 
 /// What the two cases below read: one entity, its badge, and a claim written
@@ -541,8 +531,8 @@ async fn homer_with_a_claim(
     label: &str,
     what: &str,
     key: Option<&str>,
-) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory, EntityId, String) {
-    let (scratch, server, pool) = a_store(label).await;
+) -> (sqlx::MySqlPool, DoltMemory, EntityId, String) {
+    let pool = a_store(label).await;
     let memory = DoltMemory::open(pool.clone());
     let homer = thing(&memory, "person:homer", "Homer").await;
     let badge = badge_of(&pool, "person:homer").await;
@@ -559,7 +549,7 @@ async fn homer_with_a_claim(
                 .expect("not blocked");
         }
     }
-    (scratch, server, pool, memory, homer, badge)
+    (pool, memory, homer, badge)
 }
 
 /// **The claims import takes a claim written before key writes were kept, that has
@@ -570,7 +560,7 @@ async fn homer_with_a_claim(
 /// import serves both and the one key.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
-    let (_scratch, mut server, pool, memory, homer, badge) =
+    let (pool, memory, homer, badge) =
         homer_with_a_claim("claims-import-old-no-key-write", "an old claim", None).await;
     say_with_key(&memory, &homer, "written late", "mood_e").await;
     // **Both claims are dated by the fixture**, so the count below does not read the clock.
@@ -634,7 +624,6 @@ async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
     served.sort();
     assert_eq!(served, ["an old claim", "written late"]);
     assert_eq!(state.fields(&object, &[]), old, "the one key is served");
-    server.stop().await;
 }
 
 /// **The claims import takes a timed key write over a claim whose first write has no
@@ -645,7 +634,7 @@ async fn claims_import_takes_an_old_claim_that_has_no_key_write_at_all() {
 /// The import serves the claim and its key.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_takes_a_timed_key_write_over_a_claim_whose_first_write_has_no_time() {
-    let (_scratch, mut server, pool, memory, homer, badge) = homer_with_a_claim(
+    let (pool, memory, homer, badge) = homer_with_a_claim(
         "claims-import-timed-key-undated-claim",
         "an undated claim",
         Some("mood_f"),
@@ -712,5 +701,4 @@ async fn claims_import_takes_a_timed_key_write_over_a_claim_whose_first_write_ha
             .any(|record| record.claim.content == "an undated claim"),
         "the claim is served"
     );
-    server.stop().await;
 }

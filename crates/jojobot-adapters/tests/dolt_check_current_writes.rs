@@ -4,25 +4,16 @@
 //! check stops naming it; the same name on the current write is damage.
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::storage_check::DoltStorageCheck;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::types::{DeclaredType, Field};
 use jojobot_domain::memory::{EntityId, EntityKind, FactPatch, Memory, NewEntity, NewFact};
 use jojobot_domain::storage_check::{StorageCheck, StorageClass};
 
-async fn a_store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
-    let dir = jojobot_adapters::testing::scratch_path(label);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let scratch = Scratch(dir.clone());
-    let server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, label)
-        .await
-        .expect("a database of its own");
+async fn a_store(label: &str) -> (sqlx::MySqlPool, DoltMemory) {
+    let pool = shared_database(label).await.expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory)
@@ -38,7 +29,7 @@ async fn a_store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
         )
         .await
         .expect("declare line");
-    (scratch, server, pool, memory)
+    (pool, memory)
 }
 
 async fn thing(memory: &DoltMemory, handle: &str, name: &str) -> EntityId {
@@ -121,7 +112,7 @@ fn correcting_to(bot: &EntityId) -> FactPatch {
 /// link row of the corrected item are still stored: nothing was deleted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_dangling_link_a_served_edit_replaced_is_history_and_one_left_is_damage() {
-    let (_scratch, _server, pool, memory) = a_store("check-current-edit").await;
+    let (pool, memory) = a_store("check-current-edit").await;
     let bot = thing(&memory, "bot:beta", "Beta").await;
     let corrected = bare_line(&memory, &pool, ("work:alpha-queue", "Alpha queue"), &bot).await;
     let other = thing(&memory, "bot:gamma", "Gamma").await;
@@ -170,7 +161,7 @@ async fn a_dangling_link_a_served_edit_replaced_is_history_and_one_left_is_damag
 /// the check keeps naming it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_clear_replaces_a_dangling_link_and_a_new_claim_does_not() {
-    let (_scratch, _server, pool, memory) = a_store("check-current-clear").await;
+    let (pool, memory) = a_store("check-current-clear").await;
     let bot = thing(&memory, "bot:beta", "Beta").await;
     let cleared = bare_line(&memory, &pool, ("work:alpha-queue", "Alpha queue"), &bot).await;
     let other = thing(&memory, "bot:gamma", "Gamma").await;

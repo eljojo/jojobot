@@ -3,31 +3,22 @@
 //! which thing a handle meant when a merge landed, and which sources are checked.
 
 use jiff::civil::date;
-use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::storage_check::DoltStorageCheck;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_adapters::testing::shared_database;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Override};
 use jojobot_domain::request::{Request, RequestId, Scope, armed, digest_of, within};
 use jojobot_domain::storage_check::{StorageCheck, StorageClass};
 
-async fn a_store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
-    let dir = jojobot_adapters::testing::scratch_path(label);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let scratch = Scratch(dir.clone());
-    let server = Dolt::start(&dir, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&server, label)
-        .await
-        .expect("a database of its own");
+async fn a_store(label: &str) -> (sqlx::MySqlPool, DoltMemory) {
+    let pool = shared_database(label).await.expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory)
         .await
         .expect("the kinds are seeded");
-    (scratch, server, pool, memory)
+    (pool, memory)
 }
 
 async fn thing(memory: &DoltMemory, handle: &str, name: &str) -> EntityId {
@@ -70,8 +61,8 @@ async fn found(pool: &sqlx::MySqlPool, class: StorageClass) -> (u64, Vec<String>
 
 /// A merge made as the verb makes it under a request id, so the store holds its
 /// receipt: person:skinner folded into person:krusty.
-async fn a_merge_under_a_request_id(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
-    let (scratch, server, pool, memory) = a_store(label).await;
+async fn a_merge_under_a_request_id(label: &str) -> (sqlx::MySqlPool, DoltMemory) {
+    let (pool, memory) = a_store(label).await;
     let bot = thing(&memory, "bot:sigma", "Sigma").await;
     let kept = thing(&memory, "person:krusty", "Krusty").await;
     let gone = thing(&memory, "person:skinner", "Skinner").await;
@@ -98,7 +89,7 @@ async fn a_merge_under_a_request_id(label: &str) -> (Scratch, Dolt, sqlx::MySqlP
     .await
     .expect("the merge lands");
     drop(served);
-    (scratch, server, pool, memory)
+    (pool, memory)
 }
 
 mod precision {
@@ -108,7 +99,7 @@ mod precision {
     /// row that is not marked merged can be marked, a missing row cannot.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_merge_event_not_applied_says_whether_the_row_is_unmarked_or_missing() {
-        let (_scratch, _server, pool, _memory) = a_merge_under_a_request_id("precision-a2").await;
+        let (pool, _memory) = a_merge_under_a_request_id("precision-a2").await;
         let key = badge_of(&pool, "person:skinner").await;
         run(
             &pool,
@@ -131,7 +122,7 @@ mod precision {
     /// one id.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_dangling_reference_counts_its_rows_and_names_its_value_once() {
-        let (_scratch, _server, pool, memory) = a_store("precision-count").await;
+        let (pool, memory) = a_store("precision-count").await;
         let holder = thing(&memory, "person:krusty", "Krusty").await;
         let key = badge_of(&pool, holder.as_str()).await;
         for ordinal in 1..=3 {
@@ -155,7 +146,7 @@ mod precision {
     /// homed under a bare badge no row wears is damage.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_source_homed_under_a_handle_is_left_alone_and_one_under_a_lost_badge_is_not() {
-        let (_scratch, _server, pool, memory) = a_store("precision-derived").await;
+        let (pool, memory) = a_store("precision-derived").await;
         let holder = thing(&memory, "person:krusty", "Krusty").await;
         memory
             .capture(NewFact::about(
@@ -194,7 +185,7 @@ mod precision {
     /// handle it wears now, and so must the scan.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_scan_of_a_merged_thing_serves_the_survivor_under_its_current_handle() {
-        let (_scratch, _server, pool, memory) = a_merge_under_a_request_id("precision-scan").await;
+        let (pool, memory) = a_merge_under_a_request_id("precision-scan").await;
         memory
             .rename_entity(
                 &EntityId("person:krusty".into()),
