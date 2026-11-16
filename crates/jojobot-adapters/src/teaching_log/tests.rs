@@ -677,3 +677,48 @@ pub(super) async fn an_unknown_own_kind_fails_the_replay(log: Arc<dyn LogStore>)
     };
     assert!(why.contains("TeachingForgotten"), "{why}");
 }
+
+/// The default boot serves teaching from the log and leaves the legacy rows unchanged.
+#[tokio::test]
+async fn a_default_boot_leaves_legacy_teaching_rows_unchanged() {
+    use jojobot_domain::teaching::Teachings;
+
+    let pool = crate::testing::shared_database("default-boot-rows")
+        .await
+        .expect("a database of its own");
+    let folded = crate::fold::Folded::new(std::sync::Arc::new(
+        jojobot_domain::memory::testing::InMemoryMemory::booted(),
+    ));
+    let ledger = serving(&pool, folded.writer())
+        .await
+        .expect("the ledger opens");
+    assert!(
+        ledger
+            .first_contact(&sid("homer"), "claims", at(1))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !ledger
+            .first_contact(&sid("homer"), "claims", at(2))
+            .await
+            .unwrap()
+    );
+    assert!(
+        ledger
+            .first_contact(&sid("marge"), "mail", at(3))
+            .await
+            .unwrap()
+    );
+    ledger.forget(&sid("marge")).await.unwrap();
+
+    let rows: Vec<(String, String)> = import_marks(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|mark| (mark.sid.0, mark.domain))
+        .collect();
+    assert!(rows.is_empty(), "the log wrote legacy rows: {rows:?}");
+    assert!(ledger.has_contact(&sid("homer"), "claims").await.unwrap());
+    assert!(!ledger.has_contact(&sid("marge"), "mail").await.unwrap());
+}
