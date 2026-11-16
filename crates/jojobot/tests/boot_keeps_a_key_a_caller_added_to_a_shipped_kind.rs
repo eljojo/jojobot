@@ -6,11 +6,10 @@
 //! **A test binary of its own.** `boot_store` seeds the process-wide kind set on
 //! success, and a case running beside this one would see it already loaded.
 
-use jojobot_adapters::claims_log::codec;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, free_port};
+use jojobot_adapters::testing::{Scratch, claims_events, free_port};
 use jojobot_domain::clock::Clock;
 use jojobot_domain::log::claims::ClaimEvent;
 use jojobot_domain::memory::types::{Field, Origin, ValueType};
@@ -18,31 +17,16 @@ use jojobot_domain::memory::{Memory, kinds};
 
 /// Every declaration of `name` the log holds, in order.
 async fn declarations_of(pool: &sqlx::MySqlPool, name: &str) -> Vec<Vec<Field>> {
-    let payloads: Vec<Vec<u8>> = sqlx::query_scalar(
-        "SELECT payload FROM event_log WHERE first_position IS NOT NULL ORDER BY first_position",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("the log is readable");
-    let mut found = Vec::new();
-    for payload in payloads {
-        let batch: serde_json::Value = serde_json::from_slice(&payload).expect("a stored batch");
-        for member in batch[5].as_array().expect("a batch holds its members") {
-            let bytes: Vec<u8> = member
-                .as_array()
-                .expect("a member is bytes")
-                .iter()
-                .map(|byte| byte.as_u64().expect("a byte") as u8)
-                .collect();
-            if let Some(event) = codec::decode_own(&bytes).expect("every stored event reads")
-                && let ClaimEvent::TypeDeclared { declaration, .. } = &event.payload
-                && declaration.name == name
-            {
-                found.push(declaration.fields.clone());
+    claims_events(pool)
+        .await
+        .into_iter()
+        .filter_map(|event| match event.payload {
+            ClaimEvent::TypeDeclared { declaration, .. } if declaration.name == name => {
+                Some(declaration.fields)
             }
-        }
-    }
-    found
+            _ => None,
+        })
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -6,11 +6,10 @@
 //! **A test binary of its own.** `boot_store` seeds the process-wide kind set on
 //! success, and a case running beside this one would see it already loaded.
 
-use jojobot_adapters::claims_log::codec;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::{Scratch, free_port};
+use jojobot_adapters::testing::{Scratch, claims_events, free_port};
 use jojobot_domain::clock::Clock;
 use jojobot_domain::log::claims::ClaimEvent;
 use jojobot_domain::memory::types::{DeclaredType, Field};
@@ -48,37 +47,21 @@ async fn a_boot_imports_a_declared_type_whose_field_points_at_a_kind() {
     let booted = jojobot::wiring::boot_store(&path, port, Clock::Real)
         .await
         .expect("the boot stands");
-    let payloads: Vec<Vec<u8>> = sqlx::query_scalar(
-        "SELECT payload FROM event_log WHERE first_position IS NOT NULL ORDER BY first_position",
-    )
-    .fetch_all(booted.store.pool())
-    .await
-    .expect("the log is readable");
-    let mut declared = 0;
-    for payload in payloads {
-        let batch: serde_json::Value = serde_json::from_slice(&payload).expect("a stored batch");
-        for member in batch[5].as_array().expect("a batch holds its members") {
-            let bytes: Vec<u8> = member
-                .as_array()
-                .expect("a member is bytes")
-                .iter()
-                .map(|byte| byte.as_u64().expect("a byte") as u8)
-                .collect();
-            let event = codec::decode_own(&bytes).expect("every stored event reads");
-            if let Some(event) = event
-                && let ClaimEvent::TypeDeclared { declaration, .. } = &event.payload
-                && declaration.name == "sketch"
-            {
-                declared += 1;
-                assert_eq!(
-                    declaration.fields,
-                    vec![Field::pointing_at("venue", EntityKind::PLACE)],
-                    "the kind survived the journey through the log"
-                );
+    let declared: Vec<Vec<Field>> = claims_events(booted.store.pool())
+        .await
+        .into_iter()
+        .filter_map(|event| match event.payload {
+            ClaimEvent::TypeDeclared { declaration, .. } if declaration.name == "sketch" => {
+                Some(declaration.fields)
             }
-        }
-    }
-    assert_eq!(declared, 1, "the boot imported the declaration");
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        declared,
+        vec![vec![Field::pointing_at("venue", EntityKind::PLACE)]],
+        "the boot imported the declaration once, and its kind survived the journey through the log"
+    );
 
     let mut store = booted.store;
     store.stop().await;

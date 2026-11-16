@@ -21,38 +21,20 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use jiff::civil::date;
-use jojobot_adapters::claims_log::codec;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::{Dolt, OLD_ROLE_CLAIMS_PASS, UNREADABLE_DUE_PASS, migrate};
-use jojobot_adapters::testing::{Scratch, free_port};
+use jojobot_adapters::testing::{Scratch, claims_events, free_port};
 use jojobot_domain::log::claims::ClaimEvent;
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 
 /// Every claims event the log holds, as stored.
 async fn logged(pool: &sqlx::MySqlPool) -> Vec<ClaimEvent> {
-    let payloads: Vec<Vec<u8>> = sqlx::query_scalar(
-        "SELECT payload FROM event_log WHERE first_position IS NOT NULL ORDER BY first_position",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("the log is readable");
-    let mut events = Vec::new();
-    for payload in payloads {
-        let batch: serde_json::Value = serde_json::from_slice(&payload).expect("a stored batch");
-        for member in batch[5].as_array().expect("a batch holds its members") {
-            let bytes: Vec<u8> = member
-                .as_array()
-                .expect("a member is bytes")
-                .iter()
-                .map(|byte| byte.as_u64().expect("a byte") as u8)
-                .collect();
-            if let Some(event) = codec::decode_own(&bytes).expect("every stored event reads") {
-                events.push(event.payload);
-            }
-        }
-    }
-    events
+    claims_events(pool)
+        .await
+        .into_iter()
+        .map(|event| event.payload)
+        .collect()
 }
 
 /// How many events write `key` to some thing.
