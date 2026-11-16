@@ -51,59 +51,36 @@ fn order(folded: &[StampedWrite], survivor: &[StampedWrite]) -> Vec<(Side, i64)>
 /// **The write made later is placed later, whichever thing held it.** Both
 /// directions are asserted, because an order that always put the survivor's
 /// writes first passes one of them by luck.
-#[test]
-fn the_later_write_is_placed_later_whichever_thing_held_it() {
-    let early = written(1, Some("2026-08-02T10:00:00Z"));
-    let late = written(1, Some("2026-08-03T10:00:00Z"));
-    assert_eq!(
-        order(std::slice::from_ref(&early), std::slice::from_ref(&late)),
-        vec![(Side::Folded, 1), (Side::Survivor, 1)],
-        "the survivor's write is the later one and is placed last",
-    );
-    assert_eq!(
-        order(&[late], &[early]),
-        vec![(Side::Survivor, 1), (Side::Folded, 1)],
-        "the duplicate's write is the later one and is placed last",
-    );
-}
-
+///
 /// **On a tie the survivor's write is placed after the duplicate's**, so the
 /// survivor wins, and the same holds when neither write was ever stamped.
-#[test]
-fn a_tie_places_the_survivors_write_last() {
-    let same = written(1, Some("2026-08-03T10:00:00Z"));
-    assert_eq!(
-        order(std::slice::from_ref(&same), std::slice::from_ref(&same)),
-        vec![(Side::Folded, 1), (Side::Survivor, 1)],
-    );
-    let legacy = written(1, None);
-    assert_eq!(
-        order(std::slice::from_ref(&legacy), std::slice::from_ref(&legacy)),
-        vec![(Side::Folded, 1), (Side::Survivor, 1)],
-        "two writes with no stamp are a tie too",
-    );
-}
-
+///
 /// **A write with no stamp is older than every stamped one.** The stamp came
 /// into being at one moment, so every write that carries one is later than every
 /// write that cannot.
 #[test]
-fn an_unstamped_write_is_older_than_any_stamped_one() {
-    let legacy = written(1, None);
-    let stamped = written(1, Some("2026-08-02T10:00:00Z"));
-    assert_eq!(
-        order(
-            std::slice::from_ref(&legacy),
-            std::slice::from_ref(&stamped)
-        ),
-        vec![(Side::Folded, 1), (Side::Survivor, 1)],
-        "the duplicate's legacy write is older than the survivor's stamped one",
-    );
-    assert_eq!(
-        order(&[stamped], &[legacy]),
-        vec![(Side::Survivor, 1), (Side::Folded, 1)],
-        "the survivor's legacy write is older than the duplicate's stamped one",
-    );
+fn merge_order_by_stamp_and_side() {
+    use Side::{Folded, Survivor};
+
+    let early = Some("2026-08-02T10:00:00Z");
+    let late = Some("2026-08-03T10:00:00Z");
+    let cases = [
+        (early, late, [(Folded, 1), (Survivor, 1)]),
+        (late, early, [(Survivor, 1), (Folded, 1)]),
+        (late, late, [(Folded, 1), (Survivor, 1)]),
+        (None, None, [(Folded, 1), (Survivor, 1)]),
+        (None, early, [(Folded, 1), (Survivor, 1)]),
+        (early, None, [(Survivor, 1), (Folded, 1)]),
+    ];
+    let actual: Vec<_> = cases
+        .iter()
+        .map(|(folded, survivor, _)| order(&[written(1, *folded)], &[written(1, *survivor)]))
+        .collect();
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(_, _, expected)| expected.to_vec())
+        .collect();
+    assert_eq!(actual, expected);
 }
 
 /// **Each thing's own order survives the merge**, even when a clock stepped
