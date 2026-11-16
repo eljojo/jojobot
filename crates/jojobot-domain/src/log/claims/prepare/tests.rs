@@ -1636,96 +1636,65 @@ fn the_claims_own_inputs_are_judged_before_any_object_is_looked_up() {
 
 /// **An edge fits the kind its shape points at**, judged on the object the
 /// spelling resolves to.
-#[test]
-fn an_edge_points_at_the_kind_its_shape_names() {
-    crate::memory::kinds::load_shipped();
-    let mut events = thing("alpha");
-    for (kind, handle, alias) in [
-        ("person", "person:gamma", "work:alpha-queue/1"),
-        ("place", "place:delta", "work:alpha-queue/2"),
-    ] {
-        events.extend([
-            ClaimEvent::ObjectCreated {
-                object: object(handle),
-                body: ObjectBody {
-                    aliases: vec![alias.into()],
-                    ..body(kind, handle)
-                },
-            },
-            ClaimEvent::AddressBound {
-                object: object(handle),
-                address: handle.into(),
-            },
-            ClaimEvent::AddressBound {
-                object: object(handle),
-                address: alias.into(),
-            },
-        ]);
-    }
-    let state = replay(&events);
-    let located = |object: &str| CaptureRequest {
-        edge: Some((EdgeShape::Location, object.into())),
-        ..request("alpha")
-    };
-    for spelling in ["person:gamma", "work:alpha-queue/1"] {
-        assert!(
-            matches!(
-                prepare(&state, &[], &located(spelling)),
-                Err(Refusal::Invalid(MemoryError::InvalidEdge(_)))
-            ),
-            "a location edge cannot resolve to a person through {spelling}"
-        );
-    }
-    for spelling in ["place:delta", "work:alpha-queue/2"] {
-        let admitted = prepare(&state, &[], &located(spelling))
-            .expect("a location edge to a place is admitted");
-        assert!(admitted.iter().any(|event| matches!(
-            event,
-            ClaimEvent::RecordCreated { claim, .. }
-                if claim.edge == Some(("location".into(), object("place:delta")))
-        )));
-    }
-}
-
 /// A location's resolved kind stays a place even when its numbered alias has
 /// an earlier-sorting person's prefix.
 #[test]
-fn canonical_handle_keeps_a_numbered_location_target_a_place() {
+fn location_edges_keep_the_resolved_kind_through_numbered_aliases() {
     crate::memory::kinds::load_shipped();
-    for alias in ["work:alpha-queue/2", "person:gamma/1"] {
+    for (person_alias, place_alias) in [
+        (Some("work:alpha-queue/1"), "work:alpha-queue/2"),
+        (None, "work:alpha-queue/2"),
+        (None, "person:gamma/1"),
+    ] {
         let mut events = thing("alpha");
-        for (kind, handle) in [("person", "person:gamma"), ("place", "place:delta")] {
-            events.extend([
-                ClaimEvent::ObjectCreated {
-                    object: object(handle),
-                    body: body(kind, handle),
+        for (kind, handle, alias) in [
+            ("person", "person:gamma", person_alias),
+            ("place", "place:delta", Some(place_alias)),
+        ] {
+            events.push(ClaimEvent::ObjectCreated {
+                object: object(handle),
+                body: ObjectBody {
+                    aliases: if person_alias.is_some() {
+                        vec![alias.unwrap().into()]
+                    } else {
+                        Vec::new()
+                    },
+                    ..body(kind, handle)
                 },
-                ClaimEvent::AddressBound {
+            });
+            for spelling in std::iter::once(handle).chain(alias) {
+                events.push(ClaimEvent::AddressBound {
                     object: object(handle),
-                    address: handle.into(),
-                },
-            ]);
+                    address: spelling.into(),
+                });
+            }
         }
-        events.push(ClaimEvent::AddressBound {
-            object: object("place:delta"),
-            address: alias.into(),
-        });
         let state = replay(&events);
         let located = |target: &str| CaptureRequest {
             edge: Some((EdgeShape::Location, target.into())),
             ..request("alpha")
         };
-        assert!(matches!(
-            prepare(&state, &[], &located("person:gamma")),
-            Err(Refusal::Invalid(MemoryError::InvalidEdge(_)))
-        ));
-        let admitted = prepare(&state, &[], &located(alias))
-            .expect("the numbered location target is a place, regardless of its prefix");
-        assert!(admitted.iter().any(|event| matches!(
-            event,
-            ClaimEvent::RecordCreated { claim, .. }
-                if claim.edge == Some(("location".into(), object("place:delta")))
-        )));
+        for spelling in std::iter::once("person:gamma").chain(person_alias) {
+            assert!(
+                matches!(
+                    prepare(&state, &[], &located(spelling)),
+                    Err(Refusal::Invalid(MemoryError::InvalidEdge(_)))
+                ),
+                "a location edge cannot resolve to a person through {spelling} ({place_alias})"
+            );
+        }
+        for spelling in std::iter::once(place_alias).chain(person_alias.map(|_| "place:delta")) {
+            let events = prepare(&state, &[], &located(spelling))
+                .expect("a location edge to a place is admitted");
+            assert!(
+                events.iter().any(|event| matches!(
+                    event,
+                    ClaimEvent::RecordCreated { claim, .. }
+                        if claim.edge == Some(("location".into(), object("place:delta")))
+                )),
+                "{spelling} ({place_alias})"
+            );
+        }
     }
 }
 
