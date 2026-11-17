@@ -587,10 +587,25 @@ impl Memory for SharedFold {}
 #[async_trait]
 impl Memory for Folded {
     fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
-        self.stated(entity, |state, found, declared| {
+        self.held()?;
+        self.claims(|state| {
+            let found = state.resolved_entity(entity)?;
             let object = state.resolve(&found.id.0)?;
-            Some(state.fields(object, declared).get(key).cloned())
+            // A role's holder is logged; its lease moment changes on unlogged heartbeats.
+            if state.was_merged(object)
+                || (state.holds_a_lease(object) && key != jojobot_domain::session::ROLE_HOLDER)
+            {
+                return None;
+            }
+            Some(
+                state
+                    .fields(object, &state.declared_types_shared())
+                    .get(key)
+                    .cloned(),
+            )
         })
+        .ok()
+        .flatten()
     }
 
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {

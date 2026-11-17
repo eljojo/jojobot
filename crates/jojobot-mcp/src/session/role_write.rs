@@ -357,8 +357,15 @@ impl Jojobot {
             let Some(role) = jojobot_domain::memory::role_named_by(&child) else {
                 continue;
             };
-            let child_fields = self.memory.fields(&child).await?;
             seen.push(role.clone());
+            if self
+                .memory
+                .image_field(&child, ROLE_HOLDER)
+                .is_some_and(|holder| holder.as_deref() != Some(claimant))
+            {
+                continue;
+            }
+            let child_fields = self.memory.fields(&child).await?;
             let state = role_state(Some(&child_fields));
             if state.holder.as_deref() == Some(claimant) {
                 held.push(HeldRole {
