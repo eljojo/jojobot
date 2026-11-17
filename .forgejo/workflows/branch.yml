@@ -178,7 +178,7 @@ jobs:
     # It runs when the report job does, which needs it.
     if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'report' }}
     runs-on: nix
-    timeout-minutes: 60
+    timeout-minutes: 110
     steps:
       - name: Runner cleanup
         run: |

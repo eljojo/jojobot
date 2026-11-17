@@ -188,7 +188,7 @@ jobs:
   boot-store:
     needs: static
     runs-on: nix-x86_64
-    timeout-minutes: 60
+    timeout-minutes: 110
     steps:
       - name: Runner cleanup
         run: |
