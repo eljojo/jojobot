@@ -637,6 +637,27 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
         .await
         .expect("renamed");
 
+    let (folded_collection, surviving_collection, folded_member) = (
+        EntityId(format!("{}:{}", "topic", spelled_slug(15))),
+        EntityId(format!("{}:{}", "topic", spelled_slug(16))),
+        EntityId(format!("{}:{}", "topic", spelled_slug(17))),
+    );
+    numbered_collection(&layer, &folded_collection, &[]).await;
+    add_things(&layer, &[&surviving_collection]).await;
+    numbers_its_members(&layer, &surviving_collection).await;
+    layer
+        .merge(
+            &folded_collection,
+            &surviving_collection,
+            Some("filed twice"),
+            jiff::civil::date(2026, 9, 3),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("merged");
+    numbered_under(&layer, &surviving_collection, &[(&folded_member, "1")]).await;
+
     // The texts: every kind of name, typed and as a stored mark.
     let whole = render_roster(&*provisioned).await.expect("the roster");
     let badge_of = |id: &EntityId| {
@@ -722,6 +743,15 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
             resolved(text, &reference.known),
             "a write of {text:?}"
         );
+    }
+    for address in [
+        format!("{folded_collection}/1"),
+        format!("{folded_collection}/9"),
+        format!("{surviving_collection}/1"),
+    ] {
+        let text = format!("saw @{address} again");
+        let scoped = known_among(&*provisioned, &[&text]).await.unwrap();
+        assert_eq!(rendered(&text, &scoped), rendered(&text, &whole), "{text}");
     }
     for (address, member) in [
         (format!("{collection}/2"), &second),

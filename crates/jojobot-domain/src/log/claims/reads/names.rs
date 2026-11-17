@@ -75,6 +75,12 @@ impl State {
         let member = self.resolved_entity(address);
         let mut at = Some(collection.clone());
         while let Some(handle) = at {
+            // The listing keeps a folded collection's row beside its survivor.
+            if let Some(collection_row) = self.row_wearing(&handle)
+                && !names.known.iter().any(|held| held.id == collection_row.id)
+            {
+                names.known.push(collection_row);
+            }
             let Some(container) = self.resolved_entity(&handle) else {
                 break;
             };
