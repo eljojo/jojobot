@@ -283,6 +283,72 @@ async fn filled_fold_serves_recall_and_capture_without_store_fields() {
             .iter()
             .all(|read| read == &role)
     );
+    let foreign: Value = serde_json::from_str(
+        &surface
+            .call(
+                "start_here",
+                json!({
+                    "bot":"gamma", "resume":"new", "claim":"alpha",
+                    "agent":"alpha-agent", "brief":true
+                }),
+            )
+            .await,
+    )
+    .unwrap();
+    assert_eq!(foreign["session"]["claim"]["status"], "taken", "{foreign}");
+    let foreign_run = foreign["session"]["run"].as_str().unwrap();
+    assert_ne!(foreign_run, claimed["session"]["run"].as_str().unwrap());
+    let foreign_role = EntityId("role:alpha".into());
+    let foreign_claim = memory.recall(&foreign_role).await.unwrap()[0].address();
+    let now = jiff::Timestamp::now();
+    let mut foreign_fields = BTreeMap::new();
+    let mut foreign_reads = Vec::new();
+    for (phase, at) in [
+        ("fresh-foreign-role", now),
+        (
+            "lapsed-foreign-role",
+            now - jojobot_domain::session::LEASE_FRESHNESS - jiff::SignedDuration::from_mins(1),
+        ),
+    ] {
+        memory
+            .update_fact(
+                &foreign_claim,
+                jojobot_domain::session::role_write::RoleWrite::Claim {
+                    claimant: foreign_run,
+                    now: at,
+                    agent: Some("alpha-agent"),
+                    runs_agent: None,
+                }
+                .patch("alpha"),
+                &EntityId("bot:gamma".into()),
+            )
+            .await
+            .unwrap()
+            .written()
+            .expect("the foreign run can date its own claim");
+        foreign_fields = memory.fields(&foreign_role).await.unwrap();
+        assert_eq!(foreign_fields["holder"], foreign_run);
+        assert_eq!(foreign_fields["claimed_at"], at.to_string());
+        counted.start();
+        let captured = surface
+            .call(
+                "capture",
+                json!({"subject":"thing:beta", "content":"see @topic:alpha/1", "sid":sid}),
+            )
+            .await;
+        counted.finish(phase);
+        foreign_reads.push(counted.reads.lock().unwrap().clone());
+        assert_eq!(
+            serde_json::from_str::<Value>(&captured).unwrap()["success"],
+            true
+        );
+        assert_eq!(memory.fields(&foreign_role).await.unwrap(), foreign_fields);
+        assert_eq!(
+            memory.image_field(&foreign_role, jojobot_domain::session::ROLE_HOLDER),
+            Some(Some(foreign_run.to_string()))
+        );
+    }
+    assert_eq!(foreign_reads, [vec![role.clone()], vec![role.clone()]]);
     let wrapped = surface
         .call(
             "wrap_session",
@@ -296,6 +362,13 @@ async fn filled_fold_serves_recall_and_capture_without_store_fields() {
         holder.as_deref().is_none_or(|held| held.is_empty()),
         "{wrapped}"
     );
+    assert_eq!(memory.fields(&foreign_role).await.unwrap(), foreign_fields);
+    surface
+        .call(
+            "wrap_session",
+            json!({"sid":foreign["session"]["sid"], "story":"The foreign fixture run finished."}),
+        )
+        .await;
     surface.finish().await;
     stop.cancel();
     serving.await.unwrap();
