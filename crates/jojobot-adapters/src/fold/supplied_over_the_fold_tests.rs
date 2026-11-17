@@ -723,6 +723,24 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
             "a write of {text:?}"
         );
     }
+    for (address, member) in [
+        (format!("{collection}/2"), &second),
+        (format!("{collection}/1/3"), &inner),
+        (format!("{before}/1"), &kept),
+        (format!("{after}/1"), &kept),
+    ] {
+        let text = format!("@{address}");
+        let expression = format!("ruled_by = {address}");
+        let scoped = roster_for(&*provisioned, &[&text]).await.unwrap();
+        let reference = roster_for_whole(&*provisioned, &[&text]).await.unwrap();
+        let named =
+            jojobot_domain::memory::mention::roster::members_named(&expression, &scoped.known);
+        assert_eq!(named, format!("ruled_by = {member}"));
+        assert_eq!(
+            named,
+            jojobot_domain::memory::mention::roster::members_named(&expression, &reference.known)
+        );
+    }
 }
 
 /// **A mark of a thing folded through a long chain of merges renders as the whole roster

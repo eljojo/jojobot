@@ -67,7 +67,8 @@ impl State {
 
     /// **One numbered address `collection/N`, resolved through the collection** the
     /// way [`State::resolved_entity`] walks it. A member enters `members` under the
-    /// address; the collection, and each collection a chain passes through, enters
+    /// address, and its own row enters `known` so filters can recover its real handle.
+    /// The collection, and each collection a chain passes through, enters
     /// `known` as the entity of its own handle and under its numbering marker when it
     /// numbers. An address no member holds is a miss.
     fn name_a_member(&self, address: &EntityId, collection: &EntityId, names: &mut Names) {
@@ -102,10 +103,15 @@ impl State {
         // The collection numbers whether or not the address is held, so a miss still
         // carries the marker; the miss itself is named.
         match member {
-            Some(member) => names.members.push(Entity {
-                id: address.clone(),
-                ..member
-            }),
+            Some(member) => {
+                if !names.known.iter().any(|held| held.id == member.id) {
+                    names.known.push(member.clone());
+                }
+                names.members.push(Entity {
+                    id: address.clone(),
+                    ..member
+                });
+            }
             None => names.missed.push(address.clone()),
         }
     }
