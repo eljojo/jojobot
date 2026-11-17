@@ -1340,6 +1340,13 @@ impl super::Memory for Mentioning {
         self.beneath.image_field(entity, key)
     }
 
+    async fn names(
+        &self,
+        wanted: &super::Wanted,
+    ) -> Result<Option<super::Names>, super::MemoryError> {
+        self.beneath.names(wanted).await
+    }
+
     async fn add_entity(
         &self,
         new: super::NewEntity,

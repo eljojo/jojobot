@@ -20,6 +20,13 @@ impl Memory for Observed<dyn Memory> {
         self.inner.image_field(entity, key)
     }
 
+    async fn names(
+        &self,
+        wanted: &jojobot_domain::memory::Wanted,
+    ) -> Result<Option<jojobot_domain::memory::Names>, MemoryError> {
+        self.inner.names(wanted).await
+    }
+
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.result(
             Operation::Memory(MemoryOperation::AddEntity),

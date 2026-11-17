@@ -54,6 +54,7 @@ test-checks
 test-ci
 test-ci_needed
 test-continuity
+test-contract_scoped_names
 test-course_lock
 test-day_claimed
 test-decisions_room
