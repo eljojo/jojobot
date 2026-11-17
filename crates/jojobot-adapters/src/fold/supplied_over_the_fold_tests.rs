@@ -752,6 +752,12 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
         let text = format!("saw @{address} again");
         let scoped = known_among(&*provisioned, &[&text]).await.unwrap();
         assert_eq!(rendered(&text, &scoped), rendered(&text, &whole), "{text}");
+        let scoped = roster_for(&*provisioned, &[&text]).await.unwrap();
+        let reference = roster_for_whole(&*provisioned, &[&text]).await.unwrap();
+        assert_eq!(
+            resolved(&text, &scoped.known),
+            resolved(&text, &reference.known)
+        );
     }
     for (address, member) in [
         (format!("{collection}/2"), &second),
@@ -771,6 +777,24 @@ async fn the_names_read_renders_and_resolves_as_the_whole_roster_does() {
             jojobot_domain::memory::mention::roster::members_named(&expression, &reference.known)
         );
     }
+}
+
+#[tokio::test]
+async fn the_names_read_under_an_archived_collection_renders_as_the_whole_roster() {
+    use jojobot_domain::memory::mention::{known_among, render_roster, rendered};
+
+    let (layer, _, provisioned) = the_mention_stack().await;
+    let collection = EntityId(format!("topic:{}", spelled_slug(18)));
+    numbered_collection(&layer, &collection, &[]).await;
+    layer
+        .archive_entity(&collection, "done", None)
+        .await
+        .unwrap();
+    let text = format!("@{collection}/99");
+    let whole = render_roster(&*provisioned).await.unwrap();
+    let scoped = known_among(&*provisioned, &[&text]).await.unwrap();
+    assert_eq!(rendered(&text, &whole), text);
+    assert_eq!(rendered(&text, &scoped), rendered(&text, &whole));
 }
 
 /// **A mark of a thing folded through a long chain of merges renders as the whole roster

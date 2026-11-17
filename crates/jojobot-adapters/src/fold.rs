@@ -1571,9 +1571,8 @@ impl Memory for Folded {
     /// through the image. A row changed past this process is seen after a
     /// restart, as the image itself is. With no image held the store answers.
     /// **The entities a set of texts names, answered from the claims State by key.**
-    /// Names, badges, merges and numbering are logged events, so this read has no decline
-    /// and never reaches the store; with no image held it answers `None` and the caller
-    /// reads the listing, as before.
+    /// With no image, or a numbered address through a merged or archived collection,
+    /// it answers `None` and the caller reads the whole roster. Other names use the State.
     async fn names(
         &self,
         wanted: &jojobot_domain::memory::Wanted,
@@ -1583,7 +1582,7 @@ impl Memory for Folded {
             return Ok(None);
         }
         match self.claims(|state| state.names_read(wanted)) {
-            Ok(names) => Ok(Some(names)),
+            Ok(names) => Ok(names),
             Err(_) => {
                 self.unheld()?;
                 Ok(None)

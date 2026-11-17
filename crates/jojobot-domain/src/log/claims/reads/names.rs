@@ -1,6 +1,6 @@
 //! **The entities a set of texts names, read from the State by key.** A mention layer
-//! renders the stored marks a text holds and resolves the handles it writes; both need
-//! the few things the text names, and none needs the whole listing. A mark carries the
+//! renders the stored marks a text holds and resolves the handles it writes; most need
+//! only the few things the text names. A mark carries the
 //! object it names, a handle is an address the State keeps, a merge is a redirect, and
 //! a numbered collection says which key it numbers by, so each is one lookup.
 
@@ -13,10 +13,10 @@ use crate::memory::{Entity, EntityId, Names, Wanted};
 
 impl State {
     /// **What a set of texts asks for, as the renderers take it**: see [`Names`].
-    /// Never reads a store and declines nothing: names, badges, merges and numbering
-    /// are logged object and key events. A supplied record, which the State holds
-    /// under a supply identity and the supply layer serves, is left to that layer.
-    pub fn names_read(&self, wanted: &Wanted) -> Names {
+    /// Never reads a store. Merged or archived numbered collections decline so
+    /// the whole roster preserves their numbering (rule 677). Supplied records
+    /// under a supply identity are left to the supply layer.
+    pub fn names_read(&self, wanted: &Wanted) -> Option<Names> {
         let mut names = Names::default();
         let mut seen: BTreeSet<EntityId> = BTreeSet::new();
         let mut known = |entity: Entity, names: &mut Names| {
@@ -41,14 +41,14 @@ impl State {
         }
         for handle in &wanted.handles {
             match numbered_handle(handle) {
-                Some((collection, _)) => self.name_a_member(handle, &collection, &mut names),
+                Some((collection, _)) => self.name_a_member(handle, &collection, &mut names)?,
                 None => match self.row_wearing(handle) {
                     Some(row) => known(row, &mut names),
                     None => names.missed.push(handle.clone()),
                 },
             }
         }
-        names
+        Some(names)
     }
 
     /// **The row of the thing a handle is worn by now**, or by one that gave it up, the
@@ -71,19 +71,25 @@ impl State {
     /// The collection, and each collection a chain passes through, enters
     /// `known` as the entity of its own handle and under its numbering marker when it
     /// numbers. An address no member holds is a miss.
-    fn name_a_member(&self, address: &EntityId, collection: &EntityId, names: &mut Names) {
+    fn name_a_member(
+        &self,
+        address: &EntityId,
+        collection: &EntityId,
+        names: &mut Names,
+    ) -> Option<()> {
         let member = self.resolved_entity(address);
         let mut at = Some(collection.clone());
         while let Some(handle) = at {
-            // The listing keeps a folded collection's row beside its survivor.
-            if let Some(collection_row) = self.row_wearing(&handle)
-                && !names.known.iter().any(|held| held.id == collection_row.id)
-            {
-                names.known.push(collection_row);
-            }
             let Some(container) = self.resolved_entity(&handle) else {
                 break;
             };
+            if container.archived.is_some()
+                || self
+                    .row_wearing(&handle)
+                    .is_some_and(|row| row.merged_into.is_some())
+            {
+                return None;
+            }
             let numbers = self
                 .resolve(&container.id.0)
                 .and_then(|object| self.numbers_by(object))
@@ -120,6 +126,7 @@ impl State {
             }
             None => names.missed.push(address.clone()),
         }
+        Some(())
     }
 
     /// **A thing's row as the listing serves it**: the handle it wore itself, and the
