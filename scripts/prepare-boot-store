@@ -25,8 +25,9 @@ import time
 # come on top. A waiter holds out longer than the build it waits for.
 # STOPGAP (2026-11-17) until the dev-loop line keys the grown store off the
 # crates' source: with a cache miss per source change and several lines growing at once the
-# grow took 4,174 s. Take this back to what one grow needs when the key fix lands.
-BUILD_TIMEOUT = 6000
+# grow took 4,174 s, then more than 6,000 s on 2026-11-17 while production was swamped on the same host.
+# Take this back to what one grow needs when the key fix lands.
+BUILD_TIMEOUT = 10800
 LOCK_TIMEOUT = BUILD_TIMEOUT + 300
 # What the recorder compiles: the boot_measures test of `jojobot`, the crates it
 # links, and the files those crates embed from outside `src`. A crate it does not
